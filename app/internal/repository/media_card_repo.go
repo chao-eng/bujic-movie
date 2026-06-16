@@ -26,7 +26,7 @@ func NewMediaCardRepository(db *gorm.DB) MediaCardRepository {
 
 func (r *mediaCardRepository) Create(card *entity.MediaCard) error {
 	if card.IsDefault {
-		_ = r.db.Model(&entity.MediaCard{}).Update("is_default", false)
+		_ = r.db.Model(&entity.MediaCard{}).Where("1 = 1").Update("is_default", false)
 	}
 	return r.db.Create(card).Error
 }
@@ -68,7 +68,7 @@ func (r *mediaCardRepository) GetDefault() (*entity.MediaCard, error) {
 
 func (r *mediaCardRepository) SetDefault(id uint) error {
 	return r.db.Transaction(func(tx *gorm.DB) error {
-		if err := tx.Model(&entity.MediaCard{}).Update("is_default", false).Error; err != nil {
+		if err := tx.Model(&entity.MediaCard{}).Where("1 = 1").Update("is_default", false).Error; err != nil {
 			return err
 		}
 		return tx.Model(&entity.MediaCard{}).Where("id = ?", id).Update("is_default", true).Error

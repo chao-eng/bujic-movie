@@ -118,7 +118,9 @@ onMounted(async () => {
       console.error('Failed to get download_path from settings', err)
     }
   }
-  fetchFiles(initialPath)
+  if (initialPath && initialPath !== '/') {
+    fetchFiles(initialPath)
+  }
 })
 </script>
 
