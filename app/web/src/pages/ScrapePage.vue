@@ -8,6 +8,7 @@ import { Folder, File, ArrowLeft, Loader2, Sparkles, CheckCircle2 } from 'lucide
 
 const selectedPath = ref('')
 const overwrite = ref(false)
+const mediaType = ref('')
 const currentDir = ref('/')
 const fileItems = ref<any[]>([])
 const isLoadingFiles = ref(false)
@@ -60,6 +61,7 @@ const triggerScrape = async () => {
     const res: any = await client.post('/api/v1/scrape', {
       path: selectedPath.value,
       overwrite: overwrite.value,
+      media_type: mediaType.value,
     })
 
     if (res.code === 0) {
@@ -177,6 +179,15 @@ onMounted(async () => {
 
           <!-- Options -->
           <div class="space-y-4">
+            <div class="space-y-1.5">
+              <label class="text-xs font-semibold text-slate-400">媒体类型</label>
+              <select v-model="mediaType" class="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-sm focus:outline-none text-slate-100 focus:border-amber-500">
+                <option value="">自动识别</option>
+                <option value="movie">电影 (Movie)</option>
+                <option value="tv">电视剧 (TV)</option>
+              </select>
+              <p class="text-[10px] text-slate-500">手动指定可避免自动识别错误</p>
+            </div>
             <label class="relative inline-flex items-center cursor-pointer">
               <input type="checkbox" v-model="overwrite" class="sr-only peer" />
               <div class="w-11 h-6 bg-slate-800 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-slate-400 after:border-slate-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-amber-500 peer-checked:after:bg-slate-950"></div>

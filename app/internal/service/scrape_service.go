@@ -14,6 +14,7 @@ import (
 	"github.com/bujic-movie/bujic-movie/internal/repository"
 	"github.com/bujic-movie/bujic-movie/internal/storage"
 	"github.com/bujic-movie/bujic-movie/pkg/fileutil"
+	"github.com/bujic-movie/bujic-movie/pkg/logger"
 	"github.com/bujic-movie/bujic-movie/pkg/nfo"
 	"github.com/bujic-movie/bujic-movie/pkg/parser"
 	"github.com/bujic-movie/bujic-movie/pkg/tmdb"
@@ -21,6 +22,7 @@ import (
 
 type ScrapeService interface {
 	ScrapePath(ctx context.Context, path string, overwrite bool) error
+	ScrapePathWithType(ctx context.Context, path string, overwrite bool, mediaType string) error
 }
 
 type scrapeService struct {
@@ -45,27 +47,48 @@ func NewScrapeService(
 }
 
 // ScrapePath handles scraping metadata for a given path (file or directory)
+// Flow:
+//   A[外部手动刮削事件 / 整理完毕自动触发] --> B{判断输入类型}
+//   B -- 单个文件 --> C[1. 识别媒体信息]
+//   B -- 目录 --> D[1. 收集该目录下所有子目录并按深度排序]
+//   D --> E[2. 由浅入深先初始化各个子目录的元数据和海报]
+//   E --> F[3. 遍历并刮削目录下的具体视频文件]
 func (s *scrapeService) ScrapePath(ctx context.Context, path string, overwrite bool) error {
+	return s.ScrapePathWithType(ctx, path, overwrite, "")
+}
+
+func (s *scrapeService) ScrapePathWithType(ctx context.Context, path string, overwrite bool, mediaType string) error {
+	logger.Info("[刮削] 开始刮削: %s", path)
+	if mediaType != "" {
+		logger.Info("[刮削] 手动指定媒体类型: %s", mediaType)
+	}
+
 	// Redirect Season folder to the TV show root directory
 	if s.storage.IsDir(path) {
 		dirName := filepath.Base(path)
 		seasonDirReg := regexp.MustCompile(`(?i)\b(season|specials?)\s*\d*\b`)
 		if seasonDirReg.MatchString(dirName) {
 			path = filepath.Dir(path)
+			logger.Info("[刮削] Season 目录重定向到根目录: %s", path)
 		}
 	}
 
 	isDir := s.storage.IsDir(path)
 
 	if !isDir {
-		// 1. Scrape Single Video File
-		return s.scrapeSingleFile(ctx, path, overwrite)
+		// Single file: recognize and scrape
+		logger.Info("[刮削] 单个文件模式: %s", path)
+		return s.scrapeSingleFileWithType(ctx, path, overwrite, mediaType)
 	}
+
+	// Directory scraping
+	logger.Info("[刮削] 目录模式: %s", path)
 
 	// 2. Check for Blu-ray folder structure
 	if s.storage.IsBluray(path) {
+		logger.Info("[刮削] 检测到蓝光原盘目录，仅刮削根目录: %s", path)
 		// Scrape ONLY the root of Blu-ray directory and do NOT recurse
-		return s.scrapeBluRayFolder(ctx, path, overwrite)
+		return s.scrapeBluRayFolderWithType(ctx, path, overwrite, mediaType)
 	}
 
 	// 3. Recursive directory scraping:
@@ -74,51 +97,114 @@ func (s *scrapeService) ScrapePath(ctx context.Context, path string, overwrite b
 	if err != nil {
 		return err
 	}
+	logger.Info("[刮削] 发现 %d 个子目录", len(subDirs))
 
-	// Perform initial match on the root path
-	meta, details, err := s.recognizeService.Recognize(ctx, path)
+	// Perform initial match on the root path to determine media type
+	logger.Info("[刮削] 正在识别媒体信息...")
+	meta, details, err := s.recognizeService.RecognizeWithType(ctx, path, mediaType)
 	if err != nil {
-		return fmt.Errorf("failed to recognize root directory %s: %w", path, err)
+		logger.Warn("[刮削] 识别失败: %s, 错误: %v", path, err)
+		return nil
 	}
+	logger.Info("[刮削] 识别成功: %s", meta.Title)
 
-	// B. Initialize directories metadata
+	// B. Initialize directories metadata (shallow to deep)
 	if !meta.IsMovie {
+		// TV branch: K[电视剧刮削分支]
+		logger.Info("[刮削] 媒体类型: 电视剧")
 		tvDetail := details.(*tmdb.TVDetail)
-		// Process main TV root
-		if err := s.scrapeTVDirectory(ctx, path, tvDetail, overwrite); err != nil {
+		if err := s.handleTVScraping(ctx, path, subDirs, tvDetail, overwrite); err != nil {
 			return err
-		}
-
-		// Process sub-directories (look for Season folders)
-		seasonDirReg := regexp.MustCompile(`(?i)\bseason\s*(\d+)\b`)
-		for _, dir := range subDirs {
-			dirName := filepath.Base(dir)
-			if match := seasonDirReg.FindStringSubmatch(dirName); match != nil {
-				seasonNum := 1
-				fmt.Sscanf(match[1], "%d", &seasonNum)
-				if err := s.scrapeSeasonDirectory(ctx, dir, tvDetail, seasonNum, overwrite); err != nil {
-					return err
-				}
-			}
 		}
 	} else {
-		// For movies, if root is a directory but not Blu-ray, initialize root NFO and movie images
+		// Movie branch: J[电影刮削分支]
+		logger.Info("[刮削] 媒体类型: 电影")
 		movieDetail := details.(*tmdb.MovieDetail)
-		if err := s.initializeMovieDirectory(ctx, path, movieDetail, overwrite); err != nil {
+		if err := s.handleMovieScraping(ctx, path, subDirs, movieDetail, overwrite); err != nil {
 			return err
 		}
 	}
 
-	// C. Find all video files recursively and scrape them
+	logger.Info("[刮削] 刮削完成: %s", path)
+	return nil
+}
+
+// handleMovieScraping implements the movie branch from the flow chart
+// J --> J1{是文件还是目录?}
+// J1 -- 目录 --> J3{是否为蓝光原盘?}
+// J3 -- 否 --> J5[递归刮削子目录下所有视频文件 / 下载目录图片]
+func (s *scrapeService) handleMovieScraping(ctx context.Context, path string, subDirs []string, movieDetail *tmdb.MovieDetail, overwrite bool) error {
+	// Initialize root directory metadata and images
+	logger.Info("[刮削] 正在初始化电影根目录元数据...")
+	if err := s.initializeMovieDirectory(ctx, path, movieDetail, overwrite); err != nil {
+		return err
+	}
+
+	// Recursively scrape all video files in the directory and sub-directories
 	videoFiles, err := fileutil.FindFiles(path, fileutil.IsVideo)
 	if err != nil {
 		return err
 	}
+	logger.Info("[刮削] 发现 %d 个视频文件", len(videoFiles))
 
-	for _, vf := range videoFiles {
-		if err := s.scrapeSingleFile(ctx, vf, overwrite); err != nil {
-			// Log error but continue with other files
-			fmt.Printf("Error scraping video file %s: %v\n", vf, err)
+	for i, vf := range videoFiles {
+		logger.Info("[刮削] [%d/%d] 正在刮削电影视频: %s", i+1, len(videoFiles), filepath.Base(vf))
+		if err := s.scrapeMovieFile(ctx, vf, movieDetail, overwrite); err != nil {
+			logger.Warn("[刮削] 刮削失败 %s: %v", vf, err)
+		} else {
+			logger.Info("[刮削] [%d/%d] 电影视频刮削完成: %s", i+1, len(videoFiles), filepath.Base(vf))
+		}
+	}
+
+	return nil
+}
+
+// handleTVScraping implements the TV branch from the flow chart
+// K --> K1{是文件还是目录?}
+// K1 -- 目录 --> K3[递归刮削子目录/子文件]
+// K3 --> K4[初始化剧集目录元数据]
+// K4 --> K5{识别目录类型}
+// K5 -- 季目录 Season --> K6[生成 season.nfo / 下载季 poster/banner]
+// K5 -- 电视剧根目录 TV --> K7[生成 tvshow.nfo / 下载整剧 poster/backdrop/logo]
+func (s *scrapeService) handleTVScraping(ctx context.Context, path string, subDirs []string, tvDetail *tmdb.TVDetail, overwrite bool) error {
+	// Initialize TV root directory
+	logger.Info("[刮削] 正在初始化电视剧根目录元数据...")
+	if err := s.scrapeTVDirectory(ctx, path, tvDetail, overwrite); err != nil {
+		return err
+	}
+
+	// Process sub-directories (look for Season folders) - shallow to deep
+	seasonDirReg := regexp.MustCompile(`(?i)\bseason\s*(\d+)\b`)
+	seasonCount := 0
+	for _, dir := range subDirs {
+		dirName := filepath.Base(dir)
+		if match := seasonDirReg.FindStringSubmatch(dirName); match != nil {
+			seasonNum := 1
+			fmt.Sscanf(match[1], "%d", &seasonNum)
+			logger.Info("[刮削] 正在刮削季目录: %s (Season %d)", dirName, seasonNum)
+			if err := s.scrapeSeasonDirectory(ctx, dir, tvDetail, seasonNum, overwrite); err != nil {
+				logger.Warn("[刮削] 季目录刮削失败 %s: %v", dir, err)
+			} else {
+				logger.Info("[刮削] 季目录刮削完成: %s", dirName)
+				seasonCount++
+			}
+		}
+	}
+	logger.Info("[刮削] 共刮削 %d 个季目录", seasonCount)
+
+	// Recursively scrape all video files (episodes)
+	videoFiles, err := fileutil.FindFiles(path, fileutil.IsVideo)
+	if err != nil {
+		return err
+	}
+	logger.Info("[刮削] 发现 %d 个剧集文件", len(videoFiles))
+
+	for i, vf := range videoFiles {
+		logger.Info("[刮削] [%d/%d] 正在刮削剧集: %s", i+1, len(videoFiles), filepath.Base(vf))
+		if err := s.scrapeTVEpisodeFile(ctx, vf, tvDetail, overwrite); err != nil {
+			logger.Warn("[刮削] 剧集刮削失败 %s: %v", vf, err)
+		} else {
+			logger.Info("[刮削] [%d/%d] 剧集刮削完成: %s", i+1, len(videoFiles), filepath.Base(vf))
 		}
 	}
 
@@ -126,9 +212,14 @@ func (s *scrapeService) ScrapePath(ctx context.Context, path string, overwrite b
 }
 
 func (s *scrapeService) scrapeSingleFile(ctx context.Context, path string, overwrite bool) error {
-	meta, details, err := s.recognizeService.Recognize(ctx, path)
+	return s.scrapeSingleFileWithType(ctx, path, overwrite, "")
+}
+
+func (s *scrapeService) scrapeSingleFileWithType(ctx context.Context, path string, overwrite bool, mediaType string) error {
+	meta, details, err := s.recognizeService.RecognizeWithType(ctx, path, mediaType)
 	if err != nil {
-		return err
+		logger.Warn("Failed to recognize file %s: %v", path, err)
+		return nil
 	}
 
 	if meta.IsMovie {
@@ -136,7 +227,7 @@ func (s *scrapeService) scrapeSingleFile(ctx context.Context, path string, overw
 		return s.scrapeMovieFile(ctx, path, movieDetail, overwrite)
 	} else {
 		tvDetail := details.(*tmdb.TVDetail)
-		return s.scrapeTVEpisodeFile(ctx, path, meta, tvDetail, overwrite)
+		return s.scrapeTVEpisodeFile(ctx, path, tvDetail, overwrite)
 	}
 }
 
@@ -188,7 +279,12 @@ func (s *scrapeService) scrapeMovieFile(ctx context.Context, path string, detail
 	return nil
 }
 
-func (s *scrapeService) scrapeTVEpisodeFile(ctx context.Context, path string, meta *parser.Metadata, detail *tmdb.TVDetail, overwrite bool) error {
+func (s *scrapeService) scrapeTVEpisodeFile(ctx context.Context, path string, detail *tmdb.TVDetail, overwrite bool) error {
+	// K2[重新识别季集信息]: Re-parse episode-specific metadata from filename
+	meta := parser.ParseFilename(path)
+	if meta.Title == "" {
+		return errors.New("failed to parse video title from filename")
+	}
 	if len(meta.Episodes) == 0 {
 		return errors.New("no episode number identified from TV filename")
 	}
@@ -231,12 +327,15 @@ func (s *scrapeService) scrapeTVEpisodeFile(ctx context.Context, path string, me
 	}
 
 	// 2. Download Episode Still (Thumbnail)
+	// L[图片别名复制 thumb -> landscape]
 	if matchedEpisode.StillPath != "" {
 		stillURL := tmdb.GetImageURL(matchedEpisode.StillPath, "w300")
 		stillDst := filepath.Join(dir, baseName+"-thumb.jpg")
 		if overwrite || !fileExists(stillDst) {
 			if err := tmdb.DownloadImage(stillURL, stillDst); err == nil {
 				_ = fileutil.ChmodWithUmask(stillDst, false)
+				// Create alias: thumb -> landscape for compatibility
+				s.createAliases(stillDst, baseName+"-landscape.jpg")
 			}
 		}
 	}
@@ -248,10 +347,16 @@ func (s *scrapeService) scrapeTVEpisodeFile(ctx context.Context, path string, me
 }
 
 func (s *scrapeService) scrapeBluRayFolder(ctx context.Context, path string, overwrite bool) error {
+	return s.scrapeBluRayFolderWithType(ctx, path, overwrite, "")
+}
+
+func (s *scrapeService) scrapeBluRayFolderWithType(ctx context.Context, path string, overwrite bool, mediaType string) error {
+	// J4[只刮削根目录 NFO / 不递归子目录]
 	// Scrape root directory of Blu-ray as if it was a movie directory
-	_, details, err := s.recognizeService.Recognize(ctx, path)
+	_, details, err := s.recognizeService.RecognizeWithType(ctx, path, mediaType)
 	if err != nil {
-		return err
+		logger.Warn("Failed to recognize Blu-ray folder %s: %v", path, err)
+		return nil
 	}
 
 	movieDetail := details.(*tmdb.MovieDetail)
@@ -268,13 +373,23 @@ func (s *scrapeService) scrapeBluRayFolder(ctx context.Context, path string, ove
 		_ = fileutil.ChmodWithUmask(nfoPath, false)
 	}
 
-	// Images
+	// Images: poster + backdrop
 	if movieDetail.PosterPath != "" {
 		posterDst := filepath.Join(path, "poster.jpg")
 		if overwrite || !fileExists(posterDst) {
 			if err := tmdb.DownloadImage(tmdb.GetImageURL(movieDetail.PosterPath, "w500"), posterDst); err == nil {
 				_ = fileutil.ChmodWithUmask(posterDst, false)
 				s.createAliases(posterDst, "folder.jpg")
+			}
+		}
+	}
+
+	if movieDetail.BackdropPath != "" {
+		backdropDst := filepath.Join(path, "backdrop.jpg")
+		if overwrite || !fileExists(backdropDst) {
+			if err := tmdb.DownloadImage(tmdb.GetImageURL(movieDetail.BackdropPath, "original"), backdropDst); err == nil {
+				_ = fileutil.ChmodWithUmask(backdropDst, false)
+				s.createAliases(backdropDst, "fanart.jpg")
 			}
 		}
 	}

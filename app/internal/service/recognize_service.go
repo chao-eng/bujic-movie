@@ -11,6 +11,7 @@ import (
 
 type RecognizeService interface {
 	Recognize(ctx context.Context, path string) (*parser.Metadata, interface{}, error)
+	RecognizeWithType(ctx context.Context, path string, mediaType string) (*parser.Metadata, interface{}, error)
 }
 
 type recognizeService struct {
@@ -23,12 +24,28 @@ func NewRecognizeService(tmdbClient *tmdb.Client) RecognizeService {
 
 // Recognize parses path, queries TMDB and selects the best matching Movie or TV show metadata
 func (s *recognizeService) Recognize(ctx context.Context, path string) (*parser.Metadata, interface{}, error) {
+	return s.RecognizeWithType(ctx, path, "")
+}
+
+// RecognizeWithType parses path and queries TMDB with optional manual media type override.
+// mediaType: "movie" forces movie search, "tv" forces TV search, "" auto-detects.
+func (s *recognizeService) RecognizeWithType(ctx context.Context, path string, mediaType string) (*parser.Metadata, interface{}, error) {
 	meta := parser.ParseFilename(path)
 	if meta.Title == "" {
 		return nil, nil, errors.New("failed to parse video title from filename")
 	}
 
-	if meta.IsMovie {
+	// Override media type if manually specified
+	isMovie := meta.IsMovie
+	if mediaType == "movie" {
+		isMovie = true
+		meta.IsMovie = true
+	} else if mediaType == "tv" {
+		isMovie = false
+		meta.IsMovie = false
+	}
+
+	if isMovie {
 		results, err := s.tmdbClient.SearchMovie(ctx, meta.Title, meta.Year)
 		if err != nil {
 			return nil, nil, err

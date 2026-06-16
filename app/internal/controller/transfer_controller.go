@@ -17,6 +17,7 @@ type TransferRequest struct {
 	Path          string `json:"path" binding:"required"`
 	Mode          string `json:"mode"`           // copy, move, link, softlink
 	OverwriteMode string `json:"overwrite_mode"` // always, never, size, latest
+	MediaType     string `json:"media_type"`     // "", "movie", "tv"
 }
 
 func NewTransferController(transferService service.TransferService) *TransferController {
@@ -34,6 +35,7 @@ func (ctrl *TransferController) Transfer(c *gin.Context) {
 	opts := service.TransferOptions{
 		Mode:          req.Mode,
 		OverwriteMode: req.OverwriteMode,
+		MediaType:     req.MediaType,
 	}
 
 	err := ctrl.transferService.SubmitTask(context.Background(), req.Path, opts)

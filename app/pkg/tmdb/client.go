@@ -95,11 +95,6 @@ func (c *Client) logRequest(urlStr string, statusCode int, duration time.Duratio
 }
 
 func (c *Client) get(ctx context.Context, path string, params map[string]string) ([]byte, error) {
-	// Wait for rate limiter
-	if err := c.limiter.Wait(ctx); err != nil {
-		return nil, err
-	}
-
 	u, err := url.Parse(c.baseURL + path)
 	if err != nil {
 		return nil, err
@@ -113,34 +108,60 @@ func (c *Client) get(ctx context.Context, path string, params map[string]string)
 	}
 	u.RawQuery = q.Encode()
 
-	req, err := http.NewRequestWithContext(ctx, "GET", u.String(), nil)
-	if err != nil {
-		c.logRequest(u.String(), 0, 0, nil, err)
-		return nil, err
+	var lastErr error
+	for attempt := 0; attempt < 3; attempt++ {
+		if attempt > 0 {
+			backoff := time.Duration(attempt) * time.Second
+			select {
+			case <-ctx.Done():
+				return nil, ctx.Err()
+			case <-time.After(backoff):
+			}
+		}
+
+		// Wait for rate limiter
+		if err := c.limiter.Wait(ctx); err != nil {
+			return nil, err
+		}
+
+		req, err := http.NewRequestWithContext(ctx, "GET", u.String(), nil)
+		if err != nil {
+			c.logRequest(u.String(), 0, 0, nil, err)
+			return nil, err
+		}
+
+		startTime := time.Now()
+		resp, err := c.httpClient.Do(req)
+		duration := time.Since(startTime)
+		if err != nil {
+			c.logRequest(u.String(), 0, duration, nil, err)
+			lastErr = err
+			continue
+		}
+
+		body, err := io.ReadAll(resp.Body)
+		resp.Body.Close()
+		if err != nil {
+			c.logRequest(u.String(), resp.StatusCode, duration, nil, err)
+			lastErr = err
+			continue
+		}
+
+		c.logRequest(u.String(), resp.StatusCode, duration, body, nil)
+
+		if resp.StatusCode == http.StatusTooManyRequests {
+			lastErr = fmt.Errorf("tmdb api rate limited: status %d", resp.StatusCode)
+			continue
+		}
+
+		if resp.StatusCode != http.StatusOK {
+			return nil, fmt.Errorf("tmdb api error: status %d, body %s", resp.StatusCode, string(body))
+		}
+
+		return body, nil
 	}
 
-	startTime := time.Now()
-	resp, err := c.httpClient.Do(req)
-	duration := time.Since(startTime)
-	if err != nil {
-		c.logRequest(u.String(), 0, duration, nil, err)
-		return nil, err
-	}
-	defer resp.Body.Close()
-
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		c.logRequest(u.String(), resp.StatusCode, duration, nil, err)
-		return nil, err
-	}
-
-	c.logRequest(u.String(), resp.StatusCode, duration, body, nil)
-
-	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("tmdb api error: status %d, body %s", resp.StatusCode, string(body))
-	}
-
-	return body, nil
+	return nil, fmt.Errorf("tmdb api request failed after 3 attempts, last error: %w", lastErr)
 }
 
 // SearchMovie searches for movies by title and optional year

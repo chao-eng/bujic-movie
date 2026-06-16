@@ -30,6 +30,7 @@ type TransferOptions struct {
 	Mode          string // copy, move, link, softlink
 	OverwriteMode string // always, never, size, latest
 	AutoScrape    bool
+	MediaType     string // "", "movie", "tv" - 手动指定媒体类型，空字符串表示自动识别
 }
 
 type TransferTask struct {
@@ -39,6 +40,7 @@ type TransferTask struct {
 	Progress  float64   `json:"progress"`
 	Message   string    `json:"message"`
 	CreatedAt time.Time `json:"created_at"`
+	MediaType string    `json:"media_type"` // 手动指定的媒体类型
 }
 
 type transferService struct {
@@ -113,6 +115,7 @@ func (s *transferService) SubmitTask(ctx context.Context, srcPath string, opts T
 		SrcPath:   srcPath,
 		Status:    "queued",
 		CreatedAt: time.Now(),
+		MediaType: opts.MediaType,
 	}
 
 	s.queue = append(s.queue, task)
@@ -153,14 +156,14 @@ func (s *transferService) worker() {
 		case <-s.ctx.Done():
 			return
 		case task := <-s.taskChan:
-			logger.Info("Starting transfer task %s for path: %s", task.ID, task.SrcPath)
+			logger.Info("[整理] 开始任务 %s, 源路径: %s", task.ID, task.SrcPath)
 			s.updateTaskStatus(task.ID, "running", 0, "")
 			err := s.executeTransfer(task)
 			if err != nil {
-				logger.Error("Transfer task %s failed: %v", task.ID, err)
+				logger.Error("[整理] 任务 %s 失败: %v", task.ID, err)
 				s.updateTaskStatus(task.ID, "failed", 0, err.Error())
 			} else {
-				logger.Info("Transfer task %s completed successfully", task.ID)
+				logger.Info("[整理] 任务 %s 完成", task.ID)
 				s.updateTaskStatus(task.ID, "success", 100, "completed")
 			}
 		}
@@ -190,6 +193,8 @@ func (s *transferService) executeTransfer(task *TransferTask) error {
 	srcPath := task.SrcPath
 	isDir := s.storage.IsDir(srcPath)
 
+	logger.Info("[整理] 源路径: %s, 类型: %s", srcPath, map[bool]string{true: "目录", false: "单个文件"}[isDir])
+
 	// Fetch configurations
 	ignoreExts := make(map[string]bool)
 	for _, ext := range s.config.Transfer.IgnoreExtensions {
@@ -198,16 +203,21 @@ func (s *transferService) executeTransfer(task *TransferTask) error {
 	minSize := s.config.Transfer.MinFileSizeMB * 1024 * 1024
 
 	// Recognize metadata
-	meta, details, err := s.recognizeService.Recognize(context.Background(), srcPath)
+	logger.Info("[整理] 正在识别媒体信息...")
+	meta, details, err := s.recognizeService.RecognizeWithType(context.Background(), srcPath, task.MediaType)
 	if err != nil {
+		logger.Warn("[整理] 识别失败: %v", err)
 		s.recordHistory(srcPath, "", "failed", 0, err.Error())
 		return err
 	}
+	mediaType := map[bool]string{true: "电影", false: "电视剧"}[meta.IsMovie]
+	logger.Info("[整理] 识别成功: %s (%s)", meta.Title, mediaType)
 
 	if isDir {
 		// Verify if it is Blu-ray folder
 		if s.storage.IsBluray(srcPath) {
-			return s.transferBluRay(srcPath, meta, details)
+			logger.Info("[整理] 检测到蓝光原盘目录")
+			return s.transferBluRay(srcPath, meta, details, task.MediaType)
 		}
 
 		// Recurse directory and transfer files
@@ -215,42 +225,52 @@ func (s *transferService) executeTransfer(task *TransferTask) error {
 		if err != nil {
 			return err
 		}
+		logger.Info("[整理] 发现 %d 个视频文件", len(videoFiles))
 
 		var lastDestDir string
 		var totalSize int64
 
-		for _, vf := range videoFiles {
+		for i, vf := range videoFiles {
 			// Check ignore list and size limit
 			info, err := os.Stat(vf)
 			if err != nil {
+				logger.Warn("[整理] 无法获取文件信息 %s: %v", vf, err)
 				continue
 			}
 			if info.Size() < minSize {
+				logger.Info("[整理] 跳过小文件: %s (%.2f MB)", filepath.Base(vf), float64(info.Size())/1024/1024)
 				continue // Skip samples/short video clips
 			}
 
+			logger.Info("[整理] [%d/%d] 正在整理: %s", i+1, len(videoFiles), filepath.Base(vf))
 			destPath, err := s.transferSingleVideoFile(vf, meta, details)
 			if err != nil {
+				logger.Error("[整理] 整理失败 %s: %v", vf, err)
 				return err
 			}
+			logger.Info("[整理] [%d/%d] 整理完成: %s -> %s", i+1, len(videoFiles), filepath.Base(vf), destPath)
 			lastDestDir = filepath.Dir(destPath)
 			totalSize += info.Size()
 		}
 
 		// Transfer subtitles accompanying
+		logger.Info("[整理] 正在处理字幕文件...")
 		_ = s.transferSubtitlesForDir(srcPath, lastDestDir, meta)
 
 		// Move mode: clean up source directory
 		if s.config.Transfer.Mode == "move" {
+			logger.Info("[整理] Move 模式: 清理源目录")
 			_ = s.storage.Delete(srcPath)
 		}
 
 		// Trigger batch scrape debounce
 		if lastDestDir != "" && s.config.Transfer.AutoScrape {
-			s.debounceScrape(lastDestDir)
+			logger.Info("[整理] 触发自动刮削 (防抖): %s", lastDestDir)
+			s.debounceScrape(lastDestDir, task.MediaType)
 		}
 
 		s.recordHistory(srcPath, lastDestDir, "success", totalSize, "directory transfer complete")
+		logger.Info("[整理] 目录整理完成, 总大小: %.2f MB", float64(totalSize)/1024/1024)
 		return nil
 	} else {
 		// Single File Transfer
@@ -259,26 +279,33 @@ func (s *transferService) executeTransfer(task *TransferTask) error {
 			return err
 		}
 
+		logger.Info("[整理] 正在整理单个文件: %s", filepath.Base(srcPath))
 		destPath, err := s.transferSingleVideoFile(srcPath, meta, details)
 		if err != nil {
+			logger.Error("[整理] 整理失败: %v", err)
 			s.recordHistory(srcPath, "", "failed", info.Size(), err.Error())
 			return err
 		}
+		logger.Info("[整理] 整理完成: %s -> %s", filepath.Base(srcPath), destPath)
 
 		// Subtitles随行 for single file
+		logger.Info("[整理] 正在处理字幕文件...")
 		_ = s.transferAccompanyingSubtitles(srcPath, destPath, meta)
 
 		// Move mode: delete source file
 		if s.config.Transfer.Mode == "move" {
+			logger.Info("[整理] Move 模式: 删除源文件")
 			_ = s.storage.Delete(srcPath)
 		}
 
 		// Trigger batch scrape debounce
 		if s.config.Transfer.AutoScrape {
-			s.debounceScrape(filepath.Dir(destPath))
+			logger.Info("[整理] 触发自动刮削 (防抖): %s", filepath.Dir(destPath))
+			s.debounceScrape(filepath.Dir(destPath), task.MediaType)
 		}
 
 		s.recordHistory(srcPath, destPath, "success", info.Size(), "file transfer complete")
+		logger.Info("[整理] 单个文件整理完成, 大小: %.2f MB", float64(info.Size())/1024/1024)
 		return nil
 	}
 }
@@ -291,6 +318,7 @@ func (s *transferService) transferSingleVideoFile(srcPath string, meta *parser.M
 		movieDetail := details.(*tmdb.MovieDetail)
 		destSubdir, destFilename = s.namingService.GetMoviePath(movieDetail.Title, meta.Year, meta.Resolution, ext)
 		destSubdir = filepath.Join(s.config.Media.MoviePath, destSubdir)
+		logger.Info("[整理] 电影目标路径: %s", filepath.Join(destSubdir, destFilename))
 	} else {
 		tvDetail := details.(*tmdb.TVDetail)
 		// Find episode title from TMDB
@@ -308,21 +336,25 @@ func (s *transferService) transferSingleVideoFile(srcPath string, meta *parser.M
 
 		destSubdir, destFilename = s.namingService.GetTVPath(tvDetail.Name, meta.Year, meta.Season, meta.Episodes[0], epTitle, ext)
 		destSubdir = filepath.Join(s.config.Media.TVPath, destSubdir)
+		logger.Info("[整理] 电视剧目标路径: %s", filepath.Join(destSubdir, destFilename))
 	}
 
 	destPath := filepath.Join(destSubdir, destFilename)
 
 	// Check for overwrite conflicts
 	if err := s.handleOverwrite(srcPath, destPath); err != nil {
+		logger.Warn("[整理] 覆盖检查失败: %v", err)
 		return "", err
 	}
 
 	// Create directories and perform transfer
+	logger.Info("[整理] 正在创建目标目录: %s", destSubdir)
 	if err := s.storage.Mkdir(destSubdir); err != nil {
 		return "", err
 	}
 
 	mode := s.config.Transfer.Mode
+	logger.Info("[整理] 执行 %s 操作: %s -> %s", mode, filepath.Base(srcPath), destPath)
 	var err error
 	switch mode {
 	case "copy":
@@ -338,6 +370,7 @@ func (s *transferService) transferSingleVideoFile(srcPath string, meta *parser.M
 	}
 
 	if err != nil {
+		logger.Error("[整理] %s 操作失败: %v", mode, err)
 		return "", err
 	}
 
@@ -345,7 +378,7 @@ func (s *transferService) transferSingleVideoFile(srcPath string, meta *parser.M
 	return destPath, nil
 }
 
-func (s *transferService) transferBluRay(srcPath string, meta *parser.Metadata, details interface{}) error {
+func (s *transferService) transferBluRay(srcPath string, meta *parser.Metadata, details interface{}, mediaType string) error {
 	var destDir string
 	if meta.IsMovie {
 		movieDetail := details.(*tmdb.MovieDetail)
@@ -357,6 +390,7 @@ func (s *transferService) transferBluRay(srcPath string, meta *parser.Metadata, 
 		destDir = s.namingService.GetTVBlurayPath(tvDetail.Name, meta.Year, meta.Season, srcDirName)
 		destDir = filepath.Join(s.config.Media.TVPath, destDir)
 	}
+	logger.Info("[整理] 蓝光原盘目标路径: %s", destDir)
 
 	if err := s.storage.Mkdir(destDir); err != nil {
 		return err
@@ -365,6 +399,7 @@ func (s *transferService) transferBluRay(srcPath string, meta *parser.Metadata, 
 	// Blu-ray folder structure must be copied completely (can't link subparts or it will break Blu-ray menu)
 	// We run copy or move depending on configuration
 	mode := s.config.Transfer.Mode
+	logger.Info("[整理] 执行蓝光原盘 %s 操作: %s -> %s", mode, srcPath, destDir)
 	var err error
 	if mode == "move" {
 		err = s.storage.Move(srcPath, destDir)
@@ -373,12 +408,15 @@ func (s *transferService) transferBluRay(srcPath string, meta *parser.Metadata, 
 	}
 
 	if err != nil {
+		logger.Error("[整理] 蓝光原盘 %s 操作失败: %v", mode, err)
 		s.recordHistory(srcPath, destDir, "failed", 0, err.Error())
 		return err
 	}
 
+	logger.Info("[整理] 蓝光原盘整理完成: %s", destDir)
 	if s.config.Transfer.AutoScrape {
-		s.debounceScrape(destDir)
+		logger.Info("[整理] 触发自动刮削 (防抖): %s", destDir)
+		s.debounceScrape(destDir, mediaType)
 	}
 
 	s.recordHistory(srcPath, destDir, "success", 0, "Blu-ray folder transfer complete")
@@ -392,10 +430,12 @@ func (s *transferService) handleOverwrite(srcPath, destPath string) error {
 	}
 
 	overwriteMode := s.config.Transfer.OverwriteMode
+	logger.Info("[整理] 目标文件已存在, 覆盖模式: %s", overwriteMode)
 	switch overwriteMode {
 	case "never":
 		return fmt.Errorf("file already exists and overwrite mode is 'never': %s", destPath)
 	case "always":
+		logger.Info("[整理] 覆盖模式 always: 删除旧文件")
 		return s.storage.Delete(destPath)
 	case "size":
 		srcInfo, err := os.Stat(srcPath)
@@ -403,15 +443,18 @@ func (s *transferService) handleOverwrite(srcPath, destPath string) error {
 			return err
 		}
 		if srcInfo.Size() > destInfo.Size() {
-			// Overwrite because new version is larger (higher bitrate)
+			logger.Info("[整理] 覆盖模式 size: 源文件更大 (%.2f MB > %.2f MB), 执行覆盖", float64(srcInfo.Size())/1024/1024, float64(destInfo.Size())/1024/1024)
 			return s.storage.Delete(destPath)
 		}
+		logger.Info("[整理] 覆盖模式 size: 源文件不大于目标文件, 跳过")
 		return fmt.Errorf("skipped overwrite: source file size is not larger than existing destination")
 	case "latest":
 		// Only delete existing files matching video formats, leaving subtitles and other configs intact
 		if fileutil.IsVideo(destPath) {
+			logger.Info("[整理] 覆盖模式 latest: 删除旧视频文件")
 			return s.storage.Delete(destPath)
 		}
+		logger.Info("[整理] 覆盖模式 latest: 非视频文件, 跳过")
 		return nil
 	default:
 		return fmt.Errorf("unknown overwrite mode: %s", overwriteMode)
@@ -475,7 +518,7 @@ func (s *transferService) transferSubtitlesForDir(srcDir, destDir string, meta *
 	return nil
 }
 
-func (s *transferService) debounceScrape(dirPath string) {
+func (s *transferService) debounceScrape(dirPath string, mediaType string) {
 	s.debounceMu.Lock()
 	defer s.debounceMu.Unlock()
 
@@ -490,9 +533,13 @@ func (s *transferService) debounceScrape(dirPath string) {
 		delete(s.debounceTimers, dirPath)
 		s.debounceMu.Unlock()
 
-		logger.Info("Debounced scrape triggered for folder: %s", dirPath)
+		logger.Info("[整理] 触发自动刮削 (防抖): %s", dirPath)
 		ctx := context.Background()
-		_ = s.scrapeService.ScrapePath(ctx, dirPath, false)
+		if err := s.scrapeService.ScrapePathWithType(ctx, dirPath, false, mediaType); err != nil {
+			logger.Error("[整理] 自动刮削失败 %s: %v", dirPath, err)
+		} else {
+			logger.Info("[整理] 自动刮削完成: %s", dirPath)
+		}
 	})
 }
 

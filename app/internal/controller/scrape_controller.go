@@ -15,6 +15,7 @@ type ScrapeController struct {
 type ScrapeRequest struct {
 	Path      string `json:"path" binding:"required"`
 	Overwrite bool   `json:"overwrite"`
+	MediaType string `json:"media_type"` // "", "movie", "tv"
 }
 
 func NewScrapeController(scrapeService service.ScrapeService) *ScrapeController {
@@ -31,7 +32,7 @@ func (ctrl *ScrapeController) Scrape(c *gin.Context) {
 
 	// Run scrape task in background goroutine to prevent HTTP timeout
 	go func() {
-		_ = ctrl.scrapeService.ScrapePath(context.Background(), req.Path, req.Overwrite)
+		_ = ctrl.scrapeService.ScrapePathWithType(context.Background(), req.Path, req.Overwrite, req.MediaType)
 	}()
 
 	response.Success(c, gin.H{

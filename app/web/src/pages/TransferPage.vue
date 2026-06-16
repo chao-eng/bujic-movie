@@ -9,6 +9,7 @@ import { Folder, File, ArrowLeft, Loader2, ArrowLeftRight, CheckCircle2 } from '
 const selectedPath = ref('')
 const transferMode = ref('link')
 const overwriteMode = ref('size')
+const mediaType = ref('')
 
 const currentDir = ref('/')
 const fileItems = ref<any[]>([])
@@ -94,6 +95,7 @@ const triggerTransfer = async () => {
       path: selectedPath.value,
       mode: transferMode.value,
       overwrite_mode: overwriteMode.value,
+      media_type: mediaType.value,
     })
 
     if (res.code === 0) {
@@ -229,6 +231,15 @@ onUnmounted(() => {
               <option value="size">大文件覆盖小文件</option>
               <option value="latest">仅覆盖同集视频</option>
             </select>
+          </div>
+          <div class="space-y-1.5">
+            <label class="text-xs font-semibold text-slate-400">媒体类型</label>
+            <select v-model="mediaType" class="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-sm focus:outline-none text-slate-100 focus:border-amber-500">
+              <option value="">自动识别</option>
+              <option value="movie">电影 (Movie)</option>
+              <option value="tv">电视剧 (TV)</option>
+            </select>
+            <p class="text-[10px] text-slate-500">手动指定可避免自动识别错误</p>
           </div>
           <Button
             @click="triggerTransfer"

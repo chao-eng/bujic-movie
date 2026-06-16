@@ -21,6 +21,10 @@ func (m *mockScrapeService) ScrapePath(ctx context.Context, path string, overwri
 	return nil
 }
 
+func (m *mockScrapeService) ScrapePathWithType(ctx context.Context, path string, overwrite bool, mediaType string) error {
+	return nil
+}
+
 func TestTransferService(t *testing.T) {
 	// 1. Setup GORM Memory Database
 	db, err := gorm.Open(sqlite.Open("file::memory:?cache=shared"), &gorm.Config{})

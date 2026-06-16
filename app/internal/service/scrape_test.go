@@ -19,7 +19,16 @@ type mockRecognizeService struct {
 }
 
 func (m *mockRecognizeService) Recognize(ctx context.Context, path string) (*parser.Metadata, interface{}, error) {
+	return m.RecognizeWithType(ctx, path, "")
+}
+
+func (m *mockRecognizeService) RecognizeWithType(ctx context.Context, path string, mediaType string) (*parser.Metadata, interface{}, error) {
 	meta := parser.ParseFilename(path)
+	if mediaType == "movie" {
+		meta.IsMovie = true
+	} else if mediaType == "tv" {
+		meta.IsMovie = false
+	}
 	return meta, m.details, nil
 }
 
