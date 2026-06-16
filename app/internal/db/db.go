@@ -1,10 +1,10 @@
 package db
 
 import (
-	"log"
 	"os"
 	"path/filepath"
 
+	"github.com/bujic-movie/bujic-movie/pkg/logger"
 	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
 )
@@ -24,6 +24,6 @@ func InitDB(dbPath string) (*gorm.DB, error) {
 	}
 
 	DB = database
-	log.Printf("Database successfully initialized at: %s", dbPath)
+	logger.Info("Database successfully initialized at: %s", dbPath)
 	return DB, nil
 }

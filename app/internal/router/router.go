@@ -49,6 +49,7 @@ func SetupRouter(db *gorm.DB, cfg *config.Config) *gin.Engine {
 	settingCtrl := controller.NewSettingController(tmdbClient)
 	fileCtrl := controller.NewFileController(stg)
 	wsCtrl := controller.NewWSController()
+	dashboardCtrl := controller.NewDashboardController(mediaRepo, historyRepo)
 
 	// Public Routes
 	api := r.Group("/api/v1")
@@ -81,6 +82,9 @@ func SetupRouter(db *gorm.DB, cfg *config.Config) *gin.Engine {
 
 		// File Browser
 		protected.GET("/files", fileCtrl.List)
+
+		// Dashboard
+		protected.GET("/dashboard/stats", dashboardCtrl.GetStats)
 	}
 
 	// Serve Static Frontend Files

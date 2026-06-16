@@ -7,6 +7,7 @@ import (
 	"github.com/bujic-movie/bujic-movie/internal/config"
 	"github.com/bujic-movie/bujic-movie/internal/db"
 	"github.com/bujic-movie/bujic-movie/internal/router"
+	"github.com/bujic-movie/bujic-movie/pkg/logger"
 	"github.com/gin-gonic/gin"
 )
 
@@ -16,6 +17,7 @@ func main() {
 	if err != nil {
 		log.Fatalf("Failed to load configuration: %v", err)
 	}
+	logger.Info("Configuration loaded successfully from config.yaml")
 
 	// 2. Set Gin mode
 	gin.SetMode(cfg.Server.Mode)
@@ -31,7 +33,7 @@ func main() {
 
 	// 5. Run Server
 	addr := fmt.Sprintf(":%d", cfg.Server.Port)
-	log.Printf("Server is starting on %s...", addr)
+	logger.Info("Server is starting on %s...", addr)
 	if err := r.Run(addr); err != nil {
 		log.Fatalf("Failed to start server: %v", err)
 	}

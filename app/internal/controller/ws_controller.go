@@ -4,7 +4,9 @@ import (
 	"log"
 	"net/http"
 	"sync"
+	"time"
 
+	"github.com/bujic-movie/bujic-movie/pkg/logger"
 	"github.com/gin-gonic/gin"
 	"github.com/gorilla/websocket"
 )
@@ -26,6 +28,15 @@ func NewWSController() *WSController {
 	GlobalWSController = &WSController{
 		clients: make(map[*websocket.Conn]bool),
 	}
+
+	logger.LogBroadcaster = func(level string, message string) {
+		GlobalWSController.Broadcast("log", map[string]string{
+			"timestamp": time.Now().Format("2006-01-02 15:04:05"),
+			"level":     level,
+			"message":   message,
+		})
+	}
+
 	return GlobalWSController
 }
 

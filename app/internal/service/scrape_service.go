@@ -46,6 +46,15 @@ func NewScrapeService(
 
 // ScrapePath handles scraping metadata for a given path (file or directory)
 func (s *scrapeService) ScrapePath(ctx context.Context, path string, overwrite bool) error {
+	// Redirect Season folder to the TV show root directory
+	if s.storage.IsDir(path) {
+		dirName := filepath.Base(path)
+		seasonDirReg := regexp.MustCompile(`(?i)\b(season|specials?)\s*\d*\b`)
+		if seasonDirReg.MatchString(dirName) {
+			path = filepath.Dir(path)
+		}
+	}
+
 	isDir := s.storage.IsDir(path)
 
 	if !isDir {

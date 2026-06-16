@@ -14,6 +14,7 @@ type MediaRepository interface {
 	List(offset, limit int) ([]entity.Media, error)
 	Search(query string) ([]entity.Media, error)
 	Delete(id uint) error
+	Count(mediaType string) (int64, error)
 }
 
 type mediaRepository struct {
@@ -75,4 +76,10 @@ func (r *mediaRepository) Search(query string) ([]entity.Media, error) {
 
 func (r *mediaRepository) Delete(id uint) error {
 	return r.db.Delete(&entity.Media{}, id).Error
+}
+
+func (r *mediaRepository) Count(mediaType string) (int64, error) {
+	var count int64
+	err := r.db.Model(&entity.Media{}).Where("type = ?", mediaType).Count(&count).Error
+	return count, err
 }

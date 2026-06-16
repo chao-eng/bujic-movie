@@ -15,6 +15,7 @@ import (
 	"github.com/bujic-movie/bujic-movie/internal/repository"
 	"github.com/bujic-movie/bujic-movie/internal/storage"
 	"github.com/bujic-movie/bujic-movie/pkg/fileutil"
+	"github.com/bujic-movie/bujic-movie/pkg/logger"
 	"github.com/bujic-movie/bujic-movie/pkg/parser"
 	"github.com/bujic-movie/bujic-movie/pkg/tmdb"
 )
@@ -152,11 +153,14 @@ func (s *transferService) worker() {
 		case <-s.ctx.Done():
 			return
 		case task := <-s.taskChan:
+			logger.Info("Starting transfer task %s for path: %s", task.ID, task.SrcPath)
 			s.updateTaskStatus(task.ID, "running", 0, "")
 			err := s.executeTransfer(task)
 			if err != nil {
+				logger.Error("Transfer task %s failed: %v", task.ID, err)
 				s.updateTaskStatus(task.ID, "failed", 0, err.Error())
 			} else {
+				logger.Info("Transfer task %s completed successfully", task.ID)
 				s.updateTaskStatus(task.ID, "success", 100, "completed")
 			}
 		}
@@ -486,7 +490,7 @@ func (s *transferService) debounceScrape(dirPath string) {
 		delete(s.debounceTimers, dirPath)
 		s.debounceMu.Unlock()
 
-		fmt.Printf("Debounced scrape triggered for folder: %s\n", dirPath)
+		logger.Info("Debounced scrape triggered for folder: %s", dirPath)
 		ctx := context.Background()
 		_ = s.scrapeService.ScrapePath(ctx, dirPath, false)
 	})
