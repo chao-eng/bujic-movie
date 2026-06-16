@@ -2,6 +2,7 @@ package controller
 
 import (
 	"github.com/bujic-movie/bujic-movie/internal/config"
+	"github.com/bujic-movie/bujic-movie/internal/db"
 	"github.com/bujic-movie/bujic-movie/pkg/response"
 	"github.com/bujic-movie/bujic-movie/pkg/tmdb"
 	"github.com/gin-gonic/gin"
@@ -42,7 +43,7 @@ func (ctrl *SettingController) Get(c *gin.Context) {
 	})
 }
 
-// Update updates configuration parameters and persists them to yaml config file
+// Update updates configuration parameters and persists them to SQLite database
 func (ctrl *SettingController) Update(c *gin.Context) {
 	var req SettingUpdateRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -55,42 +56,40 @@ func (ctrl *SettingController) Update(c *gin.Context) {
 	// Update fields if provided
 	if req.TMDBAPIKey != "" {
 		cfg.TMDB.APIKey = req.TMDBAPIKey
-		config.GlobalViper.Set("tmdb.api_key", req.TMDBAPIKey)
+		_ = db.SaveSetting("tmdb.api_key", req.TMDBAPIKey)
 		ctrl.tmdbClient.SetAPIKey(req.TMDBAPIKey)
 	}
 	if req.TMDBLanguage != "" {
 		cfg.TMDB.Language = req.TMDBLanguage
-		config.GlobalViper.Set("tmdb.language", req.TMDBLanguage)
+		_ = db.SaveSetting("tmdb.language", req.TMDBLanguage)
 	}
 	if req.MoviePath != "" {
 		cfg.Media.MoviePath = req.MoviePath
-		config.GlobalViper.Set("media.movie_path", req.MoviePath)
+		_ = db.SaveSetting("media.movie_path", req.MoviePath)
 	}
 	if req.TVPath != "" {
 		cfg.Media.TVPath = req.TVPath
-		config.GlobalViper.Set("media.tv_path", req.TVPath)
+		_ = db.SaveSetting("media.tv_path", req.TVPath)
 	}
 	if req.DownloadPath != "" {
 		cfg.Media.DownloadPath = req.DownloadPath
-		config.GlobalViper.Set("media.download_path", req.DownloadPath)
+		_ = db.SaveSetting("media.download_path", req.DownloadPath)
 	}
 	if req.TransferMode != "" {
 		cfg.Transfer.Mode = req.TransferMode
-		config.GlobalViper.Set("transfer.mode", req.TransferMode)
+		_ = db.SaveSetting("transfer.mode", req.TransferMode)
 	}
 	if req.Overwrite != "" {
 		cfg.Transfer.OverwriteMode = req.Overwrite
-		config.GlobalViper.Set("transfer.overwrite_mode", req.Overwrite)
+		_ = db.SaveSetting("transfer.overwrite_mode", req.Overwrite)
 	}
 	if req.AutoScrape != nil {
 		cfg.Transfer.AutoScrape = *req.AutoScrape
-		config.GlobalViper.Set("transfer.auto_scrape", *req.AutoScrape)
-	}
-
-	// Persist back to configurations file
-	if err := config.GlobalViper.WriteConfig(); err != nil {
-		// If config file is not yet created, we write to default path
-		_ = config.GlobalViper.SafeWriteConfig()
+		val := "false"
+		if *req.AutoScrape {
+			val = "true"
+		}
+		_ = db.SaveSetting("transfer.auto_scrape", val)
 	}
 
 	response.Success(c, gin.H{

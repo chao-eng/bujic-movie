@@ -17,7 +17,7 @@ func main() {
 	if err != nil {
 		log.Fatalf("Failed to load configuration: %v", err)
 	}
-	logger.Info("Configuration loaded successfully from config.yaml")
+	logger.Info("Configuration loaded successfully from defaults and environment")
 
 	// 2. Set Gin mode
 	gin.SetMode(cfg.Server.Mode)
@@ -26,6 +26,11 @@ func main() {
 	database, err := db.InitDB(cfg.Database.DBPath)
 	if err != nil {
 		log.Fatalf("Failed to initialize database: %v", err)
+	}
+
+	// 3b. Load all other application settings from SQLite DB
+	if err := db.LoadSettingsFromDB(database, cfg); err != nil {
+		log.Fatalf("Failed to load settings from database: %v", err)
 	}
 
 	// 4. Setup Router (injecting database and config dependencies)
