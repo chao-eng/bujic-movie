@@ -4,12 +4,15 @@ import client from '@/api/client'
 import { Card, CardHeader, CardTitle, CardDescription, CardContent } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
 import { Button } from '@/components/ui/button'
-import { Folder, File, ArrowLeft, Loader2, ArrowLeftRight, CheckCircle2 } from 'lucide-vue-next'
+import { Folder, File, ArrowLeft, Loader2, ArrowLeftRight, CheckCircle2, Film, Tv } from 'lucide-vue-next'
 
 const selectedPath = ref('')
 const transferMode = ref('link')
 const overwriteMode = ref('size')
 const mediaType = ref('')
+
+const cards = ref<any[]>([])
+const selectedCardId = ref<number | null>(null)
 
 const currentDir = ref('/')
 const fileItems = ref<any[]>([])
@@ -113,15 +116,42 @@ const triggerTransfer = async () => {
   }
 }
 
-onMounted(async () => {
-  let initialPath = '/'
+const fetchCards = async () => {
   try {
-    const res: any = await client.get('/api/v1/settings')
-    if (res.code === 0 && res.data && res.data.download_path) {
-      initialPath = res.data.download_path
+    const res: any = await client.get('/api/v1/cards')
+    if (res.code === 0) {
+      cards.value = res.data || []
     }
   } catch (err) {
-    console.error('Failed to get download_path from settings', err)
+    console.error('Failed to load cards', err)
+  }
+}
+
+const selectCard = (card: any) => {
+  selectedCardId.value = card.id
+  mediaType.value = card.media_type || ''
+  fetchFiles(card.download_path)
+}
+
+onMounted(async () => {
+  await fetchCards()
+
+  let initialPath = '/'
+  if (cards.value.length > 0) {
+    const defaultCard = cards.value.find((c: any) => c.is_default) || cards.value[0]
+    selectedCardId.value = defaultCard.id
+    mediaType.value = defaultCard.media_type || ''
+    initialPath = defaultCard.download_path || '/'
+  } else {
+    // Fallback to old settings
+    try {
+      const res: any = await client.get('/api/v1/settings')
+      if (res.code === 0 && res.data && res.data.download_path) {
+        initialPath = res.data.download_path
+      }
+    } catch (err) {
+      console.error('Failed to get download_path from settings', err)
+    }
   }
   fetchFiles(initialPath)
   fetchQueue()
@@ -150,6 +180,26 @@ onUnmounted(() => {
     <div v-if="successMsg" class="bg-green-500/10 border border-green-500/20 text-green-400 text-sm px-4 py-3 rounded-lg flex items-center gap-2">
       <CheckCircle2 class="h-5 w-5" />
       <span>{{ successMsg }}</span>
+    </div>
+
+    <!-- Card Selector -->
+    <div v-if="cards.length > 0" class="flex gap-3 overflow-x-auto pb-2">
+      <button
+        v-for="card in cards"
+        :key="card.id"
+        @click="selectCard(card)"
+        :class="[
+          'flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-all whitespace-nowrap',
+          selectedCardId === card.id
+            ? 'bg-amber-500 text-slate-950'
+            : 'bg-slate-800 text-slate-300 hover:bg-slate-700'
+        ]"
+      >
+        <Film v-if="card.media_type === 'movie'" class="h-4 w-4" />
+        <Tv v-else class="h-4 w-4" />
+        {{ card.name }}
+        <span v-if="card.is_default" class="text-[10px] opacity-70">[默认]</span>
+      </button>
     </div>
 
     <div class="grid gap-6 lg:grid-cols-3">

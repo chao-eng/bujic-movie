@@ -33,12 +33,14 @@ func SetupRouter(db *gorm.DB, cfg *config.Config) *gin.Engine {
 	// 2. Repositories Instantiation
 	mediaRepo := repository.NewMediaRepository(db)
 	historyRepo := repository.NewTransferHistoryRepository(db)
+	mediaCardRepo := repository.NewMediaCardRepository(db)
 
 	// 3. Services Instantiation
 	recognizeSvc := service.NewRecognizeService(tmdbClient)
 	scrapeSvc := service.NewScrapeService(mediaRepo, recognizeSvc, tmdbClient, stg)
 	namingSvc := service.NewNamingService()
 	transferSvc := service.NewTransferService(historyRepo, namingSvc, recognizeSvc, scrapeSvc, tmdbClient, stg, cfg)
+	mediaCardSvc := service.NewMediaCardService(mediaCardRepo)
 
 	// 4. Controllers Instantiation
 	authCtrl := controller.NewAuthController()
@@ -50,6 +52,7 @@ func SetupRouter(db *gorm.DB, cfg *config.Config) *gin.Engine {
 	fileCtrl := controller.NewFileController(stg)
 	wsCtrl := controller.NewWSController()
 	dashboardCtrl := controller.NewDashboardController(mediaRepo, historyRepo)
+	mediaCardCtrl := controller.NewMediaCardController(mediaCardSvc)
 
 	// Public Routes
 	api := r.Group("/api/v1")
@@ -85,6 +88,15 @@ func SetupRouter(db *gorm.DB, cfg *config.Config) *gin.Engine {
 
 		// Dashboard
 		protected.GET("/dashboard/stats", dashboardCtrl.GetStats)
+
+		// Media Cards
+		protected.GET("/cards", mediaCardCtrl.List)
+		protected.GET("/cards/default", mediaCardCtrl.GetDefault)
+		protected.GET("/cards/:id", mediaCardCtrl.GetByID)
+		protected.POST("/cards", mediaCardCtrl.Create)
+		protected.PUT("/cards/:id", mediaCardCtrl.Update)
+		protected.DELETE("/cards/:id", mediaCardCtrl.Delete)
+		protected.PUT("/cards/:id/default", mediaCardCtrl.SetDefault)
 	}
 
 	// Serve Static Frontend Files
