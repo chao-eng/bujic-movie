@@ -11,7 +11,6 @@ import {
   Database,
   Play,
   Terminal,
-  Loader2,
   CheckCircle2,
   XCircle
 } from 'lucide-vue-next'
@@ -25,9 +24,6 @@ const pendingCount = ref<string | number>('...')
 const successRate = ref<string>('...')
 
 // Settings and status
-const settings = ref<any>(null)
-const isTransferring = ref(false)
-const isScraping = ref(false)
 const successMsg = ref('')
 const errMsg = ref('')
 
@@ -57,90 +53,12 @@ const fetchStats = async () => {
   }
 }
 
-const fetchSettings = async () => {
-  try {
-    const res: any = await client.get('/api/v1/settings')
-    if (res.code === 0 && res.data) {
-      settings.value = res.data
-    }
-  } catch (err) {
-    console.error('Failed to fetch settings', err)
-  }
-}
-
 // Actions
-const triggerTransfer = async () => {
-  isTransferring.value = true
-  try {
-    const res: any = await client.get('/api/v1/cards')
-    if (res.code !== 0 || !res.data || res.data.length === 0) {
-      showError('请先配置媒体卡片！')
-      return
-    }
-    showSuccess('文件整理任务已提交，正在后台运行！')
-    for (const card of res.data) {
-      if (card.download_path) {
-        await client.post('/api/v1/transfer', {
-          path: card.download_path,
-          media_type: card.media_type,
-          card_id: card.id,
-        })
-      }
-    }
-    setTimeout(fetchStats, 2000)
-  } catch (err) {
-    showError('文件整理任务提交失败')
-  } finally {
-    isTransferring.value = false
-  }
-}
-
-const triggerScrape = async () => {
-  isScraping.value = true
-  try {
-    const res: any = await client.get('/api/v1/cards')
-    if (res.code !== 0 || !res.data || res.data.length === 0) {
-      showError('请先配置媒体卡片！')
-      return
-    }
-    showSuccess('全量刮削任务已提交，正在后台运行！')
-    for (const card of res.data) {
-      if (card.archive_path) {
-        await client.post('/api/v1/scrape', {
-          path: card.archive_path,
-          overwrite: false,
-          media_type: card.media_type,
-        })
-      }
-    }
-    setTimeout(fetchStats, 3000)
-  } catch (err) {
-    showError('全量刮削任务提交失败')
-  } finally {
-    isScraping.value = false
-  }
-}
 
 const navigateToTransfer = () => {
   router.push('/transfer')
 }
 
-// Toast helpers
-const showSuccess = (msg: string) => {
-  successMsg.value = msg
-  errMsg.value = ''
-  setTimeout(() => {
-    if (successMsg.value === msg) successMsg.value = ''
-  }, 5000)
-}
-
-const showError = (msg: string) => {
-  errMsg.value = msg
-  successMsg.value = ''
-  setTimeout(() => {
-    if (errMsg.value === msg) errMsg.value = ''
-  }, 5000)
-}
 
 // Setup WebSocket log stream
 const initWebSocket = () => {
@@ -194,7 +112,6 @@ const initWebSocket = () => {
 
 onMounted(() => {
   fetchStats()
-  fetchSettings()
   initWebSocket()
 })
 
@@ -273,70 +190,37 @@ onUnmounted(() => {
       </Card>
     </div>
 
-    <!-- Quick Actions / Log Panel -->
-    <div class="grid gap-6 md:grid-cols-2">
-      <!-- Actions Card -->
-      <Card class="bg-slate-900 border-slate-800 text-slate-100">
-        <CardHeader>
-          <CardTitle class="text-amber-500">快捷操作</CardTitle>
-          <CardDescription class="text-slate-400">一键触发后台整理与刮削任务</CardDescription>
-        </CardHeader>
-        <CardContent class="grid grid-cols-2 gap-4">
-          <Button
-            @click="triggerTransfer"
-            :disabled="isTransferring"
-            variant="outline"
-            class="border-slate-800 text-slate-300 hover:bg-slate-800 h-24 flex flex-col items-center justify-center gap-2"
-          >
-            <Loader2 v-if="isTransferring" class="h-6 w-6 text-amber-500 animate-spin" />
-            <ArrowLeftRight v-else class="h-6 w-6 text-amber-500" />
-            <span>执行文件整理</span>
-          </Button>
-          <Button
-            @click="triggerScrape"
-            :disabled="isScraping"
-            variant="outline"
-            class="border-slate-800 text-slate-300 hover:bg-slate-800 h-24 flex flex-col items-center justify-center gap-2"
-          >
-            <Loader2 v-if="isScraping" class="h-6 w-6 text-amber-500 animate-spin" />
-            <Sparkles v-else class="h-6 w-6 text-amber-500" />
-            <span>执行全量刮削</span>
-          </Button>
-        </CardContent>
-      </Card>
-
-      <!-- Server Logs Card -->
-      <Card class="bg-slate-900 border-slate-800 text-slate-100">
-        <CardHeader class="flex flex-row items-center justify-between pb-3">
-          <div>
-            <CardTitle class="text-slate-100 flex items-center gap-2">
-              <Terminal class="h-5 w-5 text-amber-500" />
-              <span>后台运行日志</span>
-            </CardTitle>
-            <CardDescription class="text-slate-400">实时日志通道概览</CardDescription>
+    <!-- Log Panel -->
+    <Card class="bg-slate-900 border-slate-800 text-slate-100 w-full">
+      <CardHeader class="flex flex-row items-center justify-between pb-3">
+        <div>
+          <CardTitle class="text-slate-100 flex items-center gap-2">
+            <Terminal class="h-5 w-5 text-amber-500" />
+            <span>后台运行日志</span>
+          </CardTitle>
+          <CardDescription class="text-slate-400">实时日志通道概览</CardDescription>
+        </div>
+      </CardHeader>
+      <CardContent>
+        <div
+          ref="logContainer"
+          class="bg-slate-950 p-4 rounded-lg font-mono text-xs text-slate-300 h-96 overflow-y-auto space-y-1.5 border border-slate-800"
+        >
+          <div v-for="(log, idx) in logs" :key="idx" class="flex items-start gap-2 select-text leading-relaxed">
+            <span class="text-slate-600 shrink-0">{{ log.timestamp }}</span>
+            <span :class="[
+              'shrink-0 px-1.5 py-0.5 text-[9px] font-bold rounded scale-90 origin-left uppercase',
+              log.level === 'INFO' && 'bg-blue-500/10 text-blue-400',
+              log.level === 'WARN' && 'bg-amber-500/10 text-amber-400',
+              log.level === 'ERROR' && 'bg-rose-500/10 text-rose-400'
+            ]">{{ log.level }}</span>
+            <span class="break-all whitespace-pre-wrap flex-1">{{ log.message }}</span>
           </div>
-        </CardHeader>
-        <CardContent>
-          <div
-            ref="logContainer"
-            class="bg-slate-950 p-4 rounded-lg font-mono text-xs text-slate-300 h-28 overflow-y-auto space-y-1.5 border border-slate-800"
-          >
-            <div v-for="(log, idx) in logs" :key="idx" class="flex items-start gap-2 select-text leading-relaxed">
-              <span class="text-slate-600 shrink-0">{{ log.timestamp }}</span>
-              <span :class="[
-                'shrink-0 px-1.5 py-0.5 text-[9px] font-bold rounded scale-90 origin-left uppercase',
-                log.level === 'INFO' && 'bg-blue-500/10 text-blue-400',
-                log.level === 'WARN' && 'bg-amber-500/10 text-amber-400',
-                log.level === 'ERROR' && 'bg-rose-500/10 text-rose-400'
-              ]">{{ log.level }}</span>
-              <span class="break-all whitespace-pre-wrap flex-1">{{ log.message }}</span>
-            </div>
-            <div v-if="logs.length === 0" class="text-slate-600 text-center py-6 text-sm">
-              正在开启日志通道...
-            </div>
+          <div v-if="logs.length === 0" class="text-slate-600 text-center py-20 text-sm">
+            正在开启日志通道...
           </div>
-        </CardContent>
-      </Card>
-    </div>
+        </div>
+      </CardContent>
+    </Card>
   </div>
 </template>

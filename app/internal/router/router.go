@@ -11,6 +11,7 @@ import (
 	"github.com/bujic-movie/bujic-movie/internal/repository"
 	"github.com/bujic-movie/bujic-movie/internal/service"
 	"github.com/bujic-movie/bujic-movie/internal/storage/local"
+	"github.com/bujic-movie/bujic-movie/pkg/logger"
 	"github.com/bujic-movie/bujic-movie/pkg/tmdb"
 	"github.com/gin-gonic/gin"
 	"gorm.io/gorm"
@@ -40,7 +41,12 @@ func SetupRouter(db *gorm.DB, cfg *config.Config) *gin.Engine {
 	scrapeSvc := service.NewScrapeService(mediaRepo, recognizeSvc, tmdbClient, stg)
 	namingSvc := service.NewNamingService()
 	transferSvc := service.NewTransferService(historyRepo, namingSvc, recognizeSvc, scrapeSvc, tmdbClient, stg, cfg, mediaCardRepo)
-	mediaCardSvc := service.NewMediaCardService(mediaCardRepo)
+	watcherSvc := service.NewWatcherService(transferSvc, mediaCardRepo)
+	if err := watcherSvc.Start(); err != nil {
+		// Log error but don't fail startup
+		logger.Error("Failed to start directory watcher service: %v", err)
+	}
+	mediaCardSvc := service.NewMediaCardService(mediaCardRepo, watcherSvc)
 
 	// 4. Controllers Instantiation
 	authCtrl := controller.NewAuthController()

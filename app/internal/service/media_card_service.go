@@ -16,22 +16,44 @@ type MediaCardService interface {
 }
 
 type mediaCardService struct {
-	repo repository.MediaCardRepository
+	repo       repository.MediaCardRepository
+	watcherSvc WatcherService
 }
 
-func NewMediaCardService(repo repository.MediaCardRepository) MediaCardService {
-	return &mediaCardService{repo: repo}
+func NewMediaCardService(repo repository.MediaCardRepository, watcherSvc WatcherService) MediaCardService {
+	return &mediaCardService{repo: repo, watcherSvc: watcherSvc}
 }
 
 func (s *mediaCardService) Create(card *entity.MediaCard) error {
-	return s.repo.Create(card)
+	if err := s.repo.Create(card); err != nil {
+		return err
+	}
+	if card.WatchDirectory {
+		_ = s.watcherSvc.WatchCard(card)
+	}
+	return nil
 }
 
 func (s *mediaCardService) Update(card *entity.MediaCard) error {
-	return s.repo.Update(card)
+	oldCard, err := s.repo.GetByID(card.ID)
+	if err == nil && oldCard != nil {
+		if oldCard.WatchDirectory {
+			s.watcherSvc.UnwatchCard(oldCard.ID)
+		}
+	}
+
+	if err := s.repo.Update(card); err != nil {
+		return err
+	}
+
+	if card.WatchDirectory {
+		_ = s.watcherSvc.WatchCard(card)
+	}
+	return nil
 }
 
 func (s *mediaCardService) Delete(id uint) error {
+	s.watcherSvc.UnwatchCard(id)
 	return s.repo.Delete(id)
 }
 

@@ -72,6 +72,7 @@ const openNewCard = () => {
     archive_path: '',
     media_type: 'movie',
     is_default: false,
+    watch_directory: false,
   }
   showCardForm.value = true
 }
@@ -233,6 +234,10 @@ onMounted(() => {
               <input type="checkbox" v-model="editingCard.is_default" class="rounded border-slate-700 bg-slate-950 text-amber-500 focus:ring-amber-500" />
               <span class="text-sm text-slate-300">设为默认卡片</span>
             </div>
+            <div class="flex items-center gap-2">
+              <input type="checkbox" v-model="editingCard.watch_directory" class="rounded border-slate-700 bg-slate-950 text-amber-500 focus:ring-amber-500" />
+              <span class="text-sm text-slate-300">开启实时目录监听 (自动整理)</span>
+            </div>
             <div class="flex gap-3 pt-2">
               <Button @click="saveCard" :disabled="isCardSaving" class="bg-amber-500 hover:bg-amber-600 text-slate-950 font-bold flex items-center gap-2">
                 <Loader2 v-if="isCardSaving" class="h-4 w-4 animate-spin" />
@@ -298,6 +303,12 @@ onMounted(() => {
               <div class="text-xs">
                 <span class="text-slate-500">归档到:</span>
                 <span class="text-slate-300 ml-1 font-mono">{{ card.archive_path }}</span>
+              </div>
+              <div class="text-xs">
+                <span class="text-slate-500">自动整理:</span>
+                <span :class="['ml-1 font-semibold', card.watch_directory ? 'text-amber-500' : 'text-slate-400']">
+                  {{ card.watch_directory ? '已开启目录监听' : '已关闭' }}
+                </span>
               </div>
             </CardContent>
           </Card>

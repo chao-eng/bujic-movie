@@ -16,7 +16,8 @@ type MediaCard struct {
 	DownloadPath string `gorm:"column:download_path" json:"download_path"`
 	ArchivePath  string `gorm:"column:archive_path" json:"archive_path"`
 	MediaType    string `gorm:"column:media_type" json:"media_type"` // "movie" or "tv"
-	IsDefault    bool   `gorm:"column:is_default;default:false" json:"is_default"`
+	IsDefault      bool   `gorm:"column:is_default;default:false" json:"is_default"`
+	WatchDirectory bool   `gorm:"column:watch_directory;default:false" json:"watch_directory"`
 }
 
 func (MediaCard) TableName() string {
