@@ -133,7 +133,9 @@ func (s *transferService) GetQueue() []TransferTask {
 
 	var list []TransferTask
 	for _, t := range s.queue {
-		list = append(list, *t)
+		if t.Status == "queued" || t.Status == "running" {
+			list = append(list, *t)
+		}
 	}
 	return list
 }
@@ -165,11 +167,16 @@ func (s *transferService) updateTaskStatus(id string, status string, progress fl
 	s.queueMu.Lock()
 	defer s.queueMu.Unlock()
 
-	for _, t := range s.queue {
+	for i, t := range s.queue {
 		if t.ID == id {
 			t.Status = status
 			t.Progress = progress
 			t.Message = message
+			
+			// Remove from active queue slice if finished
+			if status == "success" || status == "failed" {
+				s.queue = append(s.queue[:i], s.queue[i+1:]...)
+			}
 			break
 		}
 	}
