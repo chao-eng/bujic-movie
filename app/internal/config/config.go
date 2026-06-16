@@ -48,10 +48,12 @@ type TransferConfig struct {
 }
 
 var GlobalConfig *Config
+var GlobalViper *viper.Viper
 
 // LoadConfig loads configuration from file and environment variables
 func LoadConfig(configPath string) (*Config, error) {
 	v := viper.New()
+	GlobalViper = v
 
 	if configPath != "" {
 		v.SetConfigFile(configPath)

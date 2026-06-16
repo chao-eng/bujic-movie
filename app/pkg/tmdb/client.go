@@ -7,7 +7,10 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"os"
+	"path/filepath"
 	"strconv"
+	"strings"
 	"time"
 
 	"golang.org/x/time/rate"
@@ -40,6 +43,57 @@ func NewClient(apiKey, baseURL, language string) *Client {
 	}
 }
 
+func (c *Client) SetAPIKey(apiKey string) {
+	c.apiKey = apiKey
+}
+
+func maskAPIKey(urlStr string) string {
+	u, err := url.Parse(urlStr)
+	if err != nil {
+		return urlStr
+	}
+	q := u.Query()
+	if q.Get("api_key") != "" {
+		q.Set("api_key", "******")
+	}
+	u.RawQuery = q.Encode()
+	return u.String()
+}
+
+func (c *Client) logRequest(urlStr string, statusCode int, duration time.Duration, respBody []byte, reqErr error) {
+	logFilePath := "data/logs/tmdb_api.log"
+	dir := filepath.Dir(logFilePath)
+	if err := os.MkdirAll(dir, 0755); err != nil {
+		return
+	}
+
+	f, err := os.OpenFile(logFilePath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+	if err != nil {
+		return
+	}
+	defer f.Close()
+
+	timestamp := time.Now().Format("2006-01-02 15:04:05.000")
+	maskedURL := maskAPIKey(urlStr)
+
+	var logLine string
+	if reqErr != nil {
+		logLine = fmt.Sprintf("[%s] GET %s | DURATION: %v | ERROR: %v\n", timestamp, maskedURL, duration, reqErr)
+	} else {
+		bodySnippet := string(respBody)
+		if len(bodySnippet) > 200 {
+			bodySnippet = bodySnippet[:200] + "..."
+		}
+		bodySnippet = strings.ReplaceAll(bodySnippet, "\n", " ")
+		bodySnippet = strings.ReplaceAll(bodySnippet, "\r", "")
+
+		logLine = fmt.Sprintf("[%s] GET %s | STATUS: %d | DURATION: %v | RESPONSE: %s\n",
+			timestamp, maskedURL, statusCode, duration, bodySnippet)
+	}
+
+	_, _ = f.WriteString(logLine)
+}
+
 func (c *Client) get(ctx context.Context, path string, params map[string]string) ([]byte, error) {
 	// Wait for rate limiter
 	if err := c.limiter.Wait(ctx); err != nil {
@@ -61,21 +115,32 @@ func (c *Client) get(ctx context.Context, path string, params map[string]string)
 
 	req, err := http.NewRequestWithContext(ctx, "GET", u.String(), nil)
 	if err != nil {
+		c.logRequest(u.String(), 0, 0, nil, err)
 		return nil, err
 	}
 
+	startTime := time.Now()
 	resp, err := c.httpClient.Do(req)
+	duration := time.Since(startTime)
 	if err != nil {
+		c.logRequest(u.String(), 0, duration, nil, err)
 		return nil, err
 	}
 	defer resp.Body.Close()
 
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		c.logRequest(u.String(), resp.StatusCode, duration, nil, err)
+		return nil, err
+	}
+
+	c.logRequest(u.String(), resp.StatusCode, duration, body, nil)
+
 	if resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(resp.Body)
 		return nil, fmt.Errorf("tmdb api error: status %d, body %s", resp.StatusCode, string(body))
 	}
 
-	return io.ReadAll(resp.Body)
+	return body, nil
 }
 
 // SearchMovie searches for movies by title and optional year

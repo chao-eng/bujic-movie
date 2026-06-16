@@ -3,11 +3,13 @@ package controller
 import (
 	"github.com/bujic-movie/bujic-movie/internal/config"
 	"github.com/bujic-movie/bujic-movie/pkg/response"
+	"github.com/bujic-movie/bujic-movie/pkg/tmdb"
 	"github.com/gin-gonic/gin"
-	"github.com/spf13/viper"
 )
 
-type SettingController struct{}
+type SettingController struct {
+	tmdbClient *tmdb.Client
+}
 
 type SettingUpdateRequest struct {
 	TMDBAPIKey   string `json:"tmdb_api_key"`
@@ -20,8 +22,8 @@ type SettingUpdateRequest struct {
 	AutoScrape   *bool  `json:"auto_scrape"`
 }
 
-func NewSettingController() *SettingController {
-	return &SettingController{}
+func NewSettingController(tmdbClient *tmdb.Client) *SettingController {
+	return &SettingController{tmdbClient: tmdbClient}
 }
 
 // Get returns the current active configuration
@@ -53,41 +55,42 @@ func (ctrl *SettingController) Update(c *gin.Context) {
 	// Update fields if provided
 	if req.TMDBAPIKey != "" {
 		cfg.TMDB.APIKey = req.TMDBAPIKey
-		viper.Set("tmdb.api_key", req.TMDBAPIKey)
+		config.GlobalViper.Set("tmdb.api_key", req.TMDBAPIKey)
+		ctrl.tmdbClient.SetAPIKey(req.TMDBAPIKey)
 	}
 	if req.TMDBLanguage != "" {
 		cfg.TMDB.Language = req.TMDBLanguage
-		viper.Set("tmdb.language", req.TMDBLanguage)
+		config.GlobalViper.Set("tmdb.language", req.TMDBLanguage)
 	}
 	if req.MoviePath != "" {
 		cfg.Media.MoviePath = req.MoviePath
-		viper.Set("media.movie_path", req.MoviePath)
+		config.GlobalViper.Set("media.movie_path", req.MoviePath)
 	}
 	if req.TVPath != "" {
 		cfg.Media.TVPath = req.TVPath
-		viper.Set("media.tv_path", req.TVPath)
+		config.GlobalViper.Set("media.tv_path", req.TVPath)
 	}
 	if req.DownloadPath != "" {
 		cfg.Media.DownloadPath = req.DownloadPath
-		viper.Set("media.download_path", req.DownloadPath)
+		config.GlobalViper.Set("media.download_path", req.DownloadPath)
 	}
 	if req.TransferMode != "" {
 		cfg.Transfer.Mode = req.TransferMode
-		viper.Set("transfer.mode", req.TransferMode)
+		config.GlobalViper.Set("transfer.mode", req.TransferMode)
 	}
 	if req.Overwrite != "" {
 		cfg.Transfer.OverwriteMode = req.Overwrite
-		viper.Set("transfer.overwrite_mode", req.Overwrite)
+		config.GlobalViper.Set("transfer.overwrite_mode", req.Overwrite)
 	}
 	if req.AutoScrape != nil {
 		cfg.Transfer.AutoScrape = *req.AutoScrape
-		viper.Set("transfer.auto_scrape", *req.AutoScrape)
+		config.GlobalViper.Set("transfer.auto_scrape", *req.AutoScrape)
 	}
 
 	// Persist back to configurations file
-	if err := viper.WriteConfig(); err != nil {
+	if err := config.GlobalViper.WriteConfig(); err != nil {
 		// If config file is not yet created, we write to default path
-		_ = viper.SafeWriteConfig()
+		_ = config.GlobalViper.SafeWriteConfig()
 	}
 
 	response.Success(c, gin.H{

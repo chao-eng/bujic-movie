@@ -46,7 +46,7 @@ func SetupRouter(db *gorm.DB, cfg *config.Config) *gin.Engine {
 	scrapeCtrl := controller.NewScrapeController(scrapeSvc)
 	transferCtrl := controller.NewTransferController(transferSvc)
 	mediaCtrl := controller.NewMediaController(mediaRepo)
-	settingCtrl := controller.NewSettingController()
+	settingCtrl := controller.NewSettingController(tmdbClient)
 	fileCtrl := controller.NewFileController(stg)
 	wsCtrl := controller.NewWSController()
 
