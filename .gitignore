@@ -1,2 +1,70 @@
+# ==========================================
+# Bujic Movie Root .Gitignore Configuration
+# ==========================================
+
+# 1. OS specific files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# 2. Project References & Agent directories
 reference/
 .agents/
+
+# 3. Editor & IDE directories
+.vscode/
+.idea/
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
+
+# 4. Go Backend Artifacts
+# Compiled binaries and executables
+app/bujic-movie
+bujic-movie
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+
+# Database and runtime data files
+app/data/
+data/
+*.db
+*.db-journal
+*.sqlite
+*.sqlite3
+*.log
+
+# Local custom configuration files containing TMDB API keys and credentials
+app/configs/config.yaml
+configs/config.yaml
+
+# 5. Frontend Vue 3 + Vite + TypeScript Artifacts
+# Dependency directories
+node_modules/
+app/web/node_modules/
+
+# Production build output (managed by go:embed)
+app/dist/
+dist/
+
+# Logs and runtime caches
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.eslintcache
+.stylelintcache
+.vite
+.npm
+
+# Local environment variables
+.env.local
+.env.*.local

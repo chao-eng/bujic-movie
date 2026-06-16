@@ -1,0 +1,17 @@
+version: "3.8"
+services:
+  bujic-movie:
+    build:
+      context: ..
+      dockerfile: deployments/Dockerfile
+    container_name: bujic-movie
+    restart: unless-stopped
+    ports:
+      - "8080:8080"
+    volumes:
+      - ./data:/app/data                # 配置 + SQLite 数据库
+      - /path/to/media:/media           # 媒体库挂载
+      - /path/to/downloads:/downloads   # 下载目录挂载
+    environment:
+      - TZ=Asia/Shanghai
+      - BUJIC_TMDB_API_KEY=your_api_key_here
