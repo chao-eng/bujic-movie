@@ -70,16 +70,23 @@ const fetchSettings = async () => {
 
 // Actions
 const triggerTransfer = async () => {
-  if (!settings.value || !settings.value.download_path) {
-    showError('请先到系统设置中配置下载路径！')
-    return
-  }
   isTransferring.value = true
-  showSuccess('文件整理任务已提交，正在后台运行！')
   try {
-    await client.post('/api/v1/transfer', {
-      path: settings.value.download_path,
-    })
+    const res: any = await client.get('/api/v1/cards')
+    if (res.code !== 0 || !res.data || res.data.length === 0) {
+      showError('请先配置媒体卡片！')
+      return
+    }
+    showSuccess('文件整理任务已提交，正在后台运行！')
+    for (const card of res.data) {
+      if (card.download_path) {
+        await client.post('/api/v1/transfer', {
+          path: card.download_path,
+          media_type: card.media_type,
+          card_id: card.id,
+        })
+      }
+    }
     setTimeout(fetchStats, 2000)
   } catch (err) {
     showError('文件整理任务提交失败')
@@ -89,24 +96,22 @@ const triggerTransfer = async () => {
 }
 
 const triggerScrape = async () => {
-  if (!settings.value || (!settings.value.movie_path && !settings.value.tv_path)) {
-    showError('请先到系统设置中配置电影/电视剧归档路径！')
-    return
-  }
   isScraping.value = true
-  showSuccess('全量刮削任务已提交，正在后台运行！')
   try {
-    if (settings.value.movie_path) {
-      await client.post('/api/v1/scrape', {
-        path: settings.value.movie_path,
-        overwrite: false,
-      })
+    const res: any = await client.get('/api/v1/cards')
+    if (res.code !== 0 || !res.data || res.data.length === 0) {
+      showError('请先配置媒体卡片！')
+      return
     }
-    if (settings.value.tv_path) {
-      await client.post('/api/v1/scrape', {
-        path: settings.value.tv_path,
-        overwrite: false,
-      })
+    showSuccess('全量刮削任务已提交，正在后台运行！')
+    for (const card of res.data) {
+      if (card.archive_path) {
+        await client.post('/api/v1/scrape', {
+          path: card.archive_path,
+          overwrite: false,
+          media_type: card.media_type,
+        })
+      }
     }
     setTimeout(fetchStats, 3000)
   } catch (err) {

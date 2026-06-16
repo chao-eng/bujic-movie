@@ -8,10 +8,11 @@ import (
 	"time"
 
 	"github.com/bujic-movie/bujic-movie/internal/config"
+	"github.com/bujic-movie/bujic-movie/internal/model/entity"
 	"github.com/bujic-movie/bujic-movie/internal/repository"
 	"github.com/bujic-movie/bujic-movie/internal/storage/local"
 	"github.com/bujic-movie/bujic-movie/pkg/tmdb"
-	"gorm.io/driver/sqlite"
+	"github.com/glebarez/sqlite"
 	"gorm.io/gorm"
 )
 
@@ -85,11 +86,25 @@ func TestTransferService(t *testing.T) {
 	stg := local.NewLocalStorage()
 	namingSvc := NewNamingService()
 
-	svc := NewTransferService(repo, namingSvc, mockRec, mockScrape, tmdbClient, stg, cfg)
+	cardRepo := repository.NewMediaCardRepository(db)
+	testCard := &entity.MediaCard{
+		Name:         "Test Card",
+		DownloadPath: srcDir,
+		ArchivePath:  movieDir,
+		MediaType:    "movie",
+		IsDefault:    true,
+	}
+	if err := cardRepo.Create(testCard); err != nil {
+		t.Fatalf("Failed to create test card: %v", err)
+	}
+
+	svc := NewTransferService(repo, namingSvc, mockRec, mockScrape, tmdbClient, stg, cfg, cardRepo)
 
 	ctx := context.Background()
 	// Submit task
-	err = svc.SubmitTask(ctx, srcMovieFile, TransferOptions{})
+	err = svc.SubmitTask(ctx, srcMovieFile, TransferOptions{
+		CardID: testCard.ID,
+	})
 	if err != nil {
 		t.Fatalf("SubmitTask failed: %v", err)
 	}

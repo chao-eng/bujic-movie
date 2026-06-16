@@ -5,7 +5,7 @@ import (
 	"path/filepath"
 
 	"github.com/bujic-movie/bujic-movie/pkg/logger"
-	"gorm.io/driver/sqlite"
+	"github.com/glebarez/sqlite"
 	"gorm.io/gorm"
 )
 

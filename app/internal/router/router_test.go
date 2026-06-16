@@ -8,7 +8,7 @@ import (
 	"testing"
 
 	"github.com/bujic-movie/bujic-movie/internal/config"
-	"gorm.io/driver/sqlite"
+	"github.com/glebarez/sqlite"
 	"gorm.io/gorm"
 )
 

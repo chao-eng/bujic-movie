@@ -99,6 +99,7 @@ const triggerTransfer = async () => {
       mode: transferMode.value,
       overwrite_mode: overwriteMode.value,
       media_type: mediaType.value,
+      card_id: selectedCardId.value || undefined,
     })
 
     if (res.code === 0) {

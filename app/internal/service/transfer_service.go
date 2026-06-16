@@ -31,6 +31,7 @@ type TransferOptions struct {
 	OverwriteMode string // always, never, size, latest
 	AutoScrape    bool
 	MediaType     string // "", "movie", "tv" - 手动指定媒体类型，空字符串表示自动识别
+	CardID        uint
 }
 
 type TransferTask struct {
@@ -41,6 +42,7 @@ type TransferTask struct {
 	Message   string    `json:"message"`
 	CreatedAt time.Time `json:"created_at"`
 	MediaType string    `json:"media_type"` // 手动指定的媒体类型
+	CardID    uint      `json:"card_id"`
 }
 
 type transferService struct {
@@ -51,6 +53,7 @@ type transferService struct {
 	tmdbClient       *tmdb.Client
 	storage          storage.Storage
 	config           *config.Config
+	cardRepo         repository.MediaCardRepository
 
 	// Queue and Worker Pool
 	taskChan  chan *TransferTask
@@ -73,6 +76,7 @@ func NewTransferService(
 	tmdbClient *tmdb.Client,
 	stg storage.Storage,
 	cfg *config.Config,
+	cardRepo repository.MediaCardRepository,
 ) TransferService {
 	ctx, cancel := context.WithCancel(context.Background())
 	s := &transferService{
@@ -83,6 +87,7 @@ func NewTransferService(
 		tmdbClient:       tmdbClient,
 		storage:          stg,
 		config:           cfg,
+		cardRepo:         cardRepo,
 		taskChan:         make(chan *TransferTask, 100),
 		debounceTimers:   make(map[string]*time.Timer),
 		ctx:              ctx,
@@ -110,12 +115,20 @@ func (s *transferService) SubmitTask(ctx context.Context, srcPath string, opts T
 		opts.OverwriteMode = s.config.Transfer.OverwriteMode
 	}
 
+	if opts.CardID == 0 && s.cardRepo != nil {
+		defaultCard, err := s.cardRepo.GetDefault()
+		if err == nil && defaultCard != nil {
+			opts.CardID = defaultCard.ID
+		}
+	}
+
 	task := &TransferTask{
 		ID:        fmt.Sprintf("t-%d", time.Now().UnixNano()),
 		SrcPath:   srcPath,
 		Status:    "queued",
 		CreatedAt: time.Now(),
 		MediaType: opts.MediaType,
+		CardID:    opts.CardID,
 	}
 
 	s.queue = append(s.queue, task)
@@ -217,7 +230,7 @@ func (s *transferService) executeTransfer(task *TransferTask) error {
 		// Verify if it is Blu-ray folder
 		if s.storage.IsBluray(srcPath) {
 			logger.Info("[整理] 检测到蓝光原盘目录")
-			return s.transferBluRay(srcPath, meta, details, task.MediaType)
+			return s.transferBluRay(srcPath, meta, details, task.MediaType, task.CardID)
 		}
 
 		// Recurse directory and transfer files
@@ -243,7 +256,7 @@ func (s *transferService) executeTransfer(task *TransferTask) error {
 			}
 
 			logger.Info("[整理] [%d/%d] 正在整理: %s", i+1, len(videoFiles), filepath.Base(vf))
-			destPath, err := s.transferSingleVideoFile(vf, meta, details)
+			destPath, err := s.transferSingleVideoFile(vf, meta, details, task.CardID)
 			if err != nil {
 				logger.Error("[整理] 整理失败 %s: %v", vf, err)
 				return err
@@ -280,7 +293,7 @@ func (s *transferService) executeTransfer(task *TransferTask) error {
 		}
 
 		logger.Info("[整理] 正在整理单个文件: %s", filepath.Base(srcPath))
-		destPath, err := s.transferSingleVideoFile(srcPath, meta, details)
+		destPath, err := s.transferSingleVideoFile(srcPath, meta, details, task.CardID)
 		if err != nil {
 			logger.Error("[整理] 整理失败: %v", err)
 			s.recordHistory(srcPath, "", "failed", info.Size(), err.Error())
@@ -310,14 +323,33 @@ func (s *transferService) executeTransfer(task *TransferTask) error {
 	}
 }
 
-func (s *transferService) transferSingleVideoFile(srcPath string, meta *parser.Metadata, details interface{}) (string, error) {
+func (s *transferService) getBaseArchivePath(cardID uint) (string, error) {
+	if s.cardRepo == nil {
+		return "", errors.New("卡片仓储库未注入，无法获取归档路径")
+	}
+	card, err := s.cardRepo.GetByID(cardID)
+	if err != nil {
+		return "", fmt.Errorf("未找到指定的媒体卡片 (ID: %d): %w", cardID, err)
+	}
+	if card.ArchivePath == "" {
+		return "", fmt.Errorf("指定的媒体卡片 (ID: %d) 未配置归档路径", cardID)
+	}
+	return card.ArchivePath, nil
+}
+
+func (s *transferService) transferSingleVideoFile(srcPath string, meta *parser.Metadata, details interface{}, cardID uint) (string, error) {
 	ext := filepath.Ext(srcPath)
 	var destSubdir, destFilename string
+
+	basePath, err := s.getBaseArchivePath(cardID)
+	if err != nil {
+		return "", err
+	}
 
 	if meta.IsMovie {
 		movieDetail := details.(*tmdb.MovieDetail)
 		destSubdir, destFilename = s.namingService.GetMoviePath(movieDetail.Title, meta.Year, meta.Resolution, ext)
-		destSubdir = filepath.Join(s.config.Media.MoviePath, destSubdir)
+		destSubdir = filepath.Join(basePath, destSubdir)
 		logger.Info("[整理] 电影目标路径: %s", filepath.Join(destSubdir, destFilename))
 	} else {
 		tvDetail := details.(*tmdb.TVDetail)
@@ -335,7 +367,7 @@ func (s *transferService) transferSingleVideoFile(srcPath string, meta *parser.M
 		}
 
 		destSubdir, destFilename = s.namingService.GetTVPath(tvDetail.Name, meta.Year, meta.Season, meta.Episodes[0], epTitle, ext)
-		destSubdir = filepath.Join(s.config.Media.TVPath, destSubdir)
+		destSubdir = filepath.Join(basePath, destSubdir)
 		logger.Info("[整理] 电视剧目标路径: %s", filepath.Join(destSubdir, destFilename))
 	}
 
@@ -355,7 +387,6 @@ func (s *transferService) transferSingleVideoFile(srcPath string, meta *parser.M
 
 	mode := s.config.Transfer.Mode
 	logger.Info("[整理] 执行 %s 操作: %s -> %s", mode, filepath.Base(srcPath), destPath)
-	var err error
 	switch mode {
 	case "copy":
 		err = s.storage.Copy(srcPath, destPath)
@@ -378,17 +409,22 @@ func (s *transferService) transferSingleVideoFile(srcPath string, meta *parser.M
 	return destPath, nil
 }
 
-func (s *transferService) transferBluRay(srcPath string, meta *parser.Metadata, details interface{}, mediaType string) error {
+func (s *transferService) transferBluRay(srcPath string, meta *parser.Metadata, details interface{}, mediaType string, cardID uint) error {
+	basePath, err := s.getBaseArchivePath(cardID)
+	if err != nil {
+		return err
+	}
+
 	var destDir string
 	if meta.IsMovie {
 		movieDetail := details.(*tmdb.MovieDetail)
 		destDir, _ = s.namingService.GetMoviePath(movieDetail.Title, meta.Year, meta.Resolution, "")
-		destDir = filepath.Join(s.config.Media.MoviePath, destDir)
+		destDir = filepath.Join(basePath, destDir)
 	} else {
 		tvDetail := details.(*tmdb.TVDetail)
 		srcDirName := filepath.Base(srcPath)
 		destDir = s.namingService.GetTVBlurayPath(tvDetail.Name, meta.Year, meta.Season, srcDirName)
-		destDir = filepath.Join(s.config.Media.TVPath, destDir)
+		destDir = filepath.Join(basePath, destDir)
 	}
 	logger.Info("[整理] 蓝光原盘目标路径: %s", destDir)
 
@@ -400,7 +436,6 @@ func (s *transferService) transferBluRay(srcPath string, meta *parser.Metadata, 
 	// We run copy or move depending on configuration
 	mode := s.config.Transfer.Mode
 	logger.Info("[整理] 执行蓝光原盘 %s 操作: %s -> %s", mode, srcPath, destDir)
-	var err error
 	if mode == "move" {
 		err = s.storage.Move(srcPath, destDir)
 	} else {

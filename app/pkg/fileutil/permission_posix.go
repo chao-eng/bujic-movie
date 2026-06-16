@@ -1,7 +1,12 @@
-// go:build ignore
-// +build ignore
+// go:build !windows
+// +build !windows
 
 package fileutil
+
+import (
+	"os"
+	"syscall"
+)
 
 // GetUmask retrieves the current process umask safely
 func GetUmask() int {

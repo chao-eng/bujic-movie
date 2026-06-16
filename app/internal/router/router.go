@@ -39,7 +39,7 @@ func SetupRouter(db *gorm.DB, cfg *config.Config) *gin.Engine {
 	recognizeSvc := service.NewRecognizeService(tmdbClient)
 	scrapeSvc := service.NewScrapeService(mediaRepo, recognizeSvc, tmdbClient, stg)
 	namingSvc := service.NewNamingService()
-	transferSvc := service.NewTransferService(historyRepo, namingSvc, recognizeSvc, scrapeSvc, tmdbClient, stg, cfg)
+	transferSvc := service.NewTransferService(historyRepo, namingSvc, recognizeSvc, scrapeSvc, tmdbClient, stg, cfg, mediaCardRepo)
 	mediaCardSvc := service.NewMediaCardService(mediaCardRepo)
 
 	// 4. Controllers Instantiation
@@ -51,7 +51,7 @@ func SetupRouter(db *gorm.DB, cfg *config.Config) *gin.Engine {
 	settingCtrl := controller.NewSettingController(tmdbClient)
 	fileCtrl := controller.NewFileController(stg)
 	wsCtrl := controller.NewWSController()
-	dashboardCtrl := controller.NewDashboardController(mediaRepo, historyRepo)
+	dashboardCtrl := controller.NewDashboardController(mediaRepo, historyRepo, mediaCardRepo)
 	mediaCardCtrl := controller.NewMediaCardController(mediaCardSvc)
 
 	// Public Routes

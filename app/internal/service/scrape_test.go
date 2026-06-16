@@ -10,7 +10,7 @@ import (
 	"github.com/bujic-movie/bujic-movie/internal/storage/local"
 	"github.com/bujic-movie/bujic-movie/pkg/parser"
 	"github.com/bujic-movie/bujic-movie/pkg/tmdb"
-	"gorm.io/driver/sqlite"
+	"github.com/glebarez/sqlite"
 	"gorm.io/gorm"
 )
 
