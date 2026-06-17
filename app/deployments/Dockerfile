@@ -31,8 +31,11 @@ RUN apk add --no-cache ca-certificates tzdata
 WORKDIR /app
 COPY --from=backend-builder /app/bujic-movie .
 
+ENV BUJIC_SERVER_MODE=release
+
 EXPOSE 8080
 VOLUME ["/media", "/downloads", "/app/data"]
 ENTRYPOINT ["./bujic-movie"]
+
 
 
