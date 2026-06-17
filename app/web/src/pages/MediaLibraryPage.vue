@@ -5,6 +5,9 @@ import { Card, CardContent } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
 import { Button } from '@/components/ui/button'
 import { Search, Film, Database, Trash2, Loader2 } from 'lucide-vue-next'
+import { useConfirm } from '@/composables/useConfirm'
+
+const { confirm } = useConfirm()
 
 const medias = ref<any[]>([])
 const searchQuery = ref('')
@@ -49,7 +52,7 @@ const handleSearch = async () => {
 }
 
 const deleteMedia = async (id: number) => {
-  if (!confirm('确定要从数据库中删除该媒体记录吗？文件将保留在硬盘上。')) {
+  if (!await confirm('确定要从数据库中删除该媒体记录吗？文件将保留在硬盘上。')) {
     return
   }
 

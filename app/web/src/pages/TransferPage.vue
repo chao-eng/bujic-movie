@@ -5,6 +5,7 @@ import { Card, CardHeader, CardTitle, CardDescription, CardContent } from '@/com
 import { Input } from '@/components/ui/input'
 import { Button } from '@/components/ui/button'
 import { Folder, File, ArrowLeft, Loader2, ArrowLeftRight, CheckCircle2, Film, Tv } from 'lucide-vue-next'
+import { toast } from 'vue-sonner'
 
 const selectedPath = ref('')
 const transferMode = ref('link')
@@ -111,7 +112,7 @@ const triggerTransfer = async () => {
       }, 5000)
     }
   } catch (err: any) {
-    alert('错误: ' + (err.message || '提交失败'))
+    toast.error('错误: ' + (err.message || '提交失败'))
   } finally {
     isSubmitting.value = false
   }

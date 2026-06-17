@@ -5,6 +5,10 @@ import { Card, CardHeader, CardTitle, CardDescription, CardContent } from '@/com
 import { Input } from '@/components/ui/input'
 import { Button } from '@/components/ui/button'
 import { Save, Loader2, CheckCircle2, Plus, Trash2, Star, Film, Tv } from 'lucide-vue-next'
+import { useConfirm } from '@/composables/useConfirm'
+import { toast } from 'vue-sonner'
+
+const { confirm } = useConfirm()
 
 const settings = ref({
   tmdb_api_key: '',
@@ -89,7 +93,7 @@ const closeCardForm = () => {
 
 const saveCard = async () => {
   if (!editingCard.value.name || !editingCard.value.download_path || !editingCard.value.archive_path) {
-    alert('请填写完整信息')
+    toast.warning('请填写完整信息')
     return
   }
   isCardSaving.value = true
@@ -114,7 +118,7 @@ const saveCard = async () => {
 }
 
 const deleteCard = async (id: number) => {
-  if (!confirm('确定删除此卡片？')) return
+  if (!await confirm('确定删除此卡片？')) return
   try {
     await client.delete(`/api/v1/cards/${id}`)
     await fetchCards()
