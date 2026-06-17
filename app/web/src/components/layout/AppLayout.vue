@@ -1,6 +1,18 @@
 <script setup lang="ts">
+import { onMounted, onUnmounted } from 'vue'
 import AppSidebar from './AppSidebar.vue'
 import AppHeader from './AppHeader.vue'
+import { useLogStore } from '@/stores/logStore'
+
+const logStore = useLogStore()
+
+onMounted(() => {
+  logStore.initWebSocket()
+})
+
+onUnmounted(() => {
+  logStore.disconnect()
+})
 </script>
 
 <template>

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, onMounted, onUnmounted, nextTick } from 'vue'
+import { ref, onMounted, watch, nextTick } from 'vue'
 import client from '@/api/client'
 import { Card, CardHeader, CardTitle, CardDescription, CardContent } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
@@ -14,8 +14,10 @@ import {
   CheckCircle2,
   XCircle
 } from 'lucide-vue-next'
+import { useLogStore } from '@/stores/logStore'
 
 const router = useRouter()
+const logStore = useLogStore()
 
 // Stats
 const movieCount = ref<string | number>('...')
@@ -28,15 +30,18 @@ const successMsg = ref('')
 const errMsg = ref('')
 
 // Logs console
-const logs = ref<any[]>([])
 const logContainer = ref<HTMLElement | null>(null)
-let socket: WebSocket | null = null
 
 const scrollToBottom = () => {
   if (logContainer.value) {
     logContainer.value.scrollTop = logContainer.value.scrollHeight
   }
 }
+
+// Watch logs array length and scroll to bottom
+watch(() => logStore.logs.length, () => {
+  nextTick(scrollToBottom)
+})
 
 // Fetch stats and configuration
 const fetchStats = async () => {
@@ -54,71 +59,14 @@ const fetchStats = async () => {
 }
 
 // Actions
-
 const navigateToTransfer = () => {
   router.push('/transfer')
 }
 
-
-// Setup WebSocket log stream
-const initWebSocket = () => {
-  const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
-  const wsUrl = `${protocol}//${window.location.host}/api/v1/ws`
-  socket = new WebSocket(wsUrl)
-
-  socket.onopen = () => {
-    logs.value.push({
-      timestamp: new Date().toLocaleTimeString(),
-      level: 'INFO',
-      message: 'WebSocket 实时日志通道连接成功。',
-    })
-    nextTick(scrollToBottom)
-  }
-
-  socket.onmessage = (event) => {
-    try {
-      const msg = JSON.parse(event.data)
-      if (msg.type === 'log') {
-        logs.value.push(msg.payload)
-        if (logs.value.length > 250) {
-          logs.value.shift()
-        }
-        nextTick(scrollToBottom)
-      }
-    } catch (e) {
-      console.error('WebSocket parse error', e)
-    }
-  }
-
-  socket.onerror = () => {
-    logs.value.push({
-      timestamp: new Date().toLocaleTimeString(),
-      level: 'ERROR',
-      message: 'WebSocket 连接出现错误。',
-    })
-    nextTick(scrollToBottom)
-  }
-
-  socket.onclose = () => {
-    logs.value.push({
-      timestamp: new Date().toLocaleTimeString(),
-      level: 'WARN',
-      message: 'WebSocket 日志通道连接断开，正在尝试重连...',
-    })
-    nextTick(scrollToBottom)
-    setTimeout(initWebSocket, 5000)
-  }
-}
-
 onMounted(() => {
   fetchStats()
-  initWebSocket()
-})
-
-onUnmounted(() => {
-  if (socket) {
-    socket.close()
-  }
+  // Ensure we scroll to the bottom when entering the page if logs already exist
+  nextTick(scrollToBottom)
 })
 </script>
 
@@ -206,7 +154,7 @@ onUnmounted(() => {
           ref="logContainer"
           class="bg-slate-950 p-4 rounded-lg font-mono text-xs text-slate-300 h-96 overflow-y-auto space-y-1.5 border border-slate-800"
         >
-          <div v-for="(log, idx) in logs" :key="idx" class="flex items-start gap-2 select-text leading-relaxed">
+          <div v-for="(log, idx) in logStore.logs" :key="idx" class="flex items-start gap-2 select-text leading-relaxed">
             <span class="text-slate-600 shrink-0">{{ log.timestamp }}</span>
             <span :class="[
               'shrink-0 px-1.5 py-0.5 text-[9px] font-bold rounded scale-90 origin-left uppercase',
@@ -216,7 +164,7 @@ onUnmounted(() => {
             ]">{{ log.level }}</span>
             <span class="break-all whitespace-pre-wrap flex-1">{{ log.message }}</span>
           </div>
-          <div v-if="logs.length === 0" class="text-slate-600 text-center py-20 text-sm">
+          <div v-if="logStore.logs.length === 0" class="text-slate-600 text-center py-20 text-sm">
             正在开启日志通道...
           </div>
         </div>

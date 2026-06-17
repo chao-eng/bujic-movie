@@ -233,7 +233,13 @@ onMounted(() => {
       <Card class="bg-slate-900 border-slate-800 text-slate-100">
         <CardHeader>
           <CardTitle class="text-amber-500">TMDB API 配置</CardTitle>
-          <CardDescription class="text-slate-400">刮削媒体墙海报及 NFO 文件必须配置此项</CardDescription>
+          <CardDescription class="text-slate-400 flex items-center gap-1.5 flex-wrap">
+            <span>刮削媒体墙海报及 NFO 文件必须配置此项。</span>
+            <a href="https://www.themoviedb.org/settings/api" target="_blank" rel="noopener noreferrer" class="text-amber-500 hover:text-amber-400 hover:underline inline-flex items-center gap-0.5">
+              点此获取 API 密钥
+              <svg class="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" /></svg>
+            </a>
+          </CardDescription>
         </CardHeader>
         <CardContent class="grid gap-6 md:grid-cols-2">
           <div class="space-y-1.5">
