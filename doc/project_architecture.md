@@ -423,7 +423,7 @@ func setupStaticFiles(r *gin.Engine) {
 ### 7.1 多阶段 Dockerfile
 
 ```dockerfile
-# ===== 阶段一：前端构建 =====
+# ===== Phase 1: Frontend Build =====
 FROM node:20-alpine AS frontend-builder
 WORKDIR /app/web
 COPY web/package*.json ./
@@ -431,26 +431,23 @@ RUN npm ci
 COPY web/ .
 RUN npm run build
 
-# ===== 阶段二：Go 编译 =====
-FROM golang:1.22-alpine AS backend-builder
+# ===== Phase 2: Go Build =====
+FROM golang:1.26-alpine AS backend-builder
 WORKDIR /app
 COPY go.mod go.sum ./
 RUN go mod download
 COPY . .
-COPY --from=frontend-builder /app/web/dist ./dist
-RUN CGO_ENABLED=1 go build -o bujic-movie ./cmd/server
+COPY --from=frontend-builder /app/dist ./dist
+RUN CGO_ENABLED=0 GOOS=linux go build -o bujic-movie ./cmd/server
 
-# ===== 阶段三：最终镜像 =====
+# ===== Phase 3: Runner =====
 FROM alpine:3.19
 RUN apk add --no-cache ca-certificates tzdata
 WORKDIR /app
 COPY --from=backend-builder /app/bujic-movie .
-COPY configs/config.yaml.example ./config.yaml
 
 EXPOSE 8080
-
-VOLUME ["/media", "/downloads", "/config"]
-
+VOLUME ["/media", "/downloads", "/app/data"]
 ENTRYPOINT ["./bujic-movie"]
 ```
 
@@ -460,18 +457,19 @@ ENTRYPOINT ["./bujic-movie"]
 version: "3.8"
 services:
   bujic-movie:
-    build: .
+    build:
+      context: ..
+      dockerfile: deployments/Dockerfile
     container_name: bujic-movie
     restart: unless-stopped
     ports:
       - "8080:8080"
     volumes:
-      - ./data:/config                # 配置 + SQLite 数据库
-      - /path/to/media:/media         # 媒体库挂载
-      - /path/to/downloads:/downloads # 下载目录挂载
+      - ./data:/app/data                # 配置 + SQLite 数据库
+      - /path/to/media:/media           # 媒体库挂载
+      - /path/to/downloads:/downloads   # 下载目录挂载
     environment:
       - TZ=Asia/Shanghai
-      - TMDB_API_KEY=your_api_key_here
 ```
 
 ---

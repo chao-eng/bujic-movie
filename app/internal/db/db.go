@@ -68,6 +68,10 @@ func LoadSettingsFromDB(db *gorm.DB, cfg *config.Config) error {
 			cfg.Media.TVPath = setting.Value
 		case "media.download_path":
 			cfg.Media.DownloadPath = setting.Value
+		case "server.username":
+			cfg.Server.Username = setting.Value
+		case "server.password":
+			cfg.Server.Password = setting.Value
 		}
 	}
 	return nil

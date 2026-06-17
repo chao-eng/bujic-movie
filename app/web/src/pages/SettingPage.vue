@@ -4,9 +4,10 @@ import client from '@/api/client'
 import { Card, CardHeader, CardTitle, CardDescription, CardContent } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
 import { Button } from '@/components/ui/button'
-import { Save, Loader2, CheckCircle2, Plus, Trash2, Star, Film, Tv } from 'lucide-vue-next'
+import { Save, Loader2, CheckCircle2, Plus, Trash2, Star, Film, Tv, KeyRound } from 'lucide-vue-next'
 import { useConfirm } from '@/composables/useConfirm'
 import { toast } from 'vue-sonner'
+import { encryptAESGCM } from '@/lib/crypto'
 
 const { confirm } = useConfirm()
 
@@ -136,6 +137,67 @@ const setDefaultCard = async (id: number) => {
   }
 }
 
+// Password change state
+const currentPassword = ref('')
+const newPassword = ref('')
+const confirmNewPassword = ref('')
+const isChangingPassword = ref(false)
+
+const changePassword = async () => {
+  if (!currentPassword.value || !newPassword.value || !confirmNewPassword.value) {
+    toast.warning('请填写完整密码信息')
+    return
+  }
+  if (newPassword.value !== confirmNewPassword.value) {
+    toast.error('新密码与确认密码不一致')
+    return
+  }
+
+  isChangingPassword.value = true
+  try {
+    // 1. Fetch encryption key challenge
+    const keyRes: any = await client.get('/api/v1/auth/login-key')
+    if (keyRes.code !== 0) {
+      throw new Error(keyRes.msg || '无法获取加密密钥')
+    }
+    const { key_id, key } = keyRes.data
+
+    // 2. Encrypt both passwords with the same challenge key
+    const encryptedOld = await encryptAESGCM(currentPassword.value, key)
+    const encryptedNew = await encryptAESGCM(newPassword.value, key)
+
+    // 3. Post to password update endpoint
+    const res: any = await client.put('/api/v1/settings/password', {
+      key_id,
+      encrypted_old_password: encryptedOld.ciphertext,
+      old_iv: encryptedOld.iv,
+      encrypted_new_password: encryptedNew.ciphertext,
+      new_iv: encryptedNew.iv,
+    })
+
+    if (res.code === 0) {
+      toast.success('密码修改成功！请重新登录')
+      // Reset inputs
+      currentPassword.value = ''
+      newPassword.value = ''
+      confirmNewPassword.value = ''
+      
+      // Auto logout after 2 seconds
+      setTimeout(() => {
+        localStorage.removeItem('token')
+        window.location.href = '/login'
+      }, 2000)
+    } else {
+      toast.error(res.msg || '密码修改失败')
+    }
+  } catch (err: any) {
+    console.error('Failed to change password', err)
+    toast.error(err.response?.data?.msg || err.message || '修改密码失败，请检查当前密码是否正确')
+  } finally {
+    isChangingPassword.value = false
+  }
+}
+
 onMounted(() => {
   fetchSettings()
   fetchCards()
@@ -185,6 +247,37 @@ onMounted(() => {
               <option value="zh-TW">繁体中文 (zh-TW)</option>
               <option value="en-US">英文 (en-US)</option>
             </select>
+          </div>
+        </CardContent>
+      </Card>
+
+      <!-- Security Settings -->
+      <Card class="bg-slate-900 border-slate-800 text-slate-100">
+        <CardHeader>
+          <CardTitle class="text-amber-500 flex items-center gap-2">
+            <KeyRound class="h-5 w-5" />
+            修改登录密码
+          </CardTitle>
+          <CardDescription class="text-slate-400">为了系统安全，请定期修改控制台登录密码</CardDescription>
+        </CardHeader>
+        <CardContent class="grid gap-6 md:grid-cols-3">
+          <div class="space-y-1.5">
+            <label class="text-xs font-semibold text-slate-400">当前密码</label>
+            <Input v-model="currentPassword" type="password" placeholder="当前登录密码" class="bg-slate-950 border-slate-800 text-slate-100" />
+          </div>
+          <div class="space-y-1.5">
+            <label class="text-xs font-semibold text-slate-400">新密码</label>
+            <Input v-model="newPassword" type="password" placeholder="新登录密码" class="bg-slate-950 border-slate-800 text-slate-100" />
+          </div>
+          <div class="space-y-1.5">
+            <label class="text-xs font-semibold text-slate-400">确认新密码</label>
+            <div class="flex gap-3">
+              <Input v-model="confirmNewPassword" type="password" placeholder="确认新登录密码" class="bg-slate-950 border-slate-800 text-slate-100 flex-1" />
+              <Button @click="changePassword" :disabled="isChangingPassword" class="bg-amber-500 hover:bg-amber-600 text-slate-950 font-bold flex items-center gap-2 shrink-0 h-10 px-4">
+                <Loader2 v-if="isChangingPassword" class="h-4 w-4 animate-spin" />
+                <span>修改密码</span>
+              </Button>
+            </div>
           </div>
         </CardContent>
       </Card>

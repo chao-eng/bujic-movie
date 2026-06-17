@@ -7,6 +7,7 @@ import (
 	bujicmovie "github.com/bujic-movie/bujic-movie"
 	"github.com/bujic-movie/bujic-movie/internal/config"
 	"github.com/bujic-movie/bujic-movie/internal/controller"
+	"github.com/bujic-movie/bujic-movie/internal/db"
 	"github.com/bujic-movie/bujic-movie/internal/middleware"
 	"github.com/bujic-movie/bujic-movie/internal/repository"
 	"github.com/bujic-movie/bujic-movie/internal/service"
@@ -18,7 +19,8 @@ import (
 )
 
 // SetupRouter initializes GORM repositories, services, controllers, routes and middlewares
-func SetupRouter(db *gorm.DB, cfg *config.Config) *gin.Engine {
+func SetupRouter(gormDB *gorm.DB, cfg *config.Config) *gin.Engine {
+	db.DB = gormDB
 	config.GlobalConfig = cfg
 	r := gin.New()
 
@@ -32,9 +34,9 @@ func SetupRouter(db *gorm.DB, cfg *config.Config) *gin.Engine {
 	tmdbClient := tmdb.NewClient(cfg.TMDB.APIKey, cfg.TMDB.BaseURL, cfg.TMDB.Language)
 
 	// 2. Repositories Instantiation
-	mediaRepo := repository.NewMediaRepository(db)
-	historyRepo := repository.NewTransferHistoryRepository(db)
-	mediaCardRepo := repository.NewMediaCardRepository(db)
+	mediaRepo := repository.NewMediaRepository(gormDB)
+	historyRepo := repository.NewTransferHistoryRepository(gormDB)
+	mediaCardRepo := repository.NewMediaCardRepository(gormDB)
 
 	// 3. Services Instantiation
 	recognizeSvc := service.NewRecognizeService(tmdbClient)
@@ -64,6 +66,7 @@ func SetupRouter(db *gorm.DB, cfg *config.Config) *gin.Engine {
 	api := r.Group("/api/v1")
 	{
 		api.GET("/health", healthCtrl.Check)
+		api.GET("/auth/login-key", authCtrl.GetLoginKey)
 		api.POST("/auth/login", authCtrl.Login)
 		api.GET("/ws", wsCtrl.Handle) // WebSocket can be public for easy browser handshakes
 	}
@@ -88,6 +91,7 @@ func SetupRouter(db *gorm.DB, cfg *config.Config) *gin.Engine {
 		// Settings
 		protected.GET("/settings", settingCtrl.Get)
 		protected.PUT("/settings", settingCtrl.Update)
+		protected.PUT("/settings/password", settingCtrl.UpdatePassword)
 
 		// File Browser
 		protected.GET("/files", fileCtrl.List)

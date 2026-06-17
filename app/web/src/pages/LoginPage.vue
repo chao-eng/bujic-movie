@@ -5,6 +5,7 @@ import axios from 'axios'
 import { Card, CardHeader, CardTitle, CardDescription, CardContent } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Film, User, Lock, Loader2 } from 'lucide-vue-next'
+import { encryptAESGCM } from '@/lib/crypto'
 
 const router = useRouter()
 const username = ref('admin')
@@ -22,9 +23,22 @@ const handleLogin = async () => {
   errorMsg.value = ''
 
   try {
+    // 1. Fetch ephemeral encryption challenge key
+    const keyRes = await axios.get('/api/v1/auth/login-key')
+    if (!keyRes.data || keyRes.data.code !== 0) {
+      throw new Error(keyRes.data?.msg || '无法获取加密密钥')
+    }
+    const { key_id, key } = keyRes.data.data
+
+    // 2. Encrypt the password using GCM
+    const encrypted = await encryptAESGCM(password.value, key)
+
+    // 3. Submit encrypted credentials
     const res = await axios.post('/api/v1/auth/login', {
       username: username.value,
-      password: password.value,
+      encrypted_password: encrypted.ciphertext,
+      key_id,
+      iv: encrypted.iv,
     })
 
     if (res.data && res.data.code === 0) {
@@ -34,7 +48,7 @@ const handleLogin = async () => {
       errorMsg.value = res.data.msg || '登录失败'
     }
   } catch (err: any) {
-    errorMsg.value = err.response?.data?.msg || '网络错误，请稍后重试'
+    errorMsg.value = err.response?.data?.msg || err.message || '网络错误，请稍后重试'
   } finally {
     isLoading.value = false
   }

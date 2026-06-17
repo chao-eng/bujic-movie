@@ -1,6 +1,8 @@
 package controller
 
 import (
+	"fmt"
+
 	"github.com/bujic-movie/bujic-movie/internal/config"
 	"github.com/bujic-movie/bujic-movie/internal/db"
 	"github.com/bujic-movie/bujic-movie/pkg/response"
@@ -94,5 +96,79 @@ func (ctrl *SettingController) Update(c *gin.Context) {
 
 	response.Success(c, gin.H{
 		"message": "Configuration updated successfully",
+	})
+}
+
+type PasswordUpdateRequest struct {
+	OldPassword          string `json:"old_password"`
+	NewPassword          string `json:"new_password"`
+	EncryptedOldPassword string `json:"encrypted_old_password"`
+	EncryptedNewPassword string `json:"encrypted_new_password"`
+	KeyID                string `json:"key_id"`
+	OldIV                string `json:"old_iv"`
+	NewIV                string `json:"new_iv"`
+}
+
+// UpdatePassword verifies old password and updates to new password
+func (ctrl *SettingController) UpdatePassword(c *gin.Context) {
+	var req PasswordUpdateRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		response.BadRequest(c, err.Error())
+		return
+	}
+
+	oldPassword := req.OldPassword
+	newPassword := req.NewPassword
+
+	// If challenge key is provided, decrypt the fields
+	if req.KeyID != "" {
+		key, ok := getChallenge(req.KeyID)
+		if !ok {
+			response.Unauthorized(c, "Invalid or expired encryption challenge key")
+			return
+		}
+		defer deleteChallenge(req.KeyID)
+
+		if req.EncryptedOldPassword != "" && req.OldIV != "" {
+			decrypted, err := decryptWithKey(key, req.EncryptedOldPassword, req.OldIV)
+			if err != nil {
+				response.Unauthorized(c, fmt.Sprintf("Failed to decrypt old password: %v", err))
+				return
+			}
+			oldPassword = decrypted
+		}
+
+		if req.EncryptedNewPassword != "" && req.NewIV != "" {
+			decrypted, err := decryptWithKey(key, req.EncryptedNewPassword, req.NewIV)
+			if err != nil {
+				response.Unauthorized(c, fmt.Sprintf("Failed to decrypt new password: %v", err))
+				return
+			}
+			newPassword = decrypted
+		}
+	}
+
+	if oldPassword == "" || newPassword == "" {
+		response.BadRequest(c, "Both old and new passwords are required")
+		return
+	}
+
+	cfg := config.GlobalConfig
+	if oldPassword != cfg.Server.Password {
+		response.Unauthorized(c, "Current password verification failed")
+		return
+	}
+
+	// Persist to database
+	if err := db.SaveSetting("server.password", newPassword); err != nil {
+		response.InternalServerError(c, fmt.Sprintf("Failed to persist new password: %v", err))
+		return
+	}
+
+	// Update memory configuration
+	cfg.Server.Password = newPassword
+
+	response.Success(c, gin.H{
+		"message": "Password updated successfully",
 	})
 }
