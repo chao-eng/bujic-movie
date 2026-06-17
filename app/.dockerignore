@@ -1,0 +1,5 @@
+.DS_Store
+bujic-movie
+data/
+web/node_modules/
+dist/
