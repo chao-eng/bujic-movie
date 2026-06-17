@@ -9,12 +9,12 @@ import AppHeader from './AppHeader.vue'
     <AppSidebar />
 
     <!-- Main Content Area -->
-    <div class="flex-1 flex flex-col min-w-0 overflow-hidden">
+    <div class="flex-1 flex flex-col min-w-0 overflow-y-auto bg-slate-950">
       <!-- Top header -->
       <AppHeader />
 
-      <!-- Scrollable content area -->
-      <main class="flex-1 overflow-y-auto bg-slate-950 p-6">
+      <!-- Content area -->
+      <main class="p-6">
         <router-view v-slot="{ Component }">
           <transition name="fade" mode="out-in">
             <component :is="Component" />
