@@ -1,9 +1,7 @@
 version: "3.8"
 services:
   bujic-movie:
-    build:
-      context: ..
-      dockerfile: deployments/Dockerfile
+    image: crpi-a1liy20beodq2bdl.cn-beijing.personal.cr.aliyuncs.com/bujic/bujic-movie:latest
     container_name: bujic-movie
     restart: unless-stopped
     ports:
@@ -14,3 +12,5 @@ services:
       - /path/to/downloads:/downloads   # 下载目录挂载
     environment:
       - TZ=Asia/Shanghai
+      - BUJIC_SERVER_SECRET_KEY=change_me_to_something_secure
+

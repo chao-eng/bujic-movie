@@ -41,46 +41,8 @@
 
 ---
 
-## 📁 项目目录结构
 
-```text
-bujic-movie/
-├── .github/workflows/           # GitHub Actions 工作流（包含 ACR 自动打包推送）
-├── app/                          # 应用代码目录
-│   ├── cmd/server/              # 后端服务入口 (main.go)
-│   ├── configs/                 # 配置模版
-│   ├── deployments/             # 部署配置 (Dockerfile, docker-compose)
-│   ├── internal/                # 后端核心业务实现 (Controller/Service/Repo/Model/Storage)
-│   ├── pkg/                     # 独立公共工具包 (nfo, tmdb, parser, fileutil)
-│   └── web/                     # 前端 Vue 3 源码项目
-├── doc/                          # 系统设计与架构说明文档
-└── README.md                     # 项目说明文件
-```
-
----
-
-## ⚙️ 系统配置项 (Environment Variables)
-
-系统支持通过环境变量覆盖默认参数。所有环境变量前缀为 `BUJIC_`，并使用下划线代替配置层级的点。
-
-| 环境变量 | 默认值 | 说明 |
-| :--- | :--- | :--- |
-| `BUJIC_SERVER_PORT` | `8080` | Web 服务监听端口 |
-| `BUJIC_SERVER_MODE` | `debug` | 运行模式 (`debug` / `release`) |
-| `BUJIC_SERVER_USERNAME` | `admin` | Web 界面默认登录账号 |
-| `BUJIC_SERVER_PASSWORD` | `admin123` | Web 界面默认登录密码 |
-| `BUJIC_SERVER_SECRET_KEY` | `change_me_...`| 用于 JWT 鉴权的密钥 |
-| `BUJIC_DATABASE_DB_PATH` | `data/bujic-movie.db`| SQLite 数据库存储路径 |
-| `BUJIC_TMDB_BASE_URL` | `https://api.themoviedb.org/3` | TMDB API 请求基地址 |
-| `BUJIC_TMDB_LANGUAGE` | `zh-CN` | 元数据默认语言 |
-| `BUJIC_TRANSFER_MODE` | `link` | 默认整理模式 (`copy`/`move`/`link`/`softlink`) |
-| `BUJIC_TRANSFER_MIN_FILE_SIZE_MB`| `50` | 整理时允许的最小文件大小限制 |
-
-*注：TMDB API Key 等进阶配置可在系统启动后在 Web 设置页面中配置，它将持久化在 SQLite 中且具备最高优先级。*
-
----
-
-## 🏃 快速开始
+## 🏃 如何使用 (Usage)
 
 ### 开发环境调试
 
@@ -106,6 +68,8 @@ bujic-movie/
    ```
    后端服务将默认启动在 `http://localhost:8080`。前端的 Vite 配置文件已默认设置将 `/api` 的请求转发至后端。
 
+---
+
 ### 本地编译生产版本
 
 可以通过 `app/Makefile` 一键编译嵌入了前端的单二进制程序：
@@ -117,34 +81,30 @@ make build
 ```
 编译成功后，将在 `app/` 下生成可执行文件 `bujic-movie`。
 
+---
+
 ### Docker-compose 一键部署
 
 在生产环境部署时，建议使用 `docker-compose` 运行：
 
 ```bash
 cd app/deployments
-# 根据实际情况修改 docker-compose.yml 中的卷挂载路径 (media/downloads)
+# 根据实际情况修改 [docker-compose.yml](./app/deployments/docker-compose.yml) 中的卷挂载路径 (media/downloads,/path/to/media)
 docker-compose up -d
 ```
+默认会拉取阿里云镜像：`crpi-a1liy20beodq2bdl.cn-beijing.personal.cr.aliyuncs.com/bujic/bujic-movie:latest` 并启动服务。
 
 ---
 
-## 🛠️ CI/CD 与自动打包配置
+## ⚙️ 环境变量配置 (Environment Variables)
 
-项目已内置 GitHub Actions 自动构建多架构镜像流水线：
+系统支持通过环境变量注入基础的运行环境参数。所有环境变量前缀为 `BUJIC_`，并使用下划线代替配置层级的点。
 
-- **配置文件**: [.github/workflows/build-push.yml](file:///.github/workflows/build-push.yml)
-- **触发条件**: 当代码被推送到 `master` 分支时触发构建。
-- **构建平台**: 同时构建 `linux/amd64` (x86_64) 与 `linux/arm64` (适用于 M 系列 Mac / 树莓派 / 阿里云 ARM 服务器) 架构镜像。
-- **发布标签**: 构建完成后自动推送至阿里云 ACR，并被打上三种标签：
-  - `YYYYMMDD-HHMMSS` (具体时间戳)
-  - `YYYYMMDD` (日期戳)
-  - `latest` (最新版本)
+| 环境变量 | 默认值 | 说明 |
+| :--- | :--- | :--- |
+| `BUJIC_SERVER_PORT` | `8080` | Web 服务监听端口 |
+| `BUJIC_SERVER_MODE` | `debug` | 运行模式 (`debug` / `release`) |
+| `BUJIC_SERVER_SECRET_KEY` | `change_me_to_something_secure` | 用于 JWT 鉴权的签名密钥 |
+| `BUJIC_DATABASE_DB_PATH` | `data/bujic-movie.db` | SQLite 数据库在容器内或本地的存储路径 |
 
-> [!IMPORTANT]
-> 在启用 GitHub Actions 之前，请确保在您 GitHub 仓库的 **Settings -> Secrets and variables -> Actions** 中添加以下 Secrets 配置：
-> - `ALIYUN_REGISTRY`
-> - `ALIYUN_NAMESPACE`
-> - `ALIYUN_REPOSITORY`
-> - `ALIYUN_USERNAME`
-> - `ALIYUN_PASSWORD`
+> 💡 **提示**：其他系统业务配置（例如 TMDB API 密钥、媒体库路径、整理转移模式及账号密码等）均可直接在 **Web 网页后台的「系统设置」** 页面进行可视化配置，它们会被自动保存至数据库并享有最高优先级。
