@@ -1,14 +1,13 @@
 <script setup lang="ts">
 import {
   AlertDialog,
-  AlertDialogAction,
-  AlertDialogCancel,
   AlertDialogContent,
   AlertDialogDescription,
   AlertDialogFooter,
   AlertDialogHeader,
   AlertDialogTitle,
 } from '@/components/ui/alert-dialog'
+import { Button } from '@/components/ui/button'
 import { confirmState } from '@/composables/useConfirm'
 </script>
 
@@ -22,12 +21,12 @@ import { confirmState } from '@/composables/useConfirm'
         </AlertDialogDescription>
       </AlertDialogHeader>
       <AlertDialogFooter>
-        <AlertDialogCancel @click="confirmState.resolve(false)" class="border-slate-800 text-slate-300 hover:bg-slate-800">
+        <Button @click="confirmState.resolve(false)" variant="outline" class="border-slate-800 text-slate-300 hover:bg-slate-800">
           {{ confirmState.cancelText }}
-        </AlertDialogCancel>
-        <AlertDialogAction @click="confirmState.resolve(true)" class="bg-amber-500 hover:bg-amber-600 text-slate-950 font-bold">
+        </Button>
+        <Button @click="confirmState.resolve(true)" class="bg-amber-500 hover:bg-amber-600 text-slate-950 font-bold">
           {{ confirmState.confirmText }}
-        </AlertDialogAction>
+        </Button>
       </AlertDialogFooter>
     </AlertDialogContent>
   </AlertDialog>

@@ -7,6 +7,10 @@ import { AlertDialogAction } from "reka-ui"
 import { cn } from "@/lib/utils"
 import { buttonVariants } from '@/components/ui/button'
 
+defineOptions({
+  inheritAttrs: false,
+})
+
 const props = withDefaults(
   defineProps<AlertDialogActionProps & {
     class?: HTMLAttributes["class"]
@@ -19,15 +23,20 @@ const props = withDefaults(
   },
 )
 
-const delegatedProps = reactiveOmit(props, "class", "variant", "size")
+const delegatedProps = reactiveOmit(props, "class", "variant", "size", "asChild")
 </script>
 
 <template>
   <AlertDialogAction
+    as-child
     data-slot="alert-dialog-action"
     v-bind="delegatedProps"
-    :class="cn('', buttonVariants({ variant, size }), props.class)"
   >
-    <slot />
+    <button
+      v-bind="$attrs"
+      :class="cn(buttonVariants({ variant, size }), props.class)"
+    >
+      <slot />
+    </button>
   </AlertDialogAction>
 </template>
