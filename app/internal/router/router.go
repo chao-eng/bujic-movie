@@ -37,18 +37,21 @@ func SetupRouter(gormDB *gorm.DB, cfg *config.Config) *gin.Engine {
 	mediaRepo := repository.NewMediaRepository(gormDB)
 	historyRepo := repository.NewTransferHistoryRepository(gormDB)
 	mediaCardRepo := repository.NewMediaCardRepository(gormDB)
+	mediaLibraryRepo := repository.NewMediaLibraryRepository(gormDB)
 
 	// 3. Services Instantiation
 	recognizeSvc := service.NewRecognizeService(tmdbClient)
 	scrapeSvc := service.NewScrapeService(mediaRepo, recognizeSvc, tmdbClient, stg)
 	namingSvc := service.NewNamingService()
-	transferSvc := service.NewTransferService(historyRepo, namingSvc, recognizeSvc, scrapeSvc, tmdbClient, stg, cfg, mediaCardRepo)
+	notificationSvc := service.NewNotificationService(mediaLibraryRepo, mediaCardRepo)
+	transferSvc := service.NewTransferService(historyRepo, namingSvc, recognizeSvc, scrapeSvc, tmdbClient, stg, cfg, mediaCardRepo, notificationSvc)
 	watcherSvc := service.NewWatcherService(transferSvc, mediaCardRepo)
 	if err := watcherSvc.Start(); err != nil {
 		// Log error but don't fail startup
 		logger.Error("Failed to start directory watcher service: %v", err)
 	}
 	mediaCardSvc := service.NewMediaCardService(mediaCardRepo, watcherSvc)
+	mediaLibrarySvc := service.NewMediaLibraryService(mediaLibraryRepo)
 
 	// 4. Controllers Instantiation
 	authCtrl := controller.NewAuthController()
@@ -61,6 +64,7 @@ func SetupRouter(gormDB *gorm.DB, cfg *config.Config) *gin.Engine {
 	wsCtrl := controller.NewWSController()
 	dashboardCtrl := controller.NewDashboardController(mediaRepo, historyRepo, mediaCardRepo)
 	mediaCardCtrl := controller.NewMediaCardController(mediaCardSvc)
+	mediaLibraryCtrl := controller.NewMediaLibraryController(mediaLibrarySvc)
 
 	// Public Routes
 	api := r.Group("/api/v1")
@@ -107,6 +111,17 @@ func SetupRouter(gormDB *gorm.DB, cfg *config.Config) *gin.Engine {
 		protected.PUT("/cards/:id", mediaCardCtrl.Update)
 		protected.DELETE("/cards/:id", mediaCardCtrl.Delete)
 		protected.PUT("/cards/:id/default", mediaCardCtrl.SetDefault)
+
+		// Media Libraries (media servers: Emby / Jellyfin / Plex)
+		protected.GET("/libraries", mediaLibraryCtrl.List)
+		protected.GET("/libraries/status", mediaLibraryCtrl.Status)
+		protected.GET("/libraries/:id", mediaLibraryCtrl.GetByID)
+		protected.POST("/libraries", mediaLibraryCtrl.Create)
+		protected.POST("/libraries/probe", mediaLibraryCtrl.Probe)
+		protected.PUT("/libraries/:id", mediaLibraryCtrl.Update)
+		protected.DELETE("/libraries/:id", mediaLibraryCtrl.Delete)
+		protected.POST("/libraries/:id/test", mediaLibraryCtrl.Test)
+		protected.POST("/libraries/:id/refresh", mediaLibraryCtrl.Refresh)
 	}
 
 	// Serve Static Frontend Files

@@ -57,6 +57,7 @@ type transferService struct {
 	storage          storage.Storage
 	config           *config.Config
 	cardRepo         repository.MediaCardRepository
+	notifier         NotificationService
 
 	// Queue and Worker Pool
 	taskChan  chan *TransferTask
@@ -143,6 +144,7 @@ func NewTransferService(
 	stg storage.Storage,
 	cfg *config.Config,
 	cardRepo repository.MediaCardRepository,
+	notifier NotificationService,
 ) TransferService {
 	ctx, cancel := context.WithCancel(context.Background())
 	s := &transferService{
@@ -154,6 +156,7 @@ func NewTransferService(
 		storage:          stg,
 		config:           cfg,
 		cardRepo:         cardRepo,
+		notifier:         notifier,
 		taskChan:         make(chan *TransferTask, 100),
 		debounceTimers:   make(map[string]*time.Timer),
 		ctx:              ctx,
@@ -406,7 +409,7 @@ func (s *transferService) executeTransfer(task *TransferTask) error {
 		// Trigger batch scrape debounce
 		if lastDestDir != "" && s.config.Transfer.AutoScrape {
 			logger.Info("[整理] 触发自动刮削 (防抖): %s", lastDestDir)
-			s.debounceScrape(lastDestDir, task.MediaType)
+			s.debounceScrape(lastDestDir, task.MediaType, task.CardID)
 		}
 
 		s.recordHistory(srcPath, lastDestDir, "success", totalSize, "directory transfer complete")
@@ -440,7 +443,7 @@ func (s *transferService) executeTransfer(task *TransferTask) error {
 		// Trigger batch scrape debounce
 		if s.config.Transfer.AutoScrape {
 			logger.Info("[整理] 触发自动刮削 (防抖): %s", filepath.Dir(destPath))
-			s.debounceScrape(filepath.Dir(destPath), task.MediaType)
+			s.debounceScrape(filepath.Dir(destPath), task.MediaType, task.CardID)
 		}
 
 		s.recordHistory(srcPath, destPath, "success", info.Size(), "file transfer complete")
@@ -636,7 +639,7 @@ func (s *transferService) transferBluRay(srcPath string, meta *parser.Metadata, 
 	logger.Info("[整理] 蓝光原盘整理完成: %s", destDir)
 	if s.config.Transfer.AutoScrape {
 		logger.Info("[整理] 触发自动刮削 (防抖): %s", destDir)
-		s.debounceScrape(destDir, mediaType)
+		s.debounceScrape(destDir, mediaType, cardID)
 	}
 
 	s.recordHistory(srcPath, destDir, "success", 0, "Blu-ray folder transfer complete")
@@ -738,7 +741,7 @@ func (s *transferService) transferSubtitlesForDir(srcDir, destDir string, meta *
 	return nil
 }
 
-func (s *transferService) debounceScrape(dirPath string, mediaType string) {
+func (s *transferService) debounceScrape(dirPath string, mediaType string, cardID uint) {
 	s.debounceMu.Lock()
 	defer s.debounceMu.Unlock()
 
@@ -759,6 +762,10 @@ func (s *transferService) debounceScrape(dirPath string, mediaType string) {
 			logger.Error("[整理] 自动刮削失败 %s: %v", dirPath, err)
 		} else {
 			logger.Info("[整理] 自动刮削完成: %s", dirPath)
+			// 转移 + 刮削完成后，通知卡片绑定的媒体库刷新
+			if s.notifier != nil {
+				s.notifier.NotifyRefreshForCard(ctx, cardID)
+			}
 		}
 	})
 }

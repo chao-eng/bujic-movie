@@ -98,7 +98,7 @@ func TestTransferService(t *testing.T) {
 		t.Fatalf("Failed to create test card: %v", err)
 	}
 
-	svc := NewTransferService(repo, namingSvc, mockRec, mockScrape, tmdbClient, stg, cfg, cardRepo)
+	svc := NewTransferService(repo, namingSvc, mockRec, mockScrape, tmdbClient, stg, cfg, cardRepo, nil)
 
 	ctx := context.Background()
 	// Submit task
@@ -198,7 +198,7 @@ func TestTransferExtraFiles(t *testing.T) {
 		t.Fatalf("Failed to create test card: %v", err)
 	}
 
-	svc := NewTransferService(repo, namingSvc, mockRec, mockScrape, tmdbClient, stg, cfg, cardRepo)
+	svc := NewTransferService(repo, namingSvc, mockRec, mockScrape, tmdbClient, stg, cfg, cardRepo, nil)
 
 	ctx := context.Background()
 	// Submit task for the whole TV directory containing the extra file
