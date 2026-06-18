@@ -141,3 +141,89 @@ func TestTransferService(t *testing.T) {
 		t.Errorf("Unexpected transfer history: %+v", histories[0])
 	}
 }
+
+func TestTransferExtraFiles(t *testing.T) {
+	// Setup DB
+	db, err := gorm.Open(sqlite.Open("file::memory:?cache=shared"), &gorm.Config{})
+	if err != nil {
+		t.Fatalf("Failed to open SQLite memory DB: %v", err)
+	}
+	repo := repository.NewTransferHistoryRepository(db)
+
+	cfg := &config.Config{}
+	cfg.Transfer.Mode = "copy"
+	cfg.Transfer.OverwriteMode = "size"
+	cfg.Transfer.AutoScrape = false
+	cfg.Transfer.MinFileSizeMB = 0
+
+	tempDir, err := os.MkdirTemp("", "bujic-movie-transfer-extra-test")
+	if err != nil {
+		t.Fatalf("Failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tempDir)
+
+	srcDir := filepath.Join(tempDir, "downloads")
+	tvDir := filepath.Join(tempDir, "media/tv")
+
+	_ = os.MkdirAll(srcDir, 0755)
+	_ = os.MkdirAll(tvDir, 0755)
+
+	cfg.Media.TVPath = tvDir
+	cfg.Media.DownloadPath = srcDir
+
+	// Create a mock extra file: The Wire (2002) Season 1/Featurettes/It's All Connected.mkv
+	extraSrcDir := filepath.Join(srcDir, "The Wire (2002) Season 1", "Featurettes")
+	_ = os.MkdirAll(extraSrcDir, 0755)
+	srcExtraFile := filepath.Join(extraSrcDir, "It's All Connected.mkv")
+	if err := os.WriteFile(srcExtraFile, []byte("featurette video content"), 0644); err != nil {
+		t.Fatalf("Failed to write mock extra file: %v", err)
+	}
+
+	// Setup mock services (details is nil to test direct organizing bypass)
+	mockRec := &mockRecognizeService{details: nil}
+	mockScrape := &mockScrapeService{}
+	tmdbClient := tmdb.NewClient("key", "", "zh-CN")
+	stg := local.NewLocalStorage()
+	namingSvc := NewNamingService()
+
+	cardRepo := repository.NewMediaCardRepository(db)
+	testCard := &entity.MediaCard{
+		Name:         "TV Card",
+		DownloadPath: srcDir,
+		ArchivePath:  tvDir,
+		MediaType:    "tv",
+		IsDefault:    true,
+	}
+	if err := cardRepo.Create(testCard); err != nil {
+		t.Fatalf("Failed to create test card: %v", err)
+	}
+
+	svc := NewTransferService(repo, namingSvc, mockRec, mockScrape, tmdbClient, stg, cfg, cardRepo)
+
+	ctx := context.Background()
+	// Submit task for the whole TV directory containing the extra file
+	err = svc.SubmitTask(ctx, filepath.Join(srcDir, "The Wire (2002) Season 1"), TransferOptions{
+		CardID:    testCard.ID,
+		MediaType: "tv",
+	})
+	if err != nil {
+		t.Fatalf("SubmitTask failed: %v", err)
+	}
+
+	// Wait for queue processing
+	time.Sleep(1 * time.Second)
+
+	// Check if extra file is copied to proper Plex structure
+	// Expected: media/tv/The Wire (2002)/Season 01/Featurettes/It's All Connected.mkv
+	expectedDestExtra := filepath.Join(tvDir, "The Wire (2002)", "Season 01", "Featurettes", "It's All Connected.mkv")
+	if _, err := os.Stat(expectedDestExtra); os.IsNotExist(err) {
+		q := svc.GetQueue()
+		t.Logf("Queue state: %+v", q)
+		for _, taskItem := range q {
+			t.Logf("Task error: %s", taskItem.Message)
+		}
+		histories, _ := repo.List(0, 10)
+		t.Logf("Histories state: %+v", histories)
+		t.Fatalf("Expected dest extra file %s to be created, but it was not", expectedDestExtra)
+	}
+}

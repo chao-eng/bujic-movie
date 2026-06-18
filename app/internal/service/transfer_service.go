@@ -6,9 +6,12 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
+
 
 	"github.com/bujic-movie/bujic-movie/internal/config"
 	"github.com/bujic-movie/bujic-movie/internal/model/entity"
@@ -101,6 +104,35 @@ func isExtraFile(path string) (bool, string) {
 	}
 	return false, ""
 }
+
+func parseSeasonFromPath(path string) int {
+	dir := filepath.Clean(path)
+	seasonRe := regexp.MustCompile(`(?i)(?:season\s*|s)(\d+)`)
+	for dir != "." && dir != "/" && dir != "" {
+		base := filepath.Base(dir)
+		if m := seasonRe.FindStringSubmatch(base); m != nil {
+			if num, err := strconv.Atoi(m[1]); err == nil {
+				return num
+			}
+		}
+		parent := filepath.Dir(dir)
+		if parent == dir {
+			break
+		}
+		dir = parent
+	}
+	return 0
+}
+
+func containsTVKeyword(path string) bool {
+	lower := strings.ToLower(path)
+	if strings.Contains(lower, "/tv/") || strings.Contains(lower, "/television/") || strings.Contains(lower, "/series/") || strings.Contains(lower, "/show/") {
+		return true
+	}
+	seasonRe := regexp.MustCompile(`(?i)(?:season\s*|s)(\d+)`)
+	return seasonRe.MatchString(path)
+}
+
 
 func NewTransferService(
 	historyRepo repository.TransferHistoryRepository,
@@ -251,12 +283,36 @@ func (s *transferService) executeTransfer(task *TransferTask) error {
 	minSize := s.config.Transfer.MinFileSizeMB * 1024 * 1024
 
 	// Recognize metadata
-	logger.Info("[整理] 正在识别媒体信息...")
-	meta, details, err := s.recognizeService.RecognizeWithType(context.Background(), srcPath, task.MediaType)
-	if err != nil {
-		logger.Warn("[整理] 识别失败: %v", err)
-		return err
+	isExtra, _ := isExtraFile(srcPath)
+	var meta *parser.Metadata
+	var details interface{}
+	var err error
+
+	if isExtra {
+		logger.Info("[整理] 检测到花絮/额外内容文件/目录，跳过 TMDB 查询和识别")
+		meta = parser.ParseFilename(srcPath)
+		if task.MediaType == "movie" {
+			meta.IsMovie = true
+		} else if task.MediaType == "tv" {
+			meta.IsMovie = false
+		} else {
+			meta.IsMovie = true // default
+			if containsTVKeyword(srcPath) {
+				meta.IsMovie = false
+			}
+		}
+		if !meta.IsMovie && meta.Season == 0 {
+			meta.Season = parseSeasonFromPath(srcPath)
+		}
+	} else {
+		logger.Info("[整理] 正在识别媒体信息...")
+		meta, details, err = s.recognizeService.RecognizeWithType(context.Background(), srcPath, task.MediaType)
+		if err != nil {
+			logger.Warn("[整理] 识别失败: %v", err)
+			return err
+		}
 	}
+
 	mediaType := map[bool]string{true: "电影", false: "电视剧"}[meta.IsMovie]
 	logger.Info("[整理] 识别成功: %s (%s)", meta.Title, mediaType)
 
@@ -297,9 +353,11 @@ func (s *transferService) executeTransfer(task *TransferTask) error {
 			s.updateTaskStatus(task.ID, "running", progress, fmt.Sprintf("正在整理: %s (%d/%d)", filepath.Base(vf), i+1, totalFiles))
 
 			vfMeta := meta
-			if !meta.IsMovie {
+			isVfExtra, _ := isExtraFile(vf)
+			if !meta.IsMovie && !isVfExtra {
 				// For TV shows, we must parse the individual file's metadata to get the correct episode number
 				vfMeta = parser.ParseFilename(vf)
+				vfMeta.IsMovie = meta.IsMovie // ensure same media type
 				// If the file metadata season is 0, fallback to the directory's season
 				if vfMeta.Season == 0 && meta.Season > 0 {
 					vfMeta.Season = meta.Season
@@ -307,6 +365,20 @@ func (s *transferService) executeTransfer(task *TransferTask) error {
 				// Also fallback year if needed
 				if vfMeta.Year == 0 && meta.Year > 0 {
 					vfMeta.Year = meta.Year
+				}
+			} else if isVfExtra {
+				// For extra files under directory transfer, inherit metadata from parent directory
+				vfMeta = &parser.Metadata{
+					Title:      meta.Title,
+					Year:       meta.Year,
+					IsMovie:    meta.IsMovie,
+					Season:     meta.Season,
+					Resolution: meta.Resolution,
+				}
+				if !meta.IsMovie {
+					if seasonNum := parseSeasonFromPath(vf); seasonNum > 0 {
+						vfMeta.Season = seasonNum
+					}
 				}
 			}
 
@@ -319,6 +391,7 @@ func (s *transferService) executeTransfer(task *TransferTask) error {
 			lastDestDir = filepath.Dir(destPath)
 			totalSize += info.Size()
 		}
+
 
 		// Transfer subtitles accompanying
 		logger.Info("[整理] 正在处理字幕文件...")
@@ -407,21 +480,37 @@ func (s *transferService) transferSingleVideoFile(srcPath string, meta *parser.M
 	if isExtra {
 		destFilename = filepath.Base(srcPath)
 		if meta.IsMovie {
-			movieDetail := details.(*tmdb.MovieDetail)
+			var movieTitle string
+			if details != nil {
+				if movieDetail, ok := details.(*tmdb.MovieDetail); ok {
+					movieTitle = movieDetail.Title
+				}
+			}
+			if movieTitle == "" {
+				movieTitle = meta.Title
+			}
 			var movieDir string
 			if meta.Year > 0 {
-				movieDir = fmt.Sprintf("%s (%d)", movieDetail.Title, meta.Year)
+				movieDir = fmt.Sprintf("%s (%d)", movieTitle, meta.Year)
 			} else {
-				movieDir = movieDetail.Title
+				movieDir = movieTitle
 			}
 			destSubdir = filepath.Join(basePath, movieDir, extraFolder)
 		} else {
-			tvDetail := details.(*tmdb.TVDetail)
+			var tvName string
+			if details != nil {
+				if tvDetail, ok := details.(*tmdb.TVDetail); ok {
+					tvName = tvDetail.Name
+				}
+			}
+			if tvName == "" {
+				tvName = meta.Title
+			}
 			var tvDir string
 			if meta.Year > 0 {
-				tvDir = fmt.Sprintf("%s (%d)", tvDetail.Name, meta.Year)
+				tvDir = fmt.Sprintf("%s (%d)", tvName, meta.Year)
 			} else {
-				tvDir = tvDetail.Name
+				tvDir = tvName
 			}
 			if meta.Season > 0 {
 				seasonDir := fmt.Sprintf("Season %02d", meta.Season)
@@ -432,12 +521,18 @@ func (s *transferService) transferSingleVideoFile(srcPath string, meta *parser.M
 		}
 		logger.Info("[整理] 花絮/额外内容目标路径: %s", filepath.Join(destSubdir, destFilename))
 	} else if meta.IsMovie {
-		movieDetail := details.(*tmdb.MovieDetail)
+		movieDetail, ok := details.(*tmdb.MovieDetail)
+		if !ok {
+			return "", fmt.Errorf("元数据详情类型不匹配: 期望 *tmdb.MovieDetail, 实际 %T", details)
+		}
 		destSubdir, destFilename = s.namingService.GetMoviePath(movieDetail.Title, meta.Year, meta.Resolution, ext)
 		destSubdir = filepath.Join(basePath, destSubdir)
 		logger.Info("[整理] 电影目标路径: %s", filepath.Join(destSubdir, destFilename))
 	} else {
-		tvDetail := details.(*tmdb.TVDetail)
+		tvDetail, ok := details.(*tmdb.TVDetail)
+		if !ok {
+			return "", fmt.Errorf("元数据详情类型不匹配: 期望 *tmdb.TVDetail, 实际 %T", details)
+		}
 		// Find episode title from TMDB
 		var epTitle string
 		seasonDetail, err := s.tmdbClient.GetTVSeasonDetail(context.Background(), tvDetail.ID, meta.Season)
@@ -502,11 +597,17 @@ func (s *transferService) transferBluRay(srcPath string, meta *parser.Metadata, 
 
 	var destDir string
 	if meta.IsMovie {
-		movieDetail := details.(*tmdb.MovieDetail)
+		movieDetail, ok := details.(*tmdb.MovieDetail)
+		if !ok {
+			return fmt.Errorf("元数据详情类型不匹配: 期望 *tmdb.MovieDetail, 实际 %T", details)
+		}
 		destDir, _ = s.namingService.GetMoviePath(movieDetail.Title, meta.Year, meta.Resolution, "")
 		destDir = filepath.Join(basePath, destDir)
 	} else {
-		tvDetail := details.(*tmdb.TVDetail)
+		tvDetail, ok := details.(*tmdb.TVDetail)
+		if !ok {
+			return fmt.Errorf("元数据详情类型不匹配: 期望 *tmdb.TVDetail, 实际 %T", details)
+		}
 		srcDirName := filepath.Base(srcPath)
 		destDir = s.namingService.GetTVBlurayPath(tvDetail.Name, meta.Year, meta.Season, srcDirName)
 		destDir = filepath.Join(basePath, destDir)

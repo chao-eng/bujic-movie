@@ -112,14 +112,20 @@ func (s *scrapeService) ScrapePathWithType(ctx context.Context, path string, ove
 	if !meta.IsMovie {
 		// TV branch: K[电视剧刮削分支]
 		logger.Info("[刮削] 媒体类型: 电视剧")
-		tvDetail := details.(*tmdb.TVDetail)
+		tvDetail, ok := details.(*tmdb.TVDetail)
+		if !ok {
+			return fmt.Errorf("元数据详情类型不匹配: 期望 *tmdb.TVDetail, 实际 %T", details)
+		}
 		if err := s.handleTVScraping(ctx, path, subDirs, tvDetail, overwrite); err != nil {
 			return err
 		}
 	} else {
 		// Movie branch: J[电影刮削分支]
 		logger.Info("[刮削] 媒体类型: 电影")
-		movieDetail := details.(*tmdb.MovieDetail)
+		movieDetail, ok := details.(*tmdb.MovieDetail)
+		if !ok {
+			return fmt.Errorf("元数据详情类型不匹配: 期望 *tmdb.MovieDetail, 实际 %T", details)
+		}
 		if err := s.handleMovieScraping(ctx, path, subDirs, movieDetail, overwrite); err != nil {
 			return err
 		}
@@ -223,10 +229,16 @@ func (s *scrapeService) scrapeSingleFileWithType(ctx context.Context, path strin
 	}
 
 	if meta.IsMovie {
-		movieDetail := details.(*tmdb.MovieDetail)
+		movieDetail, ok := details.(*tmdb.MovieDetail)
+		if !ok {
+			return fmt.Errorf("元数据详情类型不匹配: 期望 *tmdb.MovieDetail, 实际 %T", details)
+		}
 		return s.scrapeMovieFile(ctx, path, movieDetail, overwrite)
 	} else {
-		tvDetail := details.(*tmdb.TVDetail)
+		tvDetail, ok := details.(*tmdb.TVDetail)
+		if !ok {
+			return fmt.Errorf("元数据详情类型不匹配: 期望 *tmdb.TVDetail, 实际 %T", details)
+		}
 		return s.scrapeTVEpisodeFile(ctx, path, tvDetail, overwrite)
 	}
 }
@@ -359,7 +371,10 @@ func (s *scrapeService) scrapeBluRayFolderWithType(ctx context.Context, path str
 		return nil
 	}
 
-	movieDetail := details.(*tmdb.MovieDetail)
+	movieDetail, ok := details.(*tmdb.MovieDetail)
+	if !ok {
+		return fmt.Errorf("元数据详情类型不匹配: 期望 *tmdb.MovieDetail, 实际 %T", details)
+	}
 	nfoPath := filepath.Join(path, "movie.nfo")
 
 	if overwrite || !fileExists(nfoPath) {
