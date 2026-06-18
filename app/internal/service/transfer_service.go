@@ -256,7 +256,22 @@ func (s *transferService) executeTransfer(task *TransferTask) error {
 			}
 
 			logger.Info("[整理] [%d/%d] 正在整理: %s", i+1, len(videoFiles), filepath.Base(vf))
-			destPath, err := s.transferSingleVideoFile(vf, meta, details, task.CardID)
+
+			vfMeta := meta
+			if !meta.IsMovie {
+				// For TV shows, we must parse the individual file's metadata to get the correct episode number
+				vfMeta = parser.ParseFilename(vf)
+				// If the file metadata season is 0, fallback to the directory's season
+				if vfMeta.Season == 0 && meta.Season > 0 {
+					vfMeta.Season = meta.Season
+				}
+				// Also fallback year if needed
+				if vfMeta.Year == 0 && meta.Year > 0 {
+					vfMeta.Year = meta.Year
+				}
+			}
+
+			destPath, err := s.transferSingleVideoFile(vf, vfMeta, details, task.CardID)
 			if err != nil {
 				logger.Error("[整理] 整理失败 %s: %v", vf, err)
 				return err
@@ -338,6 +353,10 @@ func (s *transferService) getBaseArchivePath(cardID uint) (string, error) {
 }
 
 func (s *transferService) transferSingleVideoFile(srcPath string, meta *parser.Metadata, details interface{}, cardID uint) (string, error) {
+	if !meta.IsMovie && len(meta.Episodes) == 0 {
+		return "", fmt.Errorf("无法解析剧集的剧集编号: %s", srcPath)
+	}
+
 	ext := filepath.Ext(srcPath)
 	var destSubdir, destFilename string
 
