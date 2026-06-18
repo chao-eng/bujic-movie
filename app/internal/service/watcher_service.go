@@ -12,6 +12,7 @@ import (
 
 	"github.com/bujic-movie/bujic-movie/internal/model/entity"
 	"github.com/bujic-movie/bujic-movie/internal/repository"
+	"github.com/bujic-movie/bujic-movie/pkg/fileutil"
 	"github.com/bujic-movie/bujic-movie/pkg/logger"
 	"github.com/fsnotify/fsnotify"
 )
@@ -182,25 +183,48 @@ func (s *watcherService) eventLoop() {
 }
 
 func (s *watcherService) handleEvent(event fsnotify.Event) {
-	// 1. Check if a new directory was created, and recursively watch it
-	if event.Has(fsnotify.Create) {
+	// We handle Create, Write, and Rename events
+	if event.Has(fsnotify.Create) || event.Has(fsnotify.Write) || event.Has(fsnotify.Rename) {
 		info, err := os.Stat(event.Name)
-		if err == nil && info.IsDir() {
-			logger.Info("[监控] 检测到新建目录，添加监视: %s", event.Name)
-			_ = s.watchDirRecursive(event.Name)
+		if err != nil {
+			// File/directory might have been deleted or renamed away
 			return
 		}
+
+		if info.IsDir() {
+			if event.Has(fsnotify.Create) {
+				logger.Info("[监控] 检测到新建目录，添加监视: %s", event.Name)
+				_ = s.watchDirRecursive(event.Name)
+				// Walk the newly created directory to find any existing video files and trigger processing
+				s.scanAndProcessExistingFiles(event.Name)
+			}
+			return
+		}
+
+		// It is a file. Check if it's a video file.
+		if fileutil.IsVideo(event.Name) {
+			s.handleWriteEvent(event.Name)
+		}
+	}
+}
+
+func (s *watcherService) scanAndProcessExistingFiles(dirPath string) {
+	videoFiles, err := fileutil.FindFiles(dirPath, fileutil.IsVideo)
+	if err != nil {
+		logger.Error("[监控] 扫描新建目录 %s 失败: %v", dirPath, err)
+		return
 	}
 
-	// 2. We only trigger file organizing on video files when writes stop
-	if event.Has(fsnotify.Write) {
-		s.handleWriteEvent(event.Name)
+	if len(videoFiles) > 0 {
+		logger.Info("[监控] 新建目录中发现 %d 个视频文件，将触发整理", len(videoFiles))
+		for _, vf := range videoFiles {
+			s.handleWriteEvent(vf)
+		}
 	}
 }
 
 func (s *watcherService) handleWriteEvent(filePath string) {
-	ext := strings.ToLower(filepath.Ext(filePath))
-	if ext != ".mp4" && ext != ".mkv" {
+	if !fileutil.IsVideo(filePath) {
 		return
 	}
 
