@@ -339,7 +339,7 @@ onUnmounted(() => {
                   q.status === 'success' && 'bg-green-500/10 text-green-500',
                   q.status === 'failed' && 'bg-rose-500/10 text-rose-500'
                 ]">{{ q.status }}</span>
-                <span class="text-sm font-bold text-slate-300 w-12 text-right">{{ q.progress }}%</span>
+                <span class="text-sm font-bold text-slate-300 w-16 text-right">{{ Number(q.progress).toFixed(2) }}%</span>
               </div>
             </div>
           </div>
