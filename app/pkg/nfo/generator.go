@@ -14,6 +14,17 @@ type UniqueID struct {
 	Value   int    `xml:",chardata"`
 }
 
+// Actor represents a cast member in NFO XML (Emby/Jellyfin/Kodi format).
+// Field order mirrors MoviePilot's scraper output.
+type Actor struct {
+	Name    string `xml:"name"`
+	Type    string `xml:"type"`
+	Role    string `xml:"role"`
+	TMDBID  int    `xml:"tmdbid"`
+	Thumb   string `xml:"thumb,omitempty"`
+	Profile string `xml:"profile"`
+}
+
 // MovieNFO structure for movie metadata NFO
 type MovieNFO struct {
 	XMLName       xml.Name `xml:"movie"`
@@ -26,6 +37,7 @@ type MovieNFO struct {
 	Rating        float64  `xml:"rating"`
 	Runtime       int      `xml:"runtime"`
 	Genres        []string `xml:"genre"`
+	Actors        []Actor  `xml:"actor"`
 }
 
 // TVShowNFO structure for TV show metadata NFO
@@ -39,6 +51,7 @@ type TVShowNFO struct {
 	UniqueID      UniqueID `xml:"uniqueid"`
 	Rating        float64  `xml:"rating"`
 	Genres        []string `xml:"genre"`
+	Actors        []Actor  `xml:"actor"`
 }
 
 // SeasonNFO structure for TV season metadata NFO
@@ -71,8 +84,9 @@ func marshalXML(val interface{}) ([]byte, error) {
 	return []byte(xmlHeader + string(body)), nil
 }
 
-// GenerateMovieNFO creates NFO data for a movie
-func GenerateMovieNFO(detail *tmdb.MovieDetail) ([]byte, error) {
+// GenerateMovieNFO creates NFO data for a movie. When cast is non-empty, its
+// members are written as <actor> entries (演职人员).
+func GenerateMovieNFO(detail *tmdb.MovieDetail, cast []tmdb.Cast) ([]byte, error) {
 	year := 0
 	if len(detail.ReleaseDate) >= 4 {
 		fmt.Sscanf(detail.ReleaseDate[:4], "%d", &year)
@@ -97,13 +111,15 @@ func GenerateMovieNFO(detail *tmdb.MovieDetail) ([]byte, error) {
 		Rating:  detail.VoteAverage,
 		Runtime: detail.Runtime,
 		Genres:  genres,
+		Actors:  buildActors(cast),
 	}
 
 	return marshalXML(nfo)
 }
 
-// GenerateTVShowNFO creates NFO data for a TV series
-func GenerateTVShowNFO(detail *tmdb.TVDetail) ([]byte, error) {
+// GenerateTVShowNFO creates NFO data for a TV series. When cast is non-empty,
+// its members are written as <actor> entries (演职人员).
+func GenerateTVShowNFO(detail *tmdb.TVDetail, cast []tmdb.Cast) ([]byte, error) {
 	year := 0
 	if len(detail.FirstAirDate) >= 4 {
 		fmt.Sscanf(detail.FirstAirDate[:4], "%d", &year)
@@ -127,9 +143,43 @@ func GenerateTVShowNFO(detail *tmdb.TVDetail) ([]byte, error) {
 		},
 		Rating: detail.VoteAverage,
 		Genres: genres,
+		Actors: buildActors(cast),
 	}
 
 	return marshalXML(nfo)
+}
+
+// buildActors converts TMDB cast members into NFO <actor> entries. Only people
+// in the Acting department are kept (matching MoviePilot); profile images are
+// referenced by their TMDB URL and the thumb is omitted when none exists.
+func buildActors(cast []tmdb.Cast) []Actor {
+	if len(cast) == 0 {
+		return nil
+	}
+	actors := make([]Actor, 0, len(cast))
+	for _, m := range cast {
+		if m.Name == "" {
+			continue
+		}
+		if m.KnownForDepartment != "" && m.KnownForDepartment != "Acting" {
+			continue
+		}
+		a := Actor{
+			Name:    m.Name,
+			Type:    "Actor",
+			Role:    m.Character,
+			TMDBID:  m.ID,
+			Profile: fmt.Sprintf("https://www.themoviedb.org/person/%d", m.ID),
+		}
+		if m.ProfilePath != "" {
+			a.Thumb = tmdb.GetImageURL(m.ProfilePath, "w500")
+		}
+		actors = append(actors, a)
+	}
+	if len(actors) == 0 {
+		return nil
+	}
+	return actors
 }
 
 // GenerateSeasonNFO creates NFO data for a specific TV season

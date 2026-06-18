@@ -23,6 +23,7 @@ type SettingUpdateRequest struct {
 	TransferMode string `json:"transfer_mode"`
 	Overwrite    string `json:"overwrite_mode"`
 	AutoScrape   *bool  `json:"auto_scrape"`
+	ScrapePerson *bool  `json:"scrape_person"`
 }
 
 func NewSettingController(tmdbClient *tmdb.Client) *SettingController {
@@ -41,6 +42,7 @@ func (ctrl *SettingController) Get(c *gin.Context) {
 		"transfer_mode":     cfg.Transfer.Mode,
 		"overwrite_mode":    cfg.Transfer.OverwriteMode,
 		"auto_scrape":       cfg.Transfer.AutoScrape,
+		"scrape_person":     cfg.Transfer.ScrapePerson,
 		"min_file_size_mb":  cfg.Transfer.MinFileSizeMB,
 	})
 }
@@ -92,6 +94,14 @@ func (ctrl *SettingController) Update(c *gin.Context) {
 			val = "true"
 		}
 		_ = db.SaveSetting("transfer.auto_scrape", val)
+	}
+	if req.ScrapePerson != nil {
+		cfg.Transfer.ScrapePerson = *req.ScrapePerson
+		val := "false"
+		if *req.ScrapePerson {
+			val = "true"
+		}
+		_ = db.SaveSetting("transfer.scrape_person", val)
 	}
 
 	response.Success(c, gin.H{

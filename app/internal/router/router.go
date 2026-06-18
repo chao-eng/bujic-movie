@@ -38,10 +38,12 @@ func SetupRouter(gormDB *gorm.DB, cfg *config.Config) *gin.Engine {
 	historyRepo := repository.NewTransferHistoryRepository(gormDB)
 	mediaCardRepo := repository.NewMediaCardRepository(gormDB)
 	mediaLibraryRepo := repository.NewMediaLibraryRepository(gormDB)
+	notifyChannelRepo := repository.NewNotifyChannelRepository(gormDB)
 
 	// 3. Services Instantiation
 	recognizeSvc := service.NewRecognizeService(tmdbClient)
-	scrapeSvc := service.NewScrapeService(mediaRepo, recognizeSvc, tmdbClient, stg)
+	msgNotifySvc := service.NewMessageNotifyService(notifyChannelRepo)
+	scrapeSvc := service.NewScrapeService(mediaRepo, recognizeSvc, tmdbClient, stg, msgNotifySvc)
 	namingSvc := service.NewNamingService()
 	notificationSvc := service.NewNotificationService(mediaLibraryRepo, mediaCardRepo)
 	transferSvc := service.NewTransferService(historyRepo, namingSvc, recognizeSvc, scrapeSvc, tmdbClient, stg, cfg, mediaCardRepo, notificationSvc)
@@ -65,6 +67,7 @@ func SetupRouter(gormDB *gorm.DB, cfg *config.Config) *gin.Engine {
 	dashboardCtrl := controller.NewDashboardController(mediaRepo, historyRepo, mediaCardRepo)
 	mediaCardCtrl := controller.NewMediaCardController(mediaCardSvc)
 	mediaLibraryCtrl := controller.NewMediaLibraryController(mediaLibrarySvc)
+	notifyChannelCtrl := controller.NewNotifyChannelController(msgNotifySvc)
 
 	// Public Routes
 	api := r.Group("/api/v1")
@@ -122,6 +125,15 @@ func SetupRouter(gormDB *gorm.DB, cfg *config.Config) *gin.Engine {
 		protected.DELETE("/libraries/:id", mediaLibraryCtrl.Delete)
 		protected.POST("/libraries/:id/test", mediaLibraryCtrl.Test)
 		protected.POST("/libraries/:id/refresh", mediaLibraryCtrl.Refresh)
+
+		// Notification channels (third-party message push)
+		protected.GET("/notify-channels", notifyChannelCtrl.List)
+		protected.GET("/notify-channels/types", notifyChannelCtrl.Types)
+		protected.GET("/notify-channels/:id", notifyChannelCtrl.GetByID)
+		protected.POST("/notify-channels", notifyChannelCtrl.Create)
+		protected.PUT("/notify-channels/:id", notifyChannelCtrl.Update)
+		protected.DELETE("/notify-channels/:id", notifyChannelCtrl.Delete)
+		protected.POST("/notify-channels/:id/test", notifyChannelCtrl.Test)
 	}
 
 	// Serve Static Frontend Files

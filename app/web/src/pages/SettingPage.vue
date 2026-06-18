@@ -1,22 +1,24 @@
 <script setup lang="ts">
-import { ref, onMounted, onUnmounted, watch } from 'vue'
+import { ref, computed, onMounted, onUnmounted, watch } from 'vue'
 import client from '@/api/client'
 import { Card, CardHeader, CardTitle, CardDescription, CardContent } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
 import { Button } from '@/components/ui/button'
-import { Save, Loader2, CheckCircle2, Plus, Trash2, Star, Film, Tv, KeyRound, Server, Plug, RefreshCw, SlidersHorizontal, FolderTree, ShieldCheck, Clapperboard } from 'lucide-vue-next'
+import { Switch } from '@/components/ui/switch'
+import { Save, Loader2, CheckCircle2, Plus, Trash2, Star, Film, Tv, KeyRound, Server, Plug, RefreshCw, SlidersHorizontal, FolderTree, ShieldCheck, Clapperboard, Bell, Send } from 'lucide-vue-next'
 import { useConfirm } from '@/composables/useConfirm'
 import { toast } from 'vue-sonner'
 import { encryptAESGCM } from '@/lib/crypto'
 
 const { confirm } = useConfirm()
 
-type TabKey = 'general' | 'directories' | 'servers' | 'security'
+type TabKey = 'general' | 'directories' | 'servers' | 'notify' | 'security'
 const activeTab = ref<TabKey>('general')
 const tabs: { key: TabKey; label: string; icon: any }[] = [
   { key: 'general', label: '常规', icon: SlidersHorizontal },
   { key: 'directories', label: '目录管理', icon: FolderTree },
   { key: 'servers', label: '媒体服务器', icon: Server },
+  { key: 'notify', label: '通知配置', icon: Bell },
   { key: 'security', label: '安全', icon: ShieldCheck },
 ]
 
@@ -26,6 +28,7 @@ const settings = ref({
   transfer_mode: 'link',
   overwrite_mode: 'size',
   auto_scrape: true,
+  scrape_person: false,
 })
 
 const cards = ref<any[]>([])
@@ -53,6 +56,15 @@ let statusTimer: ReturnType<typeof setInterval> | null = null
 const probeLibraries = ref<any[]>([])
 const probingLibraries = ref(false)
 let probeTimer: ReturnType<typeof setTimeout> | null = null
+
+// Notification channels state
+const notifyChannels = ref<any[]>([])
+const channelTypes = ref<any[]>([])
+const editingChannel = ref<any>(null)
+const showChannelForm = ref(false)
+const isChannelSaving = ref(false)
+const channelSuccessMsg = ref('')
+const testingChannelId = ref<number | null>(null)
 
 const fetchSettings = async () => {
   isLoading.value = true
@@ -321,6 +333,126 @@ watch(
   }
 )
 
+// ===== Notification channels =====
+const fetchNotifyChannels = async () => {
+  try {
+    const res: any = await client.get('/api/v1/notify-channels')
+    if (res.code === 0) notifyChannels.value = res.data || []
+  } catch (err) {
+    console.error('Failed to load notify channels', err)
+  }
+}
+
+const fetchChannelTypes = async () => {
+  try {
+    const res: any = await client.get('/api/v1/notify-channels/types')
+    if (res.code === 0) channelTypes.value = res.data || []
+  } catch (err) {
+    console.error('Failed to load channel types', err)
+  }
+}
+
+const currentChannelFields = computed(
+  () => channelTypes.value.find((t) => t.type === editingChannel.value?.type)?.fields || []
+)
+
+const channelTypeName = (type: string) =>
+  channelTypes.value.find((t) => t.type === type)?.name || type
+
+const applyChannelTypeDefaults = () => {
+  const t = channelTypes.value.find((t) => t.type === editingChannel.value.type)
+  if (!t) return
+  for (const f of t.fields) {
+    if (f.default && !editingChannel.value.config[f.key]) {
+      editingChannel.value.config[f.key] = f.default
+    }
+  }
+}
+
+const openNewChannel = () => {
+  editingChannel.value = {
+    name: '',
+    type: channelTypes.value[0]?.type || 'wecombot',
+    enabled: true,
+    config: {},
+  }
+  applyChannelTypeDefaults()
+  showChannelForm.value = true
+}
+
+const onChannelTypeChange = () => {
+  editingChannel.value.config = {}
+  applyChannelTypeDefaults()
+}
+
+const openEditChannel = (ch: any) => {
+  editingChannel.value = { ...ch, config: { ...(ch.config || {}) } }
+  showChannelForm.value = true
+}
+
+const closeChannelForm = () => {
+  showChannelForm.value = false
+  editingChannel.value = null
+}
+
+const saveChannel = async () => {
+  if (!editingChannel.value.name) {
+    toast.warning('请填写渠道名称')
+    return
+  }
+  isChannelSaving.value = true
+  try {
+    const payload = {
+      name: editingChannel.value.name,
+      type: editingChannel.value.type,
+      enabled: editingChannel.value.enabled,
+      config: editingChannel.value.config,
+    }
+    let res: any
+    if (editingChannel.value.id) {
+      res = await client.put(`/api/v1/notify-channels/${editingChannel.value.id}`, payload)
+    } else {
+      res = await client.post('/api/v1/notify-channels', payload)
+    }
+    if (res.code === 0) {
+      channelSuccessMsg.value = editingChannel.value.id ? '通知渠道更新成功！' : '通知渠道创建成功！'
+      await fetchNotifyChannels()
+      setTimeout(() => { channelSuccessMsg.value = '' }, 3000)
+      closeChannelForm()
+    }
+  } catch (err) {
+    console.error('Failed to save channel', err)
+  } finally {
+    isChannelSaving.value = false
+  }
+}
+
+const deleteChannel = async (id: number) => {
+  if (!await confirm('确定删除此通知渠道？')) return
+  try {
+    await client.delete(`/api/v1/notify-channels/${id}`)
+    await fetchNotifyChannels()
+  } catch (err) {
+    console.error('Failed to delete channel', err)
+  }
+}
+
+const testChannel = async (id: number) => {
+  testingChannelId.value = id
+  try {
+    const res: any = await client.post(`/api/v1/notify-channels/${id}/test`)
+    if (res.code === 0) {
+      toast.success('测试消息已发送')
+    } else {
+      toast.error(res.msg || '发送失败')
+    }
+  } catch (err: any) {
+    toast.error(err.response?.data?.msg || '发送失败')
+  } finally {
+    testingChannelId.value = null
+  }
+}
+
 // Password change state
 const currentPassword = ref('')
 const newPassword = ref('')
@@ -387,6 +519,8 @@ onMounted(() => {
   fetchCards()
   fetchLibraries()
   fetchStatuses()
+  fetchNotifyChannels()
+  fetchChannelTypes()
   statusTimer = setInterval(fetchStatuses, 30000)
 })
 
@@ -517,6 +651,16 @@ onUnmounted(() => {
                       <div class="w-11 h-6 bg-slate-800 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-slate-400 after:border-slate-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-amber-500 peer-checked:after:bg-slate-950"></div>
                       <span class="ml-3 text-sm font-medium text-slate-300">整理后自动触发刮削</span>
                     </label>
+                  </div>
+                </div>
+                <div class="space-y-1.5 md:col-span-3">
+                  <label class="text-xs font-semibold text-slate-400">演职人员刮削</label>
+                  <div class="flex items-center gap-3 h-10">
+                    <Switch id="scrape-person-toggle" v-model="settings.scrape_person" />
+                    <label for="scrape-person-toggle" class="cursor-pointer select-none text-sm font-medium text-slate-300">
+                      启用演职人员刮削
+                    </label>
+                    <span class="text-xs text-slate-500">开启后，写入 NFO 的 <code class="px-1 py-0.5 rounded bg-slate-800 text-slate-300">&lt;actor&gt;</code> 字段会包含主要演职人员（与电影/电视剧均生效）。</span>
                   </div>
                 </div>
               </CardContent>
@@ -818,6 +962,128 @@ onUnmounted(() => {
               <!-- Empty State -->
               <div v-if="libraries.length === 0" class="md:col-span-2 lg:col-span-3 text-center py-12 bg-slate-900/50 rounded-lg border border-dashed border-slate-800">
                 <p class="text-slate-500 text-sm">暂无媒体服务器，点击上方按钮添加</p>
+              </div>
+            </div>
+          </div>
+
+          <!-- ===================== 通知配置 ===================== -->
+          <div v-else-if="activeTab === 'notify'">
+            <div class="flex items-center justify-between gap-4 mb-4">
+              <div class="min-w-0">
+                <h2 class="text-xl font-bold text-slate-100">通知配置</h2>
+                <p class="text-slate-400 text-sm truncate">配置第三方通知渠道，刮削入库后自动推送</p>
+              </div>
+              <Button @click="openNewChannel" class="shrink-0 bg-amber-500 hover:bg-amber-600 text-slate-950 font-bold flex items-center gap-2">
+                <Plus class="h-4 w-4" />
+                添加渠道
+              </Button>
+            </div>
+
+            <div v-if="channelSuccessMsg" class="bg-green-500/10 border border-green-500/20 text-green-400 text-sm px-4 py-3 rounded-lg flex items-center gap-2 mb-4">
+              <CheckCircle2 class="h-5 w-5" />
+              <span>{{ channelSuccessMsg }}</span>
+            </div>
+
+            <!-- Channel Form -->
+            <Card v-if="showChannelForm" class="bg-slate-900 border-amber-500/30 text-slate-100 mb-6">
+              <CardHeader>
+                <CardTitle class="text-amber-500">{{ editingChannel?.id ? '编辑渠道' : '新建渠道' }}</CardTitle>
+              </CardHeader>
+              <CardContent class="space-y-4">
+                <div class="grid gap-4 md:grid-cols-2">
+                  <div class="space-y-1.5">
+                    <label class="text-xs font-semibold text-slate-400">渠道名称</label>
+                    <Input v-model="editingChannel.name" placeholder="例如: 我的企业微信" class="bg-slate-950 border-slate-800 text-slate-100" />
+                  </div>
+                  <div class="space-y-1.5">
+                    <label class="text-xs font-semibold text-slate-400">渠道类型</label>
+                    <select v-model="editingChannel.type" @change="onChannelTypeChange" class="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-sm focus:outline-none text-slate-100 focus:border-amber-500">
+                      <option v-for="t in channelTypes" :key="t.type" :value="t.type">{{ t.name }}</option>
+                    </select>
+                  </div>
+                </div>
+                <!-- 按渠道 schema 动态渲染字段 -->
+                <div v-for="f in currentChannelFields" :key="f.key" class="space-y-1.5">
+                  <label class="text-xs font-semibold text-slate-400">
+                    {{ f.label }}<span v-if="f.required" class="text-rose-400 ml-0.5">*</span>
+                  </label>
+                  <textarea
+                    v-if="f.type === 'textarea'"
+                    v-model="editingChannel.config[f.key]"
+                    :placeholder="f.placeholder"
+                    rows="3"
+                    class="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-sm focus:outline-none text-slate-100 focus:border-amber-500 font-mono"
+                  ></textarea>
+                  <Input
+                    v-else
+                    v-model="editingChannel.config[f.key]"
+                    :type="f.type === 'password' ? 'password' : 'text'"
+                    :placeholder="f.placeholder"
+                    class="bg-slate-950 border-slate-800 text-slate-100"
+                  />
+                </div>
+                <div class="flex items-center gap-2">
+                  <input type="checkbox" v-model="editingChannel.enabled" class="rounded border-slate-700 bg-slate-950 text-amber-500 focus:ring-amber-500" />
+                  <span class="text-sm text-slate-300">启用此渠道</span>
+                </div>
+                <div class="flex gap-3 pt-2">
+                  <Button @click="saveChannel" :disabled="isChannelSaving" class="bg-amber-500 hover:bg-amber-600 text-slate-950 font-bold flex items-center gap-2">
+                    <Loader2 v-if="isChannelSaving" class="h-4 w-4 animate-spin" />
+                    <Save v-else class="h-4 w-4" />
+                    {{ isChannelSaving ? '保存中...' : '保存渠道' }}
+                  </Button>
+                  <Button @click="closeChannelForm" variant="outline" class="border-slate-700 text-slate-300 hover:bg-slate-800">
+                    取消
+                  </Button>
+                </div>
+              </CardContent>
+            </Card>
+
+            <!-- Channels Grid -->
+            <div class="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
+              <Card v-for="ch in notifyChannels" :key="ch.id" class="bg-slate-900 border-slate-800 text-slate-100 transition-all hover:border-slate-700">
+                <CardHeader class="pb-3">
+                  <div class="flex items-center justify-between">
+                    <div class="flex items-center gap-2">
+                      <Bell class="h-5 w-5 text-amber-400" />
+                      <CardTitle class="text-slate-100 text-base">{{ ch.name }}</CardTitle>
+                    </div>
+                    <div class="flex items-center gap-1">
+                      <button
+                        @click="testChannel(ch.id)"
+                        :disabled="testingChannelId === ch.id"
+                        class="p-1.5 rounded hover:bg-slate-800 text-slate-500 hover:text-emerald-400 transition-colors disabled:opacity-50"
+                        title="测试发送"
+                      >
+                        <Loader2 v-if="testingChannelId === ch.id" class="h-4 w-4 animate-spin" />
+                        <Send v-else class="h-4 w-4" />
+                      </button>
+                      <button
+                        @click="openEditChannel(ch)"
+                        class="p-1.5 rounded hover:bg-slate-800 text-slate-500 hover:text-slate-300 transition-colors"
+                        title="编辑"
+                      >
+                        <svg class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" /></svg>
+                      </button>
+                      <button
+                        @click="deleteChannel(ch.id)"
+                        class="p-1.5 rounded hover:bg-slate-800 text-slate-500 hover:text-rose-500 transition-colors"
+                        title="删除"
+                      >
+                        <Trash2 class="h-4 w-4" />
+                      </button>
+                    </div>
+                  </div>
+                  <CardDescription class="text-slate-400 text-xs">
+                    {{ channelTypeName(ch.type) }}
+                    <span v-if="!ch.enabled" class="text-rose-400 ml-1">[已禁用]</span>
+                  </CardDescription>
+                </CardHeader>
+              </Card>
+
+              <!-- Empty State -->
+              <div v-if="notifyChannels.length === 0" class="md:col-span-2 lg:col-span-3 text-center py-12 bg-slate-900/50 rounded-lg border border-dashed border-slate-800">
+                <p class="text-slate-500 text-sm">暂无通知渠道，点击上方按钮添加</p>
               </div>
             </div>
           </div>

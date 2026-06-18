@@ -66,7 +66,7 @@ func TestScrapeService(t *testing.T) {
 	mockRec := &mockRecognizeService{details: movieDetail}
 	tmdbClient := tmdb.NewClient("key", "", "zh-CN")
 
-	svc := NewScrapeService(repo, mockRec, tmdbClient, stg)
+	svc := NewScrapeService(repo, mockRec, tmdbClient, stg, nil)
 
 	ctx := context.Background()
 	if err := svc.ScrapePath(ctx, movieFile, true); err != nil {

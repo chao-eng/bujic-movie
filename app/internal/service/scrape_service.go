@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/bujic-movie/bujic-movie/internal/config"
 	"github.com/bujic-movie/bujic-movie/internal/model/entity"
 	"github.com/bujic-movie/bujic-movie/internal/repository"
 	"github.com/bujic-movie/bujic-movie/internal/storage"
@@ -30,6 +31,7 @@ type scrapeService struct {
 	recognizeService RecognizeService
 	tmdbClient       *tmdb.Client
 	storage          storage.Storage
+	msgNotifier      MessageNotifyService
 }
 
 func NewScrapeService(
@@ -37,13 +39,39 @@ func NewScrapeService(
 	recognizeService RecognizeService,
 	tmdbClient *tmdb.Client,
 	stg storage.Storage,
+	msgNotifier MessageNotifyService,
 ) ScrapeService {
 	return &scrapeService{
 		mediaRepo:        mediaRepo,
 		recognizeService: recognizeService,
 		tmdbClient:       tmdbClient,
 		storage:          stg,
+		msgNotifier:      msgNotifier,
 	}
+}
+
+// fetchCast returns the TMDB cast (演职人员) for the given media when the
+// "刮削演职人员" setting is enabled. It is best-effort: a disabled toggle, a nil
+// config, or a failed request all yield nil so NFO generation simply omits actors
+// rather than failing the scrape.
+func (s *scrapeService) fetchCast(ctx context.Context, mediaType string, tmdbID int) []tmdb.Cast {
+	if config.GlobalConfig == nil || !config.GlobalConfig.Transfer.ScrapePerson {
+		return nil
+	}
+	var (
+		credits *tmdb.CreditsResponse
+		err     error
+	)
+	if mediaType == "movie" {
+		credits, err = s.tmdbClient.GetMovieCredits(ctx, tmdbID)
+	} else {
+		credits, err = s.tmdbClient.GetTVCredits(ctx, tmdbID)
+	}
+	if err != nil {
+		logger.Warn("[刮削] 获取演职人员失败 (tmdbid=%d): %v", tmdbID, err)
+		return nil
+	}
+	return credits.Cast
 }
 
 // ScrapePath handles scraping metadata for a given path (file or directory)
@@ -131,8 +159,47 @@ func (s *scrapeService) ScrapePathWithType(ctx context.Context, path string, ove
 		}
 	}
 
+	// 刮削完成后异步推送入库通知（不阻塞、失败仅记日志）
+	if s.msgNotifier != nil {
+		nTitle, nYear, nPoster := extractNotifyInfo(details)
+		mt := "tv"
+		if meta.IsMovie {
+			mt = "movie"
+		}
+		if nTitle != "" {
+			s.msgNotifier.NotifyScrapeDone(nTitle, nYear, mt, nPoster)
+		}
+	}
+
 	logger.Info("[刮削] 刮削完成: %s", path)
 	return nil
+}
+
+// extractNotifyInfo pulls a display title, year and poster URL from TMDB detail.
+func extractNotifyInfo(details interface{}) (title string, year int, posterURL string) {
+	switch d := details.(type) {
+	case *tmdb.MovieDetail:
+		return d.Title, yearFromDate(d.ReleaseDate), posterURLOf(d.PosterPath)
+	case *tmdb.TVDetail:
+		return d.Name, yearFromDate(d.FirstAirDate), posterURLOf(d.PosterPath)
+	}
+	return "", 0, ""
+}
+
+func yearFromDate(date string) int {
+	if len(date) >= 4 {
+		y := 0
+		fmt.Sscanf(date[:4], "%d", &y)
+		return y
+	}
+	return 0
+}
+
+func posterURLOf(posterPath string) string {
+	if posterPath == "" {
+		return ""
+	}
+	return tmdb.GetImageURL(posterPath, "w500")
 }
 
 // handleMovieScraping implements the movie branch from the flow chart
@@ -251,7 +318,7 @@ func (s *scrapeService) scrapeMovieFile(ctx context.Context, path string, detail
 
 	// 1. Write NFO File if not exists or overwrite is true
 	if overwrite || !fileExists(nfoPath) {
-		xmlData, err := nfo.GenerateMovieNFO(detail)
+		xmlData, err := nfo.GenerateMovieNFO(detail, s.fetchCast(ctx, "movie", detail.ID))
 		if err != nil {
 			return err
 		}
@@ -378,7 +445,7 @@ func (s *scrapeService) scrapeBluRayFolderWithType(ctx context.Context, path str
 	nfoPath := filepath.Join(path, "movie.nfo")
 
 	if overwrite || !fileExists(nfoPath) {
-		xmlData, err := nfo.GenerateMovieNFO(movieDetail)
+		xmlData, err := nfo.GenerateMovieNFO(movieDetail, s.fetchCast(ctx, "movie", movieDetail.ID))
 		if err != nil {
 			return err
 		}
@@ -417,7 +484,7 @@ func (s *scrapeService) scrapeTVDirectory(ctx context.Context, path string, deta
 
 	// 1. tvshow.nfo
 	if overwrite || !fileExists(nfoPath) {
-		xmlData, err := nfo.GenerateTVShowNFO(detail)
+		xmlData, err := nfo.GenerateTVShowNFO(detail, s.fetchCast(ctx, "tv", detail.ID))
 		if err != nil {
 			return err
 		}
@@ -492,7 +559,7 @@ func (s *scrapeService) initializeMovieDirectory(ctx context.Context, path strin
 	nfoPath := filepath.Join(path, "movie.nfo")
 
 	if overwrite || !fileExists(nfoPath) {
-		xmlData, err := nfo.GenerateMovieNFO(detail)
+		xmlData, err := nfo.GenerateMovieNFO(detail, s.fetchCast(ctx, "movie", detail.ID))
 		if err != nil {
 			return err
 		}

@@ -58,6 +58,8 @@ func LoadSettingsFromDB(db *gorm.DB, cfg *config.Config) error {
 			cfg.Transfer.OverwriteMode = setting.Value
 		case "transfer.auto_scrape":
 			cfg.Transfer.AutoScrape = (setting.Value == "true")
+		case "transfer.scrape_person":
+			cfg.Transfer.ScrapePerson = (setting.Value == "true")
 		case "transfer.min_file_size_mb":
 			var val int64
 			fmt.Sscanf(setting.Value, "%d", &val)

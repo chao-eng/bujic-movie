@@ -42,6 +42,7 @@ type TransferConfig struct {
 	Mode             string   `mapstructure:"mode"`
 	OverwriteMode    string   `mapstructure:"overwrite_mode"`
 	AutoScrape       bool     `mapstructure:"auto_scrape"`
+	ScrapePerson     bool     `mapstructure:"scrape_person"`
 	IgnoreExtensions []string `mapstructure:"ignore_extensions"`
 	MinFileSizeMB    int64    `mapstructure:"min_file_size_mb"`
 }
@@ -71,6 +72,7 @@ func LoadConfig(configPath string) (*Config, error) {
 	v.SetDefault("transfer.mode", "link")
 	v.SetDefault("transfer.overwrite_mode", "size")
 	v.SetDefault("transfer.auto_scrape", true)
+	v.SetDefault("transfer.scrape_person", false)
 	v.SetDefault("transfer.min_file_size_mb", 50)
 
 	var config Config

@@ -103,3 +103,19 @@ type ImagesResponse struct {
 	Logos     []ImageItem `json:"logos"`
 	Stills    []ImageItem `json:"stills"`
 }
+
+// Cast represents a single cast member from a credits response.
+type Cast struct {
+	ID                 int    `json:"id"`
+	Name               string `json:"name"`
+	Character          string `json:"character"`
+	Order              int    `json:"order"`
+	ProfilePath        string `json:"profile_path"`
+	KnownForDepartment string `json:"known_for_department"`
+}
+
+// CreditsResponse is the payload of /movie/{id}/credits and /tv/{id}/credits.
+// Only cast (演职人员) is consumed; crew is intentionally ignored.
+type CreditsResponse struct {
+	Cast []Cast `json:"cast"`
+}

@@ -234,6 +234,34 @@ func (c *Client) GetTVDetail(ctx context.Context, id int) (*TVDetail, error) {
 	return &detail, nil
 }
 
+// GetMovieCredits retrieves the cast & crew for a movie
+func (c *Client) GetMovieCredits(ctx context.Context, id int) (*CreditsResponse, error) {
+	body, err := c.get(ctx, fmt.Sprintf("/movie/%d/credits", id), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	var credits CreditsResponse
+	if err := json.Unmarshal(body, &credits); err != nil {
+		return nil, err
+	}
+	return &credits, nil
+}
+
+// GetTVCredits retrieves the cast & crew for a TV show
+func (c *Client) GetTVCredits(ctx context.Context, id int) (*CreditsResponse, error) {
+	body, err := c.get(ctx, fmt.Sprintf("/tv/%d/credits", id), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	var credits CreditsResponse
+	if err := json.Unmarshal(body, &credits); err != nil {
+		return nil, err
+	}
+	return &credits, nil
+}
+
 // GetTVSeasonDetail retrieves episode list and metadata for a specific season
 func (c *Client) GetTVSeasonDetail(ctx context.Context, tvID, seasonNumber int) (*TVSeasonDetail, error) {
 	body, err := c.get(ctx, fmt.Sprintf("/tv/%d/season/%d", tvID, seasonNumber), nil)
