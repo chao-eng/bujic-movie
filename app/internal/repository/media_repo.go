@@ -12,8 +12,10 @@ type MediaRepository interface {
 	GetByTMDBID(tmdbID int, mediaType string) (*entity.Media, error)
 	GetByPath(path string) (*entity.Media, error)
 	List(offset, limit int) ([]entity.Media, error)
+	ListAll() ([]entity.Media, error)
 	Search(query string) ([]entity.Media, error)
 	Delete(id uint) error
+	DeleteSeason(tmdbID int, season int) error
 	Count(mediaType string) (int64, error)
 }
 
@@ -68,6 +70,12 @@ func (r *mediaRepository) List(offset, limit int) ([]entity.Media, error) {
 	return medias, err
 }
 
+func (r *mediaRepository) ListAll() ([]entity.Media, error) {
+	var medias []entity.Media
+	err := r.db.Order("updated_at desc").Find(&medias).Error
+	return medias, err
+}
+
 func (r *mediaRepository) Search(query string) ([]entity.Media, error) {
 	var medias []entity.Media
 	err := r.db.Where("title LIKE ?", "%"+query+"%").Limit(50).Find(&medias).Error
@@ -78,8 +86,16 @@ func (r *mediaRepository) Delete(id uint) error {
 	return r.db.Delete(&entity.Media{}, id).Error
 }
 
+func (r *mediaRepository) DeleteSeason(tmdbID int, season int) error {
+	return r.db.Where("type = ? AND tmdb_id = ? AND season = ?", "tv", tmdbID, season).Delete(&entity.Media{}).Error
+}
+
 func (r *mediaRepository) Count(mediaType string) (int64, error) {
 	var count int64
+	if mediaType == "tv" {
+		err := r.db.Model(&entity.Media{}).Where("type = ?", "tv").Select("count(distinct(tmdb_id || '-' || season))").Scan(&count).Error
+		return count, err
+	}
 	err := r.db.Model(&entity.Media{}).Where("type = ?", mediaType).Count(&count).Error
 	return count, err
 }

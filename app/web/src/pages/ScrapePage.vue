@@ -4,7 +4,7 @@ import client from '@/api/client'
 import { Card, CardHeader, CardTitle, CardDescription, CardContent } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
 import { Button } from '@/components/ui/button'
-import { Folder, File, ArrowLeft, Loader2, Sparkles, CheckCircle2, Film, Tv } from 'lucide-vue-next'
+import { Folder, File, ArrowLeft, Loader2, Sparkles, CheckCircle2, Film, Tv, RefreshCw } from 'lucide-vue-next'
 
 const selectedPath = ref('')
 const overwrite = ref(false)
@@ -165,15 +165,24 @@ onMounted(async () => {
             <CardTitle class="text-amber-500">文件浏览器</CardTitle>
             <CardDescription class="text-slate-400">选择待刮削的目标路径</CardDescription>
           </div>
-          <!-- Go Back button -->
-          <Button
-            @click="navigateUp"
-            :disabled="currentDir === '/' || currentDir === ''"
-            variant="outline"
-            class="border-slate-800 text-slate-300 hover:bg-slate-800 flex items-center gap-2 h-9"
-          >
-            <ArrowLeft class="h-4 w-4" /> 返回上级
-          </Button>
+          <div class="flex items-center gap-2">
+            <Button
+              @click="fetchFiles(currentDir)"
+              variant="outline"
+              class="border-slate-800 text-slate-300 hover:bg-slate-800 flex items-center gap-2 h-9 px-3"
+              title="刷新当前目录"
+            >
+              <RefreshCw class="h-4 w-4" />
+            </Button>
+            <Button
+              @click="navigateUp"
+              :disabled="currentDir === '/' || currentDir === ''"
+              variant="outline"
+              class="border-slate-800 text-slate-300 hover:bg-slate-800 flex items-center gap-2 h-9"
+            >
+              <ArrowLeft class="h-4 w-4" /> 返回上级
+            </Button>
+          </div>
         </CardHeader>
         <CardContent class="p-0">
           <!-- Current Directory Path -->

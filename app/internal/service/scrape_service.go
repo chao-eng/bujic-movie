@@ -274,7 +274,7 @@ func (s *scrapeService) scrapeMovieFile(ctx context.Context, path string, detail
 	}
 
 	// 3. Record in Database
-	s.saveToDB(detail.ID, detail.Title, detail.ReleaseDate, "movie", path, detail.PosterPath, detail.BackdropPath)
+	s.saveToDB(detail.ID, detail.Title, detail.ReleaseDate, "movie", path, detail.PosterPath, detail.BackdropPath, 0)
 
 	return nil
 }
@@ -341,7 +341,7 @@ func (s *scrapeService) scrapeTVEpisodeFile(ctx context.Context, path string, de
 	}
 
 	// 3. Save reference in DB (points to the main TV show ID)
-	s.saveToDB(detail.ID, detail.Name, detail.FirstAirDate, "tv", path, detail.PosterPath, detail.BackdropPath)
+	s.saveToDB(detail.ID, detail.Name, detail.FirstAirDate, "tv", path, detail.PosterPath, detail.BackdropPath, meta.Season)
 
 	return nil
 }
@@ -519,7 +519,7 @@ func (s *scrapeService) createAliases(srcPath string, aliasName string) {
 	}
 }
 
-func (s *scrapeService) saveToDB(tmdbID int, title, date, mediaType, path, poster, backdrop string) {
+func (s *scrapeService) saveToDB(tmdbID int, title, date, mediaType, path, poster, backdrop string, season int) {
 	year := 0
 	if len(date) >= 4 {
 		fmt.Sscanf(date[:4], "%d", &year)
@@ -530,6 +530,7 @@ func (s *scrapeService) saveToDB(tmdbID int, title, date, mediaType, path, poste
 		existing.TMDBID = tmdbID
 		existing.Title = title
 		existing.Year = year
+		existing.Season = season
 		existing.Type = mediaType
 		existing.PosterPath = poster
 		existing.BackdropPath = backdrop
@@ -540,6 +541,7 @@ func (s *scrapeService) saveToDB(tmdbID int, title, date, mediaType, path, poste
 			TMDBID:       tmdbID,
 			Title:        title,
 			Year:         year,
+			Season:       season,
 			Type:         mediaType,
 			Path:         path,
 			PosterPath:   poster,

@@ -15,6 +15,7 @@ type Media struct {
 	TMDBID       int       `gorm:"index;column:tmdb_id" json:"tmdb_id"`
 	Title        string    `gorm:"column:title" json:"title"`
 	Year         int       `gorm:"column:year" json:"year"`
+	Season       int       `gorm:"column:season" json:"season"`
 	Type         string    `gorm:"index;column:type" json:"type"` // "movie" or "tv"
 	Path         string    `gorm:"column:path" json:"path"`
 	PosterPath   string    `gorm:"column:poster_path" json:"poster_path"`

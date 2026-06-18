@@ -243,6 +243,7 @@ func (s *transferService) executeTransfer(task *TransferTask) error {
 		var lastDestDir string
 		var totalSize int64
 
+		totalFiles := len(videoFiles)
 		for i, vf := range videoFiles {
 			// Check ignore list and size limit
 			info, err := os.Stat(vf)
@@ -255,7 +256,11 @@ func (s *transferService) executeTransfer(task *TransferTask) error {
 				continue // Skip samples/short video clips
 			}
 
-			logger.Info("[整理] [%d/%d] 正在整理: %s", i+1, len(videoFiles), filepath.Base(vf))
+			logger.Info("[整理] [%d/%d] 正在整理: %s", i+1, totalFiles, filepath.Base(vf))
+
+			// Calculate progress percentage and update status
+			progress := float64(i) / float64(totalFiles) * 100.0
+			s.updateTaskStatus(task.ID, "running", progress, fmt.Sprintf("正在整理: %s (%d/%d)", filepath.Base(vf), i+1, totalFiles))
 
 			vfMeta := meta
 			if !meta.IsMovie {
