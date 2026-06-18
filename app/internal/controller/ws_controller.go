@@ -17,8 +17,13 @@ var upgrader = websocket.Upgrader{
 	},
 }
 
+type WSClient struct {
+	conn *websocket.Conn
+	send chan interface{}
+}
+
 type WSController struct {
-	clients   map[*websocket.Conn]bool
+	clients   map[*WSClient]bool
 	clientsMu sync.Mutex
 }
 
@@ -26,11 +31,12 @@ var GlobalWSController *WSController
 
 func NewWSController() *WSController {
 	GlobalWSController = &WSController{
-		clients: make(map[*websocket.Conn]bool),
+		clients: make(map[*WSClient]bool),
 	}
 
 	logger.LogBroadcaster = func(level string, message string) {
-		GlobalWSController.Broadcast("log", map[string]string{
+		// Use a goroutine to prevent blocking the logging thread
+		go GlobalWSController.Broadcast("log", map[string]string{
 			"timestamp": time.Now().Format("2006-01-02 15:04:05"),
 			"level":     level,
 			"message":   message,
@@ -48,15 +54,23 @@ func (ctrl *WSController) Handle(c *gin.Context) {
 		return
 	}
 
+	client := &WSClient{
+		conn: conn,
+		send: make(chan interface{}, 256),
+	}
+
 	ctrl.clientsMu.Lock()
-	ctrl.clients[conn] = true
+	ctrl.clients[client] = true
 	ctrl.clientsMu.Unlock()
+
+	// Start client write loop
+	go client.writeLoop()
 
 	defer func() {
 		ctrl.clientsMu.Lock()
-		delete(ctrl.clients, conn)
+		delete(ctrl.clients, client)
 		ctrl.clientsMu.Unlock()
-		conn.Close()
+		close(client.send)
 	}()
 
 	// Keep connection alive until client disconnects
@@ -67,12 +81,32 @@ func (ctrl *WSController) Handle(c *gin.Context) {
 	}
 }
 
+func (c *WSClient) writeLoop() {
+	defer func() {
+		c.conn.Close()
+	}()
+
+	for {
+		msg, ok := <-c.send
+		if !ok {
+			return
+		}
+
+		_ = c.conn.SetWriteDeadline(time.Now().Add(5 * time.Second))
+		err := c.conn.WriteJSON(msg)
+		if err != nil {
+			log.Printf("WebSocket write error: %v", err)
+			return
+		}
+	}
+}
+
 type WSMessage struct {
 	Type    string      `json:"type"`
 	Payload interface{} `json:"payload"`
 }
 
-// Broadcast sends JSON payload to all active WebSocket clients
+// Broadcast sends JSON payload to all active WebSocket clients non-blockingly
 func (ctrl *WSController) Broadcast(msgType string, payload interface{}) {
 	ctrl.clientsMu.Lock()
 	defer ctrl.clientsMu.Unlock()
@@ -83,11 +117,10 @@ func (ctrl *WSController) Broadcast(msgType string, payload interface{}) {
 	}
 
 	for client := range ctrl.clients {
-		err := client.WriteJSON(msg)
-		if err != nil {
-			log.Printf("WebSocket write error, closing client: %v", err)
-			client.Close()
-			delete(ctrl.clients, client)
+		select {
+		case client.send <- msg:
+		default:
+			log.Printf("WebSocket client buffer full, dropping message")
 		}
 	}
 }

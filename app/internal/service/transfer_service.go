@@ -68,6 +68,40 @@ type transferService struct {
 	debounceTimers map[string]*time.Timer
 }
 
+var ExtraFolderNames = []string{
+	"featurettes",
+	"behind the scenes",
+	"deleted scenes",
+	"interviews",
+	"trailers",
+	"shorts",
+	"scenes",
+	"specials",
+}
+
+func isExtraFile(path string) (bool, string) {
+	cleanPath := filepath.Clean(path)
+	dir := filepath.Dir(cleanPath)
+	for {
+		base := filepath.Base(dir)
+		if base == "." || base == "/" || base == "" || base == dir {
+			break
+		}
+		lowerBase := strings.ToLower(base)
+		for _, extraName := range ExtraFolderNames {
+			if lowerBase == extraName {
+				return true, base
+			}
+		}
+		parent := filepath.Dir(dir)
+		if parent == dir {
+			break
+		}
+		dir = parent
+	}
+	return false, ""
+}
+
 func NewTransferService(
 	historyRepo repository.TransferHistoryRepository,
 	namingService NamingService,
@@ -175,6 +209,7 @@ func (s *transferService) worker() {
 			if err != nil {
 				logger.Error("[整理] 任务 %s 失败: %v", task.ID, err)
 				s.updateTaskStatus(task.ID, "failed", 0, err.Error())
+				s.recordHistory(task.SrcPath, "", "failed", 0, err.Error())
 			} else {
 				logger.Info("[整理] 任务 %s 完成", task.ID)
 				s.updateTaskStatus(task.ID, "success", 100, "completed")
@@ -220,7 +255,6 @@ func (s *transferService) executeTransfer(task *TransferTask) error {
 	meta, details, err := s.recognizeService.RecognizeWithType(context.Background(), srcPath, task.MediaType)
 	if err != nil {
 		logger.Warn("[整理] 识别失败: %v", err)
-		s.recordHistory(srcPath, "", "failed", 0, err.Error())
 		return err
 	}
 	mediaType := map[bool]string{true: "电影", false: "电视剧"}[meta.IsMovie]
@@ -316,7 +350,6 @@ func (s *transferService) executeTransfer(task *TransferTask) error {
 		destPath, err := s.transferSingleVideoFile(srcPath, meta, details, task.CardID)
 		if err != nil {
 			logger.Error("[整理] 整理失败: %v", err)
-			s.recordHistory(srcPath, "", "failed", info.Size(), err.Error())
 			return err
 		}
 		logger.Info("[整理] 整理完成: %s -> %s", filepath.Base(srcPath), destPath)
@@ -358,7 +391,8 @@ func (s *transferService) getBaseArchivePath(cardID uint) (string, error) {
 }
 
 func (s *transferService) transferSingleVideoFile(srcPath string, meta *parser.Metadata, details interface{}, cardID uint) (string, error) {
-	if !meta.IsMovie && len(meta.Episodes) == 0 {
+	isExtra, extraFolder := isExtraFile(srcPath)
+	if !isExtra && !meta.IsMovie && len(meta.Episodes) == 0 {
 		return "", fmt.Errorf("无法解析剧集的剧集编号: %s", srcPath)
 	}
 
@@ -370,7 +404,34 @@ func (s *transferService) transferSingleVideoFile(srcPath string, meta *parser.M
 		return "", err
 	}
 
-	if meta.IsMovie {
+	if isExtra {
+		destFilename = filepath.Base(srcPath)
+		if meta.IsMovie {
+			movieDetail := details.(*tmdb.MovieDetail)
+			var movieDir string
+			if meta.Year > 0 {
+				movieDir = fmt.Sprintf("%s (%d)", movieDetail.Title, meta.Year)
+			} else {
+				movieDir = movieDetail.Title
+			}
+			destSubdir = filepath.Join(basePath, movieDir, extraFolder)
+		} else {
+			tvDetail := details.(*tmdb.TVDetail)
+			var tvDir string
+			if meta.Year > 0 {
+				tvDir = fmt.Sprintf("%s (%d)", tvDetail.Name, meta.Year)
+			} else {
+				tvDir = tvDetail.Name
+			}
+			if meta.Season > 0 {
+				seasonDir := fmt.Sprintf("Season %02d", meta.Season)
+				destSubdir = filepath.Join(basePath, tvDir, seasonDir, extraFolder)
+			} else {
+				destSubdir = filepath.Join(basePath, tvDir, extraFolder)
+			}
+		}
+		logger.Info("[整理] 花絮/额外内容目标路径: %s", filepath.Join(destSubdir, destFilename))
+	} else if meta.IsMovie {
 		movieDetail := details.(*tmdb.MovieDetail)
 		destSubdir, destFilename = s.namingService.GetMoviePath(movieDetail.Title, meta.Year, meta.Resolution, ext)
 		destSubdir = filepath.Join(basePath, destSubdir)
@@ -468,7 +529,6 @@ func (s *transferService) transferBluRay(srcPath string, meta *parser.Metadata, 
 
 	if err != nil {
 		logger.Error("[整理] 蓝光原盘 %s 操作失败: %v", mode, err)
-		s.recordHistory(srcPath, destDir, "failed", 0, err.Error())
 		return err
 	}
 
