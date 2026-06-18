@@ -87,10 +87,22 @@ make build
 
 在生产环境部署时，建议使用 `docker-compose` 运行：
 
-```bash
-cd app/deployments
-# 根据实际情况修改 [docker-compose.yml](./app/deployments/docker-compose.yml) 中的卷挂载路径 (media/downloads,/path/to/media)
-docker-compose up -d
+```yaml
+version: "3.8"
+services:
+  bujic-movie:
+    image: crpi-a1liy20beodq2bdl.cn-beijing.personal.cr.aliyuncs.com/bujic/bujic-movie:latest
+    container_name: bujic-movie
+    restart: unless-stopped
+    ports:
+      - "8080:8080"
+    volumes:
+      - ./data:/app/data                # 配置 + SQLite 数据库
+      - /path/to/media:/media           # 媒体库挂载
+      - /path/to/downloads:/downloads   # 下载目录挂载
+    environment:
+      - TZ=Asia/Shanghai
+      - BUJIC_SERVER_SECRET_KEY=change_me_to_something_secure
 ```
 默认会拉取阿里云镜像：`crpi-a1liy20beodq2bdl.cn-beijing.personal.cr.aliyuncs.com/bujic/bujic-movie:latest` 并启动服务。
 
@@ -103,8 +115,8 @@ docker-compose up -d
 | 环境变量 | 默认值 | 说明 |
 | :--- | :--- | :--- |
 | `BUJIC_SERVER_PORT` | `8080` | Web 服务监听端口 |
-| `BUJIC_SERVER_MODE` | `debug` | 运行模式 (`debug` / `release`) |
-| `BUJIC_SERVER_SECRET_KEY` | `change_me_to_something_secure` | 用于 JWT 鉴权的签名密钥 |
+| `BUJIC_SERVER_MODE` | `debug` | 运行模式 (`debug` / `release`) 默认使用`release`模式|
+| `BUJIC_SERVER_SECRET_KEY` | `change_me_to_something_secure` | 用于 JWT 鉴权的签名密钥,建议修改 |
 | `BUJIC_DATABASE_DB_PATH` | `data/bujic-movie.db` | SQLite 数据库在容器内或本地的存储路径 |
 
 > 💡 **提示**：其他系统业务配置（例如 TMDB API 密钥、媒体库路径、整理转移模式及账号密码等）均可直接在 **Web 网页后台的「系统设置」** 页面进行可视化配置，它们会被自动保存至数据库并享有最高优先级。
