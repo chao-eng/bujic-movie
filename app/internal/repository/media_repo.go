@@ -105,9 +105,7 @@ func (r *mediaRepository) Search(query string, pathPrefix string) ([]entity.Medi
 func (r *mediaRepository) GetEpisodes(tmdbID int, season int, parentPath string) ([]entity.Media, error) {
 	var medias []entity.Media
 	var err error
-	if tmdbID > 0 {
-		err = r.db.Where("tmdb_id = ? AND type = ? AND season = ?", tmdbID, "tv", season).Order("path asc").Find(&medias).Error
-	} else if parentPath != "" {
+	if parentPath != "" {
 		pattern := parentPath
 		if !strings.HasSuffix(pattern, string(filepath.Separator)) {
 			pattern += string(filepath.Separator)
@@ -117,6 +115,8 @@ func (r *mediaRepository) GetEpisodes(tmdbID int, season int, parentPath string)
 		} else {
 			err = r.db.Where("type = ? AND path LIKE ?", "tv", pattern+"%").Order("path asc").Find(&medias).Error
 		}
+	} else if tmdbID > 0 {
+		err = r.db.Where("tmdb_id = ? AND type = ? AND season = ?", tmdbID, "tv", season).Order("path asc").Find(&medias).Error
 	}
 	return medias, err
 }

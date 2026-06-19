@@ -916,6 +916,39 @@ func getShowInfoFromPath(path string) (string, string) {
 	return seriesDir, filepath.Base(seriesDir)
 }
 
+func getShowTitleAndID(seriesDir string) (string, int) {
+	nfoPath := filepath.Join(seriesDir, "tvshow.nfo")
+	if _, err := os.Stat(nfoPath); err == nil {
+		if data, err := os.ReadFile(nfoPath); err == nil {
+			title := ""
+			tmdbID := 0
+
+			reTitle := regexp.MustCompile(`(?i)<title>([^<]+)</title>`)
+			if m := reTitle.FindStringSubmatch(string(data)); len(m) > 1 {
+				title = html.UnescapeString(m[1])
+			}
+
+			reTMDB := regexp.MustCompile(`(?i)<tmdbid>(\d+)</tmdbid>`)
+			if m := reTMDB.FindStringSubmatch(string(data)); len(m) > 1 {
+				tmdbID, _ = strconv.Atoi(m[1])
+			}
+
+			if tmdbID == 0 {
+				reUnique := regexp.MustCompile(`(?i)<uniqueid[^>]*type="tmdb"[^>]*>(\d+)</uniqueid>`)
+				if m := reUnique.FindStringSubmatch(string(data)); len(m) > 1 {
+					tmdbID, _ = strconv.Atoi(m[1])
+				}
+			}
+
+			if title == "" {
+				title = filepath.Base(seriesDir)
+			}
+			return title, tmdbID
+		}
+	}
+	return filepath.Base(seriesDir), 0
+}
+
 func (ctrl *MediaController) groupMedias(rawMedias []entity.Media) []entity.Media {
 	var grouped []entity.Media
 	seen := make(map[string]int)
@@ -932,19 +965,20 @@ func (ctrl *MediaController) groupMedias(rawMedias []entity.Media) []entity.Medi
 				_ = ctrl.mediaRepo.Update(&m)
 			}
 
-			var key string
-			if m.TMDBID > 0 {
-				key = fmt.Sprintf("tv-%d-%d", m.TMDBID, m.Season)
-			} else {
-				seriesDir, seriesName := getShowInfoFromPath(m.Path)
-				key = fmt.Sprintf("tv-unmatched-%s-%d", seriesDir, m.Season)
-				m.Title = seriesName
+			seriesDir, seriesName := getShowInfoFromPath(m.Path)
+			showTitle, showTMDBID := getShowTitleAndID(seriesDir)
+			if showTitle == "" {
+				showTitle = seriesName
 			}
+
+			// Group all TV shows (matched or unmatched) by their Series Directory and Season
+			key := fmt.Sprintf("tv-%s-%d", seriesDir, m.Season)
 
 			if _, ok := seen[key]; ok {
 				continue
 			}
-			m.Title = fmt.Sprintf("%s (第 %d 季)", m.Title, m.Season)
+			m.Title = fmt.Sprintf("%s (第 %d 季)", showTitle, m.Season)
+			m.TMDBID = showTMDBID
 			m.Path = filepath.Dir(m.Path)
 			grouped = append(grouped, m)
 			seen[key] = len(grouped) - 1
