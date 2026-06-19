@@ -106,6 +106,11 @@ services:
 ```
 默认会拉取阿里云镜像：`crpi-a1liy20beodq2bdl.cn-beijing.personal.cr.aliyuncs.com/bujic/bujic-movie:latest` 并启动服务。
 
+> ⚠️ **关于 Docker 媒体挂载路径一致性的最佳实践建议**：
+> 
+> 本系统生成的 NFO 文件中会包含绝对路径的海报标签（例如指向 `/media/TV/.../episode.jpg`）。
+> 为了确保 Emby / Jellyfin / Plex 等媒体服务器能够百分之百读取并正确显示刮削出的海报，**强烈建议保持其他媒体服务器容器的媒体目录挂载路径与本系统一致**（即：大家都将宿主机上同一个媒体文件夹挂载到各自容器内的同一个路径下，例如统一挂载为 `/media`）。
+
 ---
 
 ## ⚙️ 环境变量配置 (Environment Variables)
