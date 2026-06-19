@@ -346,6 +346,9 @@ func (ctrl *MediaController) syncDirectory(card *entity.MediaCard) (int, int, in
 	scannedPaths := make(map[string]bool)
 
 	for _, vf := range videoFiles {
+		if isExtraFile(vf) {
+			continue
+		}
 		scannedPaths[vf] = true
 
 		meta := parser.ParseFilename(vf)
@@ -998,4 +1001,38 @@ func (ctrl *MediaController) groupMedias(rawMedias []entity.Media) []entity.Medi
 		}
 	}
 	return grouped
+}
+
+func isExtraFile(path string) bool {
+	cleanPath := filepath.Clean(path)
+	dir := filepath.Dir(cleanPath)
+	extraFolderNames := []string{
+		"featurettes",
+		"behind the scenes",
+		"deleted scenes",
+		"interviews",
+		"trailers",
+		"shorts",
+		"scenes",
+		"specials",
+		"extras",
+	}
+	for {
+		base := filepath.Base(dir)
+		if base == "." || base == "/" || base == "" || base == dir {
+			break
+		}
+		lowerBase := strings.ToLower(base)
+		for _, extraName := range extraFolderNames {
+			if lowerBase == extraName {
+				return true
+			}
+		}
+		parent := filepath.Dir(dir)
+		if parent == dir {
+			break
+		}
+		dir = parent
+	}
+	return false
 }
