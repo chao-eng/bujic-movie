@@ -734,7 +734,7 @@ onMounted(async () => {
     </div>
 
     <!-- Media Poster Grid -->
-    <div v-else-if="medias.length > 0" class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-6">
+    <div v-else-if="medias.length > 0" class="grid grid-cols-2 sm:grid-cols-[repeat(auto-fill,minmax(160px,1fr))] gap-6">
       <Card
         v-for="item in medias"
         :key="item.id"
