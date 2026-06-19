@@ -44,6 +44,15 @@ const getPosterURL = (path: string) => {
   return `/api/v1/media/image?path=${encodeURIComponent(path)}&token=${encodeURIComponent(token)}`
 }
 
+const getShortPath = (path: string) => {
+  if (!path) return ''
+  const parts = path.split(/[/\\]/)
+  const cleanParts = parts.filter(p => p !== '')
+  if (cleanParts.length === 0) return path
+  if (cleanParts.length === 1) return cleanParts[0]
+  return '.../' + cleanParts.slice(-2).join('/')
+}
+
 // Fetch all media cards
 const fetchCards = async () => {
   try {
@@ -669,11 +678,14 @@ onMounted(async () => {
             <h3 class="font-bold text-sm text-slate-100 truncate" :title="item.title">{{ item.title }}</h3>
             <span class="text-xs text-slate-400">{{ item.year || '未知年份' }}</span>
           </div>
-          <div class="flex items-center justify-between pt-3 border-t border-slate-800/50 mt-2">
-            <span class="text-[10px] text-slate-500 truncate max-w-[100px]" :title="item.path">{{ item.path }}</span>
+          <div class="pt-3 border-t border-slate-800/50 mt-2 space-y-2">
+            <div class="flex items-center gap-1 text-slate-500" :title="item.path">
+              <Folder class="h-3.5 w-3.5 shrink-0" />
+              <span class="text-[10px] truncate">{{ getShortPath(item.path) }}</span>
+            </div>
             <Button
               @click="openManageDialog(item)"
-              class="bg-amber-500 hover:bg-amber-600 text-slate-950 font-bold text-xs py-1 px-2 rounded flex items-center gap-1 cursor-pointer"
+              class="w-full bg-amber-500 hover:bg-amber-600 text-slate-950 font-bold text-xs py-1.5 px-2 rounded flex items-center justify-center gap-1 cursor-pointer"
             >
               <Upload class="h-3 w-3" />
               <span>字幕管理</span>

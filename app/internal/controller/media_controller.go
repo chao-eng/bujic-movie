@@ -896,6 +896,26 @@ func getSubtitlesForVideo(videoPath string, stg storage.Storage) []SubtitleInfo 
 	return subs
 }
 
+func getShowInfoFromPath(path string) (string, string) {
+	parentDir := filepath.Clean(filepath.Dir(path))
+	parentName := filepath.Base(parentDir)
+
+	isSeasonDir := false
+	seasonRe := regexp.MustCompile(`(?i)^(?:season\s*|s)(\d+)$`)
+	if seasonRe.MatchString(parentName) {
+		isSeasonDir = true
+	}
+
+	var seriesDir string
+	if isSeasonDir {
+		seriesDir = filepath.Dir(parentDir)
+	} else {
+		seriesDir = parentDir
+	}
+
+	return seriesDir, filepath.Base(seriesDir)
+}
+
 func (ctrl *MediaController) groupMedias(rawMedias []entity.Media) []entity.Media {
 	var grouped []entity.Media
 	seen := make(map[string]int)
@@ -916,7 +936,9 @@ func (ctrl *MediaController) groupMedias(rawMedias []entity.Media) []entity.Medi
 			if m.TMDBID > 0 {
 				key = fmt.Sprintf("tv-%d-%d", m.TMDBID, m.Season)
 			} else {
-				key = fmt.Sprintf("tv-unmatched-%d", m.ID)
+				seriesDir, seriesName := getShowInfoFromPath(m.Path)
+				key = fmt.Sprintf("tv-unmatched-%s-%d", seriesDir, m.Season)
+				m.Title = seriesName
 			}
 
 			if _, ok := seen[key]; ok {

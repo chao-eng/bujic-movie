@@ -112,7 +112,11 @@ func (r *mediaRepository) GetEpisodes(tmdbID int, season int, parentPath string)
 		if !strings.HasSuffix(pattern, string(filepath.Separator)) {
 			pattern += string(filepath.Separator)
 		}
-		err = r.db.Where("type = ? AND path LIKE ?", "tv", pattern+"%").Order("path asc").Find(&medias).Error
+		if season > 0 {
+			err = r.db.Where("type = ? AND path LIKE ? AND season = ?", "tv", pattern+"%", season).Order("path asc").Find(&medias).Error
+		} else {
+			err = r.db.Where("type = ? AND path LIKE ?", "tv", pattern+"%").Order("path asc").Find(&medias).Error
+		}
 	}
 	return medias, err
 }
