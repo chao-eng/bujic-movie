@@ -29,6 +29,7 @@ const settings = ref({
   overwrite_mode: 'size',
   auto_scrape: true,
   scrape_person: false,
+  lock_nfo: false,
 })
 
 const cards = ref<any[]>([])
@@ -661,6 +662,16 @@ onUnmounted(() => {
                       启用演职人员刮削
                     </label>
                     <span class="text-xs text-slate-500">开启后，写入 NFO 的 <code class="px-1 py-0.5 rounded bg-slate-800 text-slate-300">&lt;actor&gt;</code> 字段会包含主要演职人员（与电影/电视剧均生效）。</span>
+                  </div>
+                </div>
+                <div class="space-y-1.5 md:col-span-3">
+                  <label class="text-xs font-semibold text-slate-400">锁定元数据 NFO 文件</label>
+                  <div class="flex items-center gap-3 h-10">
+                    <Switch id="lock-nfo-toggle" v-model="settings.lock_nfo" />
+                    <label for="lock-nfo-toggle" class="cursor-pointer select-none text-sm font-medium text-slate-300">
+                      锁定 NFO 文件
+                    </label>
+                    <span class="text-xs text-slate-500">开启后，写入 NFO 的 <code class="px-1 py-0.5 rounded bg-slate-800 text-slate-300">&lt;lockdata&gt;</code> 字段将被设为 true，防止被媒体服务器自动修改/覆盖。</span>
                   </div>
                 </div>
               </CardContent>

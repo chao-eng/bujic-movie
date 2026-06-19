@@ -16,6 +16,7 @@ import (
 	"github.com/bujic-movie/bujic-movie/internal/storage"
 	"github.com/bujic-movie/bujic-movie/pkg/fileutil"
 	"github.com/bujic-movie/bujic-movie/pkg/logger"
+	"github.com/bujic-movie/bujic-movie/pkg/mediainfo"
 	"github.com/bujic-movie/bujic-movie/pkg/nfo"
 	"github.com/bujic-movie/bujic-movie/pkg/parser"
 	"github.com/bujic-movie/bujic-movie/pkg/tmdb"
@@ -318,7 +319,41 @@ func (s *scrapeService) scrapeMovieFile(ctx context.Context, path string, detail
 
 	// 1. Write NFO File if not exists or overwrite is true
 	if overwrite || !fileExists(nfoPath) {
-		xmlData, err := nfo.GenerateMovieNFO(detail, s.fetchCast(ctx, "movie", detail.ID))
+		var actors []tmdb.Cast
+		var directors []string
+		if credits, err := s.tmdbClient.GetMovieCredits(ctx, detail.ID); err == nil {
+			if config.GlobalConfig != nil && config.GlobalConfig.Transfer.ScrapePerson {
+				actors = credits.Cast
+			}
+			directors = nfo.ExtractDirectors(credits.Crew)
+		} else {
+			logger.Warn("[刮削] 获取电影演职人员失败 (tmdbid=%d): %v", detail.ID, err)
+		}
+		var dateAdded time.Time
+		if info, err := os.Stat(path); err == nil {
+			dateAdded = info.ModTime()
+		} else {
+			dateAdded = time.Now()
+		}
+		lockDataStr := "false"
+		if config.GlobalConfig != nil && config.GlobalConfig.Media.LockNFO {
+			lockDataStr = "true"
+		}
+		var streamDetails *mediainfo.StreamDetails
+		if sd, err := mediainfo.Probe(ctx, path); err == nil {
+			streamDetails = sd
+		} else {
+			logger.Warn("[刮削] 获取电影媒体信息失败 %s: %v", path, err)
+		}
+		opts := nfo.MovieOptions{
+			LockData:  lockDataStr,
+			DateAdded: dateAdded,
+			Detail:    detail,
+			Actors:    actors,
+			Directors: directors,
+			Stream:    streamDetails,
+		}
+		xmlData, err := nfo.GenerateMovieNFO(opts)
 		if err != nil {
 			return err
 		}
@@ -395,7 +430,45 @@ func (s *scrapeService) scrapeTVEpisodeFile(ctx context.Context, path string, de
 
 	// 1. Write Episode NFO
 	if overwrite || !fileExists(nfoPath) {
-		xmlData, err := nfo.GenerateEpisodeNFO(matchedEpisode)
+		var actors []tmdb.Cast
+		var directors []string
+		if credits, err := s.tmdbClient.GetTVEpisodeCredits(ctx, detail.ID, meta.Season, targetEpisodeNum); err == nil {
+			if config.GlobalConfig != nil && config.GlobalConfig.Transfer.ScrapePerson {
+				actors = credits.Cast
+			}
+			directors = nfo.ExtractDirectors(credits.Crew)
+		} else {
+			logger.Warn("[刮削] 获取剧集演职人员失败 (show_tmdbid=%d, s=%d, e=%d): %v", detail.ID, meta.Season, targetEpisodeNum, err)
+		}
+		var dateAdded time.Time
+		if info, err := os.Stat(path); err == nil {
+			dateAdded = info.ModTime()
+		} else {
+			dateAdded = time.Now()
+		}
+		lockDataStr := "false"
+		if config.GlobalConfig != nil && config.GlobalConfig.Media.LockNFO {
+			lockDataStr = "true"
+		}
+		var streamDetails *mediainfo.StreamDetails
+		if sd, err := mediainfo.Probe(ctx, path); err == nil {
+			streamDetails = sd
+		} else {
+			logger.Warn("[刮削] 获取剧集媒体信息失败 %s: %v", path, err)
+		}
+		episodePoster := strings.TrimSuffix(path, filepath.Ext(path)) + ".jpg"
+		opts := nfo.EpisodeOptions{
+			LockData:   lockDataStr,
+			DateAdded:  dateAdded,
+			Episode:    matchedEpisode,
+			ShowTitle:  detail.Name,
+			ShowTMDBID: detail.ID,
+			ArtPoster:  episodePoster,
+			Directors:  directors,
+			Actors:     actors,
+			Stream:     streamDetails,
+		}
+		xmlData, err := nfo.GenerateEpisodeNFO(opts)
 		if err != nil {
 			return err
 		}
@@ -445,7 +518,34 @@ func (s *scrapeService) scrapeBluRayFolderWithType(ctx context.Context, path str
 	nfoPath := filepath.Join(path, "movie.nfo")
 
 	if overwrite || !fileExists(nfoPath) {
-		xmlData, err := nfo.GenerateMovieNFO(movieDetail, s.fetchCast(ctx, "movie", movieDetail.ID))
+		var actors []tmdb.Cast
+		var directors []string
+		if credits, err := s.tmdbClient.GetMovieCredits(ctx, movieDetail.ID); err == nil {
+			if config.GlobalConfig != nil && config.GlobalConfig.Transfer.ScrapePerson {
+				actors = credits.Cast
+			}
+			directors = nfo.ExtractDirectors(credits.Crew)
+		} else {
+			logger.Warn("[刮削] 获取电影演职人员失败 (tmdbid=%d): %v", movieDetail.ID, err)
+		}
+		var dateAdded time.Time
+		if info, err := os.Stat(path); err == nil {
+			dateAdded = info.ModTime()
+		} else {
+			dateAdded = time.Now()
+		}
+		lockDataStr := "false"
+		if config.GlobalConfig != nil && config.GlobalConfig.Media.LockNFO {
+			lockDataStr = "true"
+		}
+		opts := nfo.MovieOptions{
+			LockData:  lockDataStr,
+			DateAdded: dateAdded,
+			Detail:    movieDetail,
+			Actors:    actors,
+			Directors: directors,
+		}
+		xmlData, err := nfo.GenerateMovieNFO(opts)
 		if err != nil {
 			return err
 		}
@@ -484,7 +584,27 @@ func (s *scrapeService) scrapeTVDirectory(ctx context.Context, path string, deta
 
 	// 1. tvshow.nfo
 	if overwrite || !fileExists(nfoPath) {
-		xmlData, err := nfo.GenerateTVShowNFO(detail, s.fetchCast(ctx, "tv", detail.ID))
+		var dateAdded time.Time
+		if info, err := os.Stat(path); err == nil {
+			dateAdded = info.ModTime()
+		} else {
+			dateAdded = time.Now()
+		}
+		lockDataStr := "false"
+		if config.GlobalConfig != nil && config.GlobalConfig.Media.LockNFO {
+			lockDataStr = "true"
+		}
+		var actors []tmdb.Cast
+		if config.GlobalConfig != nil && config.GlobalConfig.Transfer.ScrapePerson {
+			actors = s.fetchCast(ctx, "tv", detail.ID)
+		}
+		opts := nfo.TVShowOptions{
+			LockData:  lockDataStr,
+			DateAdded: dateAdded,
+			Detail:    detail,
+			Actors:    actors,
+		}
+		xmlData, err := nfo.GenerateTVShowNFO(opts)
 		if err != nil {
 			return err
 		}
@@ -523,7 +643,23 @@ func (s *scrapeService) scrapeSeasonDirectory(ctx context.Context, path string, 
 
 	// 1. Generate season.nfo
 	if overwrite || !fileExists(nfoPath) {
-		xmlData, err := nfo.GenerateSeasonNFO(tvDetail, seasonNum)
+		var dateAdded time.Time
+		if info, err := os.Stat(path); err == nil {
+			dateAdded = info.ModTime()
+		} else {
+			dateAdded = time.Now()
+		}
+		lockDataStr := "false"
+		if config.GlobalConfig != nil && config.GlobalConfig.Media.LockNFO {
+			lockDataStr = "true"
+		}
+		opts := nfo.SeasonOptions{
+			LockData:  lockDataStr,
+			DateAdded: dateAdded,
+			Detail:    tvDetail,
+			Season:    seasonNum,
+		}
+		xmlData, err := nfo.GenerateSeasonNFO(opts)
 		if err != nil {
 			return err
 		}
@@ -559,7 +695,34 @@ func (s *scrapeService) initializeMovieDirectory(ctx context.Context, path strin
 	nfoPath := filepath.Join(path, "movie.nfo")
 
 	if overwrite || !fileExists(nfoPath) {
-		xmlData, err := nfo.GenerateMovieNFO(detail, s.fetchCast(ctx, "movie", detail.ID))
+		var actors []tmdb.Cast
+		var directors []string
+		if credits, err := s.tmdbClient.GetMovieCredits(ctx, detail.ID); err == nil {
+			if config.GlobalConfig != nil && config.GlobalConfig.Transfer.ScrapePerson {
+				actors = credits.Cast
+			}
+			directors = nfo.ExtractDirectors(credits.Crew)
+		} else {
+			logger.Warn("[刮削] 获取电影演职人员失败 (tmdbid=%d): %v", detail.ID, err)
+		}
+		var dateAdded time.Time
+		if info, err := os.Stat(path); err == nil {
+			dateAdded = info.ModTime()
+		} else {
+			dateAdded = time.Now()
+		}
+		lockDataStr := "false"
+		if config.GlobalConfig != nil && config.GlobalConfig.Media.LockNFO {
+			lockDataStr = "true"
+		}
+		opts := nfo.MovieOptions{
+			LockData:  lockDataStr,
+			DateAdded: dateAdded,
+			Detail:    detail,
+			Actors:    actors,
+			Directors: directors,
+		}
+		xmlData, err := nfo.GenerateMovieNFO(opts)
 		if err != nil {
 			return err
 		}

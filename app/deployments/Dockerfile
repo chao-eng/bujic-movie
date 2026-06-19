@@ -27,7 +27,7 @@ RUN --mount=type=cache,target=/go/pkg/mod \
 
 # ===== Phase 3: Runner =====
 FROM alpine:3.19
-RUN apk add --no-cache ca-certificates tzdata
+RUN apk add --no-cache ca-certificates tzdata ffmpeg
 WORKDIR /app
 COPY --from=backend-builder /app/bujic-movie .
 

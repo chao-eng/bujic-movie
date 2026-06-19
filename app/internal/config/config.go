@@ -36,6 +36,10 @@ type MediaConfig struct {
 	MoviePath    string `mapstructure:"movie_path"`
 	TVPath       string `mapstructure:"tv_path"`
 	DownloadPath string `mapstructure:"download_path"`
+	// LockNFO controls <lockdata> in the generated NFO. When true, media
+	// servers (Jellyfin/Emby/Kodi) will not overwrite the NFO on scan.
+	// Default false mirrors the Jellyfin reference NFO behaviour.
+	LockNFO bool `mapstructure:"lock_nfo"`
 }
 
 type TransferConfig struct {
@@ -74,6 +78,7 @@ func LoadConfig(configPath string) (*Config, error) {
 	v.SetDefault("transfer.auto_scrape", true)
 	v.SetDefault("transfer.scrape_person", false)
 	v.SetDefault("transfer.min_file_size_mb", 50)
+	v.SetDefault("media.lock_nfo", false)
 
 	var config Config
 	if err := v.Unmarshal(&config); err != nil {

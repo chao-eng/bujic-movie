@@ -114,8 +114,19 @@ type Cast struct {
 	KnownForDepartment string `json:"known_for_department"`
 }
 
-// CreditsResponse is the payload of /movie/{id}/credits and /tv/{id}/credits.
-// Only cast (演职人员) is consumed; crew is intentionally ignored.
+// CrewMember represents a single crew member from a credits response.
+// Used to derive <director> for movie/episode NFO.
+type CrewMember struct {
+	ID         int    `json:"id"`
+	Name       string `json:"name"`
+	Department string `json:"department"`
+	Job        string `json:"job"`
+}
+
+// CreditsResponse is the payload of /movie/{id}/credits, /tv/{id}/credits
+// and /tv/{id}/season/{s}/episode/{e}/credits. Cast is the on-screen
+// performers; Crew is the behind-the-camera staff (directors, writers, etc.).
 type CreditsResponse struct {
-	Cast []Cast `json:"cast"`
+	Cast []Cast       `json:"cast"`
+	Crew []CrewMember `json:"crew"`
 }

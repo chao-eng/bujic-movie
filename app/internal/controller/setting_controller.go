@@ -24,6 +24,7 @@ type SettingUpdateRequest struct {
 	Overwrite    string `json:"overwrite_mode"`
 	AutoScrape   *bool  `json:"auto_scrape"`
 	ScrapePerson *bool  `json:"scrape_person"`
+	LockNFO      *bool  `json:"lock_nfo"`
 }
 
 func NewSettingController(tmdbClient *tmdb.Client) *SettingController {
@@ -44,6 +45,7 @@ func (ctrl *SettingController) Get(c *gin.Context) {
 		"auto_scrape":       cfg.Transfer.AutoScrape,
 		"scrape_person":     cfg.Transfer.ScrapePerson,
 		"min_file_size_mb":  cfg.Transfer.MinFileSizeMB,
+		"lock_nfo":          cfg.Media.LockNFO,
 	})
 }
 
@@ -102,6 +104,14 @@ func (ctrl *SettingController) Update(c *gin.Context) {
 			val = "true"
 		}
 		_ = db.SaveSetting("transfer.scrape_person", val)
+	}
+	if req.LockNFO != nil {
+		cfg.Media.LockNFO = *req.LockNFO
+		val := "false"
+		if *req.LockNFO {
+			val = "true"
+		}
+		_ = db.SaveSetting("media.lock_nfo", val)
 	}
 
 	response.Success(c, gin.H{

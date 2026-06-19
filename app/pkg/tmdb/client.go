@@ -262,6 +262,21 @@ func (c *Client) GetTVCredits(ctx context.Context, id int) (*CreditsResponse, er
 	return &credits, nil
 }
 
+// GetTVEpisodeCredits retrieves the cast & crew for a single TV episode.
+// Used to extract the episode-level <director> for NFO generation.
+func (c *Client) GetTVEpisodeCredits(ctx context.Context, tvID, season, episode int) (*CreditsResponse, error) {
+	body, err := c.get(ctx, fmt.Sprintf("/tv/%d/season/%d/episode/%d/credits", tvID, season, episode), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	var credits CreditsResponse
+	if err := json.Unmarshal(body, &credits); err != nil {
+		return nil, err
+	}
+	return &credits, nil
+}
+
 // GetTVSeasonDetail retrieves episode list and metadata for a specific season
 func (c *Client) GetTVSeasonDetail(ctx context.Context, tvID, seasonNumber int) (*TVSeasonDetail, error) {
 	body, err := c.get(ctx, fmt.Sprintf("/tv/%d/season/%d", tvID, seasonNumber), nil)
