@@ -31,7 +31,7 @@ onMounted(() => {
 </script>
 
 <template>
-  <header class="h-16 border-b border-slate-800/80 bg-slate-950/80 backdrop-blur-md flex items-center justify-between px-6 sticky top-0 z-40">
+  <header class="h-16 shrink-0 border-b border-slate-800/80 bg-slate-950/80 backdrop-blur-md flex items-center justify-between px-6 sticky top-0 z-40">
     <div class="flex items-center gap-4">
       <h2 class="text-lg font-semibold text-slate-100">Bujic Movie 媒体管理系统</h2>
     </div>

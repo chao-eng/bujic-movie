@@ -21,12 +21,12 @@ onUnmounted(() => {
     <AppSidebar />
 
     <!-- Main Content Area -->
-    <div class="flex-1 flex flex-col min-w-0 overflow-y-auto bg-slate-950">
+    <div class="flex-1 flex flex-col min-w-0 bg-slate-950">
       <!-- Top header -->
       <AppHeader />
 
       <!-- Content area -->
-      <main class="p-6">
+      <main class="flex-1 overflow-y-auto p-6">
         <router-view v-slot="{ Component }">
           <transition name="fade" mode="out-in">
             <component :is="Component" />
