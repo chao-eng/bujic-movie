@@ -41,7 +41,8 @@ RUN set -ex; \
     mkdir ffmpeg-static; \
     tar -xJf ffmpeg.tar.xz -C ffmpeg-static --strip-components=1; \
     mv ffmpeg-static/ffprobe /usr/local/bin/ffprobe; \
-    chmod +x /usr/local/bin/ffprobe; \
+    mv ffmpeg-static/ffmpeg /usr/local/bin/ffmpeg; \
+    chmod +x /usr/local/bin/ffprobe /usr/local/bin/ffmpeg; \
     rm -rf ffmpeg.tar.xz ffmpeg-static;
 
 # ===== Phase 3: Runner =====
@@ -50,6 +51,7 @@ RUN apk add --no-cache ca-certificates tzdata
 WORKDIR /app
 COPY --from=backend-builder /app/bujic-movie .
 COPY --from=ffprobe-downloader /usr/local/bin/ffprobe /usr/local/bin/ffprobe
+COPY --from=ffprobe-downloader /usr/local/bin/ffmpeg /usr/local/bin/ffmpeg
 
 ENV BUJIC_SERVER_MODE=release
 
