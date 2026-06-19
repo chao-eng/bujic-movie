@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, onMounted } from 'vue'
+import { ref, onMounted, computed } from 'vue'
 import client from '@/api/client'
 import { Card, CardContent } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
@@ -302,6 +302,88 @@ const formatLang = (sub: any) => {
   return typeof sub === 'string' ? sub : (sub.language || '未知')
 }
 const isConverting = ref(false)
+const isConvertingBatch = ref(false)
+const hasTraditionalSubs = computed(() => {
+  if (!episodes.value || episodes.value.length === 0) return false
+  return episodes.value.some((ep: any) => 
+    ep.subtitles && ep.subtitles.some((sub: any) => formatLang(sub) === '繁体中文')
+  )
+})
+
+const handleBatchConvertSubtitles = async () => {
+  const itemsToConvert: { sub: any; videoPath: string; epTitle: string }[] = []
+  for (const ep of episodes.value) {
+    if (ep.subtitles && ep.subtitles.length > 0) {
+      for (const sub of ep.subtitles) {
+        if (formatLang(sub) === '繁体中文') {
+          const filename = ep.path.split(/[/\\]/).pop() || ep.path
+          itemsToConvert.push({
+            sub,
+            videoPath: ep.path,
+            epTitle: ep.title || filename
+          })
+        }
+      }
+    }
+  }
+
+  if (itemsToConvert.length === 0) {
+    toast.info('当前季所有剧集中未发现可转换的繁体字幕')
+    return
+  }
+
+  const confirmConv = await showConfirmDialog(
+    '确认整季转换',
+    `确定要将本季所有剧集的繁体字幕自动转换为简体字幕吗？共发现 ${itemsToConvert.length} 个繁体字幕轨道。这将在各视频同级目录下新建对应的简体外挂字幕文件。`
+  )
+  if (!confirmConv) return
+
+  isConvertingBatch.value = true
+  const toastId = toast.loading(`正在启动整季字幕转换... (0/${itemsToConvert.length})`)
+  
+  let successCount = 0
+  let failCount = 0
+  
+  try {
+    for (let i = 0; i < itemsToConvert.length; i++) {
+      const item = itemsToConvert[i]
+      toast.loading(`正在转换第 ${i + 1}/${itemsToConvert.length} 个字幕: ${item.epTitle}...`, { id: toastId })
+      
+      try {
+        const res: any = await client.post('/api/v1/subtitles/convert', {
+          video_path: item.videoPath,
+          subtitle_path: item.sub.type === 'external' ? item.sub.path : '',
+          is_internal: item.sub.type === 'internal',
+          internal_index: item.sub.type === 'internal' ? item.sub.index : 0
+        })
+        
+        if (res.code === 0) {
+          successCount++
+        } else {
+          failCount++
+          console.error(`Failed to convert subtitle for ${item.epTitle}:`, res.msg)
+        }
+      } catch (err) {
+        failCount++
+        console.error(`Error converting subtitle for ${item.epTitle}:`, err)
+      }
+    }
+    
+    toast.dismiss(toastId)
+    if (failCount === 0) {
+      toast.success(`整季繁体字幕转换完成！成功转换了 ${successCount} 个字幕。`)
+    } else {
+      toast.success(`整季字幕转换结束：成功 ${successCount} 个，失败 ${failCount} 个。`)
+    }
+    
+    await fetchEpisodes()
+  } catch (err: any) {
+    toast.dismiss(toastId)
+    toast.error('整季转换过程中出现严重错误: ' + err.message)
+  } finally {
+    isConvertingBatch.value = false
+  }
+}
 
 const handleConvertSubtitle = async (sub: any, isMovie: boolean, videoPath: string) => {
   const confirmConv = await showConfirmDialog('确认转换', '确定要将该繁体字幕转换为简体字幕吗？这将新建一个对应的简体外挂字幕文件。')
@@ -852,13 +934,24 @@ onMounted(async () => {
                   <h3 class="text-sm font-semibold text-slate-200">电视剧整季字幕整理</h3>
                   <p class="text-xs text-slate-500 mt-0.5">共有 {{ episodes.length }} 集</p>
                 </div>
-                <Button
-                  @click="isBatchMode = true"
-                  class="bg-amber-500 hover:bg-amber-600 text-slate-950 font-bold flex items-center gap-2"
-                >
-                  <Upload class="h-4 w-4" />
-                  <span>批量上传整季字幕</span>
-                </Button>
+                <div class="flex items-center gap-2">
+                  <Button
+                    v-if="hasTraditionalSubs"
+                    @click="handleBatchConvertSubtitles"
+                    :disabled="isConvertingBatch"
+                    class="bg-yellow-600 hover:bg-yellow-700 text-slate-950 font-bold flex items-center gap-2"
+                  >
+                    <RefreshCw :class="['h-4 w-4', isConvertingBatch ? 'animate-spin' : '']" />
+                    <span>一键整季繁转简</span>
+                  </Button>
+                  <Button
+                    @click="isBatchMode = true"
+                    class="bg-amber-500 hover:bg-amber-600 text-slate-950 font-bold flex items-center gap-2"
+                  >
+                    <Upload class="h-4 w-4" />
+                    <span>批量上传整季字幕</span>
+                  </Button>
+                </div>
               </div>
 
               <!-- Episode rows -->
