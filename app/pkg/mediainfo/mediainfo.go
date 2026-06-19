@@ -58,11 +58,13 @@ type AudioStream struct {
 
 // SubtitleStream mirrors a Jellyfin <subtitle> element.
 type SubtitleStream struct {
+	Index    int    `json:"index" xml:"index"`
 	Codec    string `json:"codec" xml:"codec"`
 	Micodec  string `json:"micodec" xml:"micodec"`
 	Width    int    `json:"width" xml:"width"`
 	Height   int    `json:"height" xml:"height"`
 	Language string `json:"language" xml:"language"`
+	Title    string `json:"title" xml:"title"`
 	ScanType string `json:"scantype" xml:"scantype"`
 	Default  bool   `json:"default" xml:"default"`
 	Forced   bool   `json:"forced" xml:"forced"`
@@ -164,11 +166,13 @@ func Probe(ctx context.Context, filePath string) (*StreamDetails, error) {
 			})
 		case "subtitle":
 			details.Subtitle = append(details.Subtitle, SubtitleStream{
+				Index:    s.Index,
 				Codec:    s.CodecName,
 				Micodec:  microCodec(s),
 				Width:    s.Width,
 				Height:   s.Height,
 				Language: lang,
+				Title:    s.Tags["title"],
 				ScanType: scanType(s),
 				Default:  disp,
 				Forced:   force,

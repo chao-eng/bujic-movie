@@ -1,6 +1,9 @@
 package repository
 
 import (
+	"path/filepath"
+	"strings"
+
 	"github.com/bujic-movie/bujic-movie/internal/model/entity"
 	"gorm.io/gorm"
 )
@@ -12,8 +15,9 @@ type MediaRepository interface {
 	GetByTMDBID(tmdbID int, mediaType string) (*entity.Media, error)
 	GetByPath(path string) (*entity.Media, error)
 	List(offset, limit int) ([]entity.Media, error)
-	ListAll() ([]entity.Media, error)
-	Search(query string) ([]entity.Media, error)
+	ListAll(pathPrefix string) ([]entity.Media, error)
+	Search(query string, pathPrefix string) ([]entity.Media, error)
+	GetEpisodes(tmdbID int, season int, parentPath string) ([]entity.Media, error)
 	Delete(id uint) error
 	DeleteSeason(tmdbID int, season int) error
 	Count(mediaType string) (int64, error)
@@ -70,15 +74,46 @@ func (r *mediaRepository) List(offset, limit int) ([]entity.Media, error) {
 	return medias, err
 }
 
-func (r *mediaRepository) ListAll() ([]entity.Media, error) {
+func (r *mediaRepository) ListAll(pathPrefix string) ([]entity.Media, error) {
 	var medias []entity.Media
-	err := r.db.Order("updated_at desc").Find(&medias).Error
+	query := r.db.Order("updated_at desc")
+	if pathPrefix != "" {
+		pattern := pathPrefix
+		if !strings.HasSuffix(pattern, string(filepath.Separator)) {
+			pattern += string(filepath.Separator)
+		}
+		query = query.Where("path LIKE ?", pattern+"%")
+	}
+	err := query.Find(&medias).Error
 	return medias, err
 }
 
-func (r *mediaRepository) Search(query string) ([]entity.Media, error) {
+func (r *mediaRepository) Search(query string, pathPrefix string) ([]entity.Media, error) {
 	var medias []entity.Media
-	err := r.db.Where("title LIKE ?", "%"+query+"%").Limit(50).Find(&medias).Error
+	dbQuery := r.db.Where("title LIKE ?", "%"+query+"%").Limit(50)
+	if pathPrefix != "" {
+		pattern := pathPrefix
+		if !strings.HasSuffix(pattern, string(filepath.Separator)) {
+			pattern += string(filepath.Separator)
+		}
+		dbQuery = dbQuery.Where("path LIKE ?", pattern+"%")
+	}
+	err := dbQuery.Find(&medias).Error
+	return medias, err
+}
+
+func (r *mediaRepository) GetEpisodes(tmdbID int, season int, parentPath string) ([]entity.Media, error) {
+	var medias []entity.Media
+	var err error
+	if tmdbID > 0 {
+		err = r.db.Where("tmdb_id = ? AND type = ? AND season = ?", tmdbID, "tv", season).Order("path asc").Find(&medias).Error
+	} else if parentPath != "" {
+		pattern := parentPath
+		if !strings.HasSuffix(pattern, string(filepath.Separator)) {
+			pattern += string(filepath.Separator)
+		}
+		err = r.db.Where("type = ? AND path LIKE ?", "tv", pattern+"%").Order("path asc").Find(&medias).Error
+	}
 	return medias, err
 }
 

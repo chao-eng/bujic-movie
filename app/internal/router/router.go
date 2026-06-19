@@ -60,7 +60,7 @@ func SetupRouter(gormDB *gorm.DB, cfg *config.Config) *gin.Engine {
 	healthCtrl := controller.NewHealthController()
 	scrapeCtrl := controller.NewScrapeController(scrapeSvc)
 	transferCtrl := controller.NewTransferController(transferSvc)
-	mediaCtrl := controller.NewMediaController(mediaRepo)
+	mediaCtrl := controller.NewMediaController(mediaRepo, mediaCardRepo, stg, notificationSvc)
 	settingCtrl := controller.NewSettingController(tmdbClient)
 	fileCtrl := controller.NewFileController(stg)
 	wsCtrl := controller.NewWSController()
@@ -94,6 +94,13 @@ func SetupRouter(gormDB *gorm.DB, cfg *config.Config) *gin.Engine {
 		protected.GET("/media", mediaCtrl.List)
 		protected.GET("/media/search", mediaCtrl.Search)
 		protected.DELETE("/media/:id", mediaCtrl.Delete)
+		protected.GET("/media/episodes", mediaCtrl.GetEpisodes)
+		protected.POST("/media/refresh", mediaCtrl.Refresh)
+		protected.POST("/subtitles/upload", mediaCtrl.UploadSubtitle)
+		protected.GET("/media/image", mediaCtrl.GetImage)
+		protected.GET("/media/subtitles", mediaCtrl.ListSubtitles)
+		protected.POST("/subtitles/delete", mediaCtrl.DeleteSubtitle)
+		protected.POST("/subtitles/convert", mediaCtrl.ConvertSubtitle)
 
 		// Settings
 		protected.GET("/settings", settingCtrl.Get)

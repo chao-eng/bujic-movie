@@ -33,20 +33,23 @@ func GenerateToken(username string) (string, error) {
 func AuthRequired() gin.HandlerFunc {
 	return func(c *gin.Context) {
 		authHeader := c.GetHeader("Authorization")
+		var tokenString string
 		if authHeader == "" {
-			response.Unauthorized(c, "Authorization header is required")
-			c.Abort()
-			return
+			tokenString = c.Query("token")
+			if tokenString == "" {
+				response.Unauthorized(c, "Authorization header or token query parameter is required")
+				c.Abort()
+				return
+			}
+		} else {
+			parts := strings.SplitN(authHeader, " ", 2)
+			if !(len(parts) == 2 && parts[0] == "Bearer") {
+				response.Unauthorized(c, "Authorization header format must be Bearer {token}")
+				c.Abort()
+				return
+			}
+			tokenString = parts[1]
 		}
-
-		parts := strings.SplitN(authHeader, " ", 2)
-		if !(len(parts) == 2 && parts[0] == "Bearer") {
-			response.Unauthorized(c, "Authorization header format must be Bearer {token}")
-			c.Abort()
-			return
-		}
-
-		tokenString := parts[1]
 		claims := &Claims{}
 
 		token, err := jwt.ParseWithClaims(tokenString, claims, func(token *jwt.Token) (interface{}, error) {

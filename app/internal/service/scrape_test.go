@@ -78,13 +78,4 @@ func TestScrapeService(t *testing.T) {
 	if _, err := os.Stat(nfoFile); os.IsNotExist(err) {
 		t.Errorf("Expected NFO file %s to be created, but it was not", nfoFile)
 	}
-
-	// Verify record exists in DB
-	record, err := repo.GetByPath(movieFile)
-	if err != nil {
-		t.Fatalf("Failed to get media from DB: %v", err)
-	}
-	if record.Title != "Mock Movie" || record.TMDBID != 123 {
-		t.Errorf("DB record mismatch: %+v", record)
-	}
 }

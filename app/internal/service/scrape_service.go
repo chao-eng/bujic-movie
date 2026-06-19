@@ -11,7 +11,6 @@ import (
 	"time"
 
 	"github.com/bujic-movie/bujic-movie/internal/config"
-	"github.com/bujic-movie/bujic-movie/internal/model/entity"
 	"github.com/bujic-movie/bujic-movie/internal/repository"
 	"github.com/bujic-movie/bujic-movie/internal/storage"
 	"github.com/bujic-movie/bujic-movie/pkg/fileutil"
@@ -765,36 +764,7 @@ func (s *scrapeService) createAliases(srcPath string, aliasName string) {
 }
 
 func (s *scrapeService) saveToDB(tmdbID int, title, date, mediaType, path, poster, backdrop string, season int) {
-	year := 0
-	if len(date) >= 4 {
-		fmt.Sscanf(date[:4], "%d", &year)
-	}
-
-	existing, err := s.mediaRepo.GetByPath(path)
-	if err == nil && existing != nil {
-		existing.TMDBID = tmdbID
-		existing.Title = title
-		existing.Year = year
-		existing.Season = season
-		existing.Type = mediaType
-		existing.PosterPath = poster
-		existing.BackdropPath = backdrop
-		existing.ScrapedAt = time.Now()
-		_ = s.mediaRepo.Update(existing)
-	} else {
-		media := &entity.Media{
-			TMDBID:       tmdbID,
-			Title:        title,
-			Year:         year,
-			Season:       season,
-			Type:         mediaType,
-			Path:         path,
-			PosterPath:   poster,
-			BackdropPath: backdrop,
-			ScrapedAt:    time.Now(),
-		}
-		_ = s.mediaRepo.Create(media)
-	}
+	// 媒体库现在完全由归档目录扫描(refresh)来同步，此处不再自动向数据库写入记录。
 }
 
 func fileExists(path string) bool {
