@@ -35,8 +35,10 @@ func TestEmbyRefreshAll(t *testing.T) {
 
 func TestEmbyRefreshSingleLibrary(t *testing.T) {
 	var gotPath string
+	var gotQuery string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		gotPath = r.URL.Path
+		gotQuery = r.URL.RawQuery
 		w.WriteHeader(http.StatusNoContent)
 	}))
 	defer srv.Close()
@@ -47,6 +49,10 @@ func TestEmbyRefreshSingleLibrary(t *testing.T) {
 	}
 	if gotPath != "/emby/Items/42/Refresh" {
 		t.Errorf("emby single refresh path = %q, want /emby/Items/42/Refresh", gotPath)
+	}
+	wantQuery := "Recursive=true&MetadataRefreshMode=ValidationOnly&ImageRefreshMode=ValidationOnly&ReplaceAllMetadata=false&ReplaceAllImages=false"
+	if gotQuery != wantQuery {
+		t.Errorf("emby single refresh query = %q, want %q", gotQuery, wantQuery)
 	}
 }
 

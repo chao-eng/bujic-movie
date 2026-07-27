@@ -317,7 +317,7 @@ func (s *scrapeService) scrapeMovieFile(ctx context.Context, path string, detail
 	nfoPath := filepath.Join(dir, baseName+".nfo")
 
 	// 1. Write NFO File if not exists or overwrite is true
-	if overwrite || !fileExists(nfoPath) {
+	if overwrite || !fileExists(nfoPath) || !isValidNFO(nfoPath) {
 		var actors []tmdb.Cast
 		var directors []string
 		if credits, err := s.tmdbClient.GetMovieCredits(ctx, detail.ID); err == nil {
@@ -428,7 +428,7 @@ func (s *scrapeService) scrapeTVEpisodeFile(ctx context.Context, path string, de
 	}
 
 	// 1. Write Episode NFO
-	if overwrite || !fileExists(nfoPath) {
+	if overwrite || !fileExists(nfoPath) || !isValidNFO(nfoPath) {
 		var actors []tmdb.Cast
 		var directors []string
 		if credits, err := s.tmdbClient.GetTVEpisodeCredits(ctx, detail.ID, meta.Season, targetEpisodeNum); err == nil {
@@ -516,7 +516,7 @@ func (s *scrapeService) scrapeBluRayFolderWithType(ctx context.Context, path str
 	}
 	nfoPath := filepath.Join(path, "movie.nfo")
 
-	if overwrite || !fileExists(nfoPath) {
+	if overwrite || !fileExists(nfoPath) || !isValidNFO(nfoPath) {
 		var actors []tmdb.Cast
 		var directors []string
 		if credits, err := s.tmdbClient.GetMovieCredits(ctx, movieDetail.ID); err == nil {
@@ -582,7 +582,7 @@ func (s *scrapeService) scrapeTVDirectory(ctx context.Context, path string, deta
 	nfoPath := filepath.Join(path, "tvshow.nfo")
 
 	// 1. tvshow.nfo
-	if overwrite || !fileExists(nfoPath) {
+	if overwrite || !fileExists(nfoPath) || !isValidNFO(nfoPath) {
 		var dateAdded time.Time
 		if info, err := os.Stat(path); err == nil {
 			dateAdded = info.ModTime()
@@ -641,7 +641,7 @@ func (s *scrapeService) scrapeSeasonDirectory(ctx context.Context, path string, 
 	nfoPath := filepath.Join(path, "season.nfo")
 
 	// 1. Generate season.nfo
-	if overwrite || !fileExists(nfoPath) {
+	if overwrite || !fileExists(nfoPath) || !isValidNFO(nfoPath) {
 		var dateAdded time.Time
 		if info, err := os.Stat(path); err == nil {
 			dateAdded = info.ModTime()
@@ -693,7 +693,7 @@ func (s *scrapeService) scrapeSeasonDirectory(ctx context.Context, path string, 
 func (s *scrapeService) initializeMovieDirectory(ctx context.Context, path string, detail *tmdb.MovieDetail, overwrite bool) error {
 	nfoPath := filepath.Join(path, "movie.nfo")
 
-	if overwrite || !fileExists(nfoPath) {
+	if overwrite || !fileExists(nfoPath) || !isValidNFO(nfoPath) {
 		var actors []tmdb.Cast
 		var directors []string
 		if credits, err := s.tmdbClient.GetMovieCredits(ctx, detail.ID); err == nil {
@@ -770,4 +770,13 @@ func (s *scrapeService) saveToDB(tmdbID int, title, date, mediaType, path, poste
 func fileExists(path string) bool {
 	_, err := os.Stat(path)
 	return err == nil
+}
+
+func isValidNFO(path string) bool {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return false
+	}
+	content := string(data)
+	return strings.Contains(content, "type=\"tmdb\"") || strings.Contains(content, "<tmdbid>")
 }

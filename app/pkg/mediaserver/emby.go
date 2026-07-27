@@ -21,7 +21,7 @@ func (s *embyServer) Refresh(ctx context.Context, libraryID string) error {
 	if libraryID == "" {
 		endpoint = s.base.baseURL + s.prefix + "/Library/Refresh"
 	} else {
-		endpoint = s.base.baseURL + s.prefix + "/Items/" + libraryID + "/Refresh?Recursive=true"
+		endpoint = s.base.baseURL + s.prefix + "/Items/" + libraryID + "/Refresh?Recursive=true&MetadataRefreshMode=ValidationOnly&ImageRefreshMode=ValidationOnly&ReplaceAllMetadata=false&ReplaceAllImages=false"
 	}
 	headers := map[string]string{"X-Emby-Token": s.base.apiKey}
 	_, status, err := s.base.do(ctx, "POST", endpoint, headers, nil)
