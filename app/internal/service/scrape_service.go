@@ -221,6 +221,10 @@ func (s *scrapeService) handleMovieScraping(ctx context.Context, path string, su
 	logger.Info("[刮削] 发现 %d 个视频文件", len(videoFiles))
 
 	for i, vf := range videoFiles {
+		if isExtra, _ := isExtraFile(vf); isExtra {
+			logger.Info("[刮削] 跳过花絮/额外内容文件: %s", filepath.Base(vf))
+			continue
+		}
 		logger.Info("[刮削] [%d/%d] 正在刮削电影视频: %s", i+1, len(videoFiles), filepath.Base(vf))
 		if err := s.scrapeMovieFile(ctx, vf, movieDetail, overwrite); err != nil {
 			logger.Warn("[刮削] 刮削失败 %s: %v", vf, err)
@@ -273,6 +277,10 @@ func (s *scrapeService) handleTVScraping(ctx context.Context, path string, subDi
 	logger.Info("[刮削] 发现 %d 个剧集文件", len(videoFiles))
 
 	for i, vf := range videoFiles {
+		if isExtra, _ := isExtraFile(vf); isExtra {
+			logger.Info("[刮削] 跳过花絮/额外内容文件: %s", filepath.Base(vf))
+			continue
+		}
 		logger.Info("[刮削] [%d/%d] 正在刮削剧集: %s", i+1, len(videoFiles), filepath.Base(vf))
 		if err := s.scrapeTVEpisodeFile(ctx, vf, tvDetail, overwrite); err != nil {
 			logger.Warn("[刮削] 剧集刮削失败 %s: %v", vf, err)
