@@ -533,6 +533,14 @@ const recordsPage = ref(1)
 const recordsLimit = ref(20)
 const recordsFilterKey = ref<number | ''>('')
 const recordsFilterTool = ref('')
+const TOOL_LABELS: Record<string, string> = {
+  query_media_list: '查询媒体列表',
+  query_media_subtitles: '查询字幕明细',
+  fetch_subtitle: '获取字幕内容',
+  upload_subtitle: '上传字幕',
+  mcp_ping: '连通性自测',
+}
+const toolLabel = (tool: string) => TOOL_LABELS[tool] || tool
 const recordsFilterStatus = ref('')
 const loadingRecords = ref(false)
 
@@ -1430,10 +1438,11 @@ onUnmounted(() => {
                     </select>
                     <select v-model="recordsFilterTool" @change="openRecords" class="bg-slate-950 border border-slate-800 rounded-lg px-2 py-1.5 text-xs text-slate-300 focus:outline-none focus:border-amber-500">
                       <option value="">全部工具</option>
-                      <option value="query_media_list">query_media_list</option>
-                      <option value="query_media_subtitles">query_media_subtitles</option>
-                      <option value="fetch_subtitle">fetch_subtitle</option>
-                      <option value="upload_subtitle">upload_subtitle</option>
+                      <option
+                        v-for="tool in ['query_media_list','query_media_subtitles','fetch_subtitle','upload_subtitle']"
+                        :key="tool"
+                        :value="tool"
+                      >{{ TOOL_LABELS[tool] }}</option>
                     </select>
                     <Button @click="openRecords" variant="outline" class="h-8 border-slate-700 text-slate-300 hover:bg-slate-800">
                       <RefreshCw :class="['h-3.5 w-3.5', loadingRecords ? 'animate-spin' : '']" />
@@ -1450,7 +1459,7 @@ onUnmounted(() => {
                     class="flex flex-wrap items-center gap-x-3 gap-y-1 rounded border border-slate-800 bg-slate-950/40 px-3 py-2 text-xs"
                   >
                     <span class="text-slate-400 font-mono">{{ fmtTime(r.created_at) }}</span>
-                    <span class="text-amber-300 font-mono">{{ r.tool }}</span>
+                    <span class="text-amber-300 font-mono">{{ toolLabel(r.tool) }}</span>
                     <span :class="['px-1.5 py-0.5 rounded-full border font-semibold',
                       r.status === 'ok' ? 'border-emerald-500/30 text-emerald-400'
                         : 'border-rose-500/30 text-rose-400']">
