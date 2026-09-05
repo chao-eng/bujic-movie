@@ -56,3 +56,6 @@ jobs:
           # 启用 GitHub Actions 缓存，加速后续构建
           cache-from: type=gha
           cache-to: type=gha,mode=max
+          # 阿里云 ACR 不支持 OCI 附加的 provenance/sbom 清单，需关闭避免推送被拒
+          provenance: false
+          sbom: false
