@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"html"
 	"io"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -848,6 +849,184 @@ func (ctrl *MediaController) ConvertSubtitle(c *gin.Context) {
 		"message": "字幕转换成功并已保存",
 		"path":    destSubPath,
 	})
+}
+
+// DownloadSubtitle handles downloading an external subtitle file or extracting and downloading an internal subtitle track
+func (ctrl *MediaController) DownloadSubtitle(c *gin.Context) {
+	subPath := c.Query("path")
+	videoPath := c.Query("video_path")
+	isInternalStr := c.DefaultQuery("is_internal", "false")
+	isInternal := isInternalStr == "true" || isInternalStr == "1"
+	internalIndexStr := c.DefaultQuery("internal_index", "0")
+	internalIndex, err := strconv.Atoi(internalIndexStr)
+	if err != nil || internalIndex < 0 {
+		response.BadRequest(c, "invalid internal_index")
+		return
+	}
+
+	cards, err := ctrl.mediaCardRepo.List()
+	if err != nil {
+		response.InternalServerError(c, err.Error())
+		return
+	}
+
+	targetPath := videoPath
+	if !isInternal {
+		if subPath == "" {
+			response.BadRequest(c, "path is required for external subtitle download")
+			return
+		}
+		targetPath = subPath
+	} else {
+		if videoPath == "" {
+			response.BadRequest(c, "video_path is required for internal subtitle download")
+			return
+		}
+	}
+
+	allowed := false
+	for _, card := range cards {
+		if card.ArchivePath != "" {
+			root := filepath.Clean(card.ArchivePath)
+			pattern := root + string(filepath.Separator)
+			if strings.HasPrefix(filepath.Clean(targetPath), pattern) || filepath.Clean(targetPath) == root {
+				allowed = true
+				break
+			}
+		}
+		if card.DownloadPath != "" {
+			root := filepath.Clean(card.DownloadPath)
+			pattern := root + string(filepath.Separator)
+			if strings.HasPrefix(filepath.Clean(targetPath), pattern) || filepath.Clean(targetPath) == root {
+				allowed = true
+				break
+			}
+		}
+	}
+
+	if !allowed {
+		response.Forbidden(c, "Access denied")
+		return
+	}
+
+	if !isInternal {
+		// External subtitle
+		fileInfo, statErr := ctrl.storage.Stat(subPath)
+		rc, err := ctrl.storage.Read(subPath)
+		if err != nil {
+			response.NotFound(c, "Subtitle file not found: "+err.Error())
+			return
+		}
+		defer rc.Close()
+
+		filename := filepath.Base(subPath)
+		safeFilename := sanitizeFilenameSuffix(filename)
+		c.Header("Content-Disposition", fmt.Sprintf(`attachment; filename="%s"; filename*=UTF-8''%s`, safeFilename, url.PathEscape(filename)))
+		c.Header("Content-Type", "application/octet-stream")
+		if statErr == nil {
+			c.Header("Content-Length", strconv.FormatInt(fileInfo.Size, 10))
+		}
+		_, _ = io.Copy(c.Writer, rc)
+		return
+	}
+
+	// Internal subtitle extraction
+	if _, err := exec.LookPath("ffmpeg"); err != nil {
+		response.BadRequest(c, "ffmpeg is not installed on this system")
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+
+	details, err := mediainfo.Probe(ctx, videoPath)
+	if err != nil || details == nil {
+		response.BadRequest(c, "Failed to probe video details: "+err.Error())
+		return
+	}
+
+	var matchedStream *mediainfo.SubtitleStream
+	for _, sub := range details.Subtitle {
+		if sub.Index == internalIndex {
+			matchedStream = &sub
+			break
+		}
+	}
+
+	if matchedStream == nil {
+		response.BadRequest(c, "Subtitle stream index not found in video")
+		return
+	}
+
+	ext := ".srt"
+	isCopy := false
+	if matchedStream.Micodec == "ass" || matchedStream.Codec == "ass" || matchedStream.Micodec == "ssa" || matchedStream.Codec == "ssa" {
+		ext = ".ass"
+	} else if matchedStream.Micodec == "webvtt" || matchedStream.Codec == "webvtt" {
+		ext = ".vtt"
+	} else if matchedStream.Micodec == "pgs" || matchedStream.Codec == "hdmv_pgs_subtitle" || matchedStream.Codec == "pgs" {
+		ext = ".sup"
+		isCopy = true
+	} else if matchedStream.Codec == "dvd_subtitle" {
+		ext = ".sub"
+		isCopy = true
+	}
+
+	tempDir := os.TempDir()
+	tempPath := filepath.Join(tempDir, fmt.Sprintf("sub_extract_%d_%d%s", time.Now().UnixNano(), internalIndex, ext))
+
+	var cmd *exec.Cmd
+	if isCopy {
+		cmd = exec.CommandContext(ctx, "ffmpeg", "-y", "-i", videoPath, "-map", fmt.Sprintf("0:%d", internalIndex), "-c", "copy", tempPath)
+	} else {
+		cmd = exec.CommandContext(ctx, "ffmpeg", "-y", "-i", videoPath, "-map", fmt.Sprintf("0:%d", internalIndex), tempPath)
+	}
+
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		response.InternalServerError(c, fmt.Sprintf("Failed to extract subtitle via ffmpeg: %v. Output: %s", err, string(output)))
+		return
+	}
+	defer os.Remove(tempPath)
+
+	data, err := os.ReadFile(tempPath)
+	if err != nil {
+		response.InternalServerError(c, "Failed to read extracted subtitle: "+err.Error())
+		return
+	}
+
+	videoBase := strings.TrimSuffix(filepath.Base(videoPath), filepath.Ext(videoPath))
+	langSuffix := matchedStream.Language
+	if langSuffix == "" || langSuffix == "unknown" {
+		if matchedStream.Title != "" {
+			langSuffix = matchedStream.Title
+		} else {
+			langSuffix = fmt.Sprintf("track%d", internalIndex)
+		}
+	}
+	langSuffix = sanitizeFilenameSuffix(langSuffix)
+	downloadFilename := fmt.Sprintf("%s.%s%s", videoBase, langSuffix, ext)
+	safeDownloadFilename := sanitizeFilenameSuffix(downloadFilename)
+
+	c.Header("Content-Disposition", fmt.Sprintf(`attachment; filename="%s"; filename*=UTF-8''%s`, safeDownloadFilename, url.PathEscape(downloadFilename)))
+	c.Header("Content-Type", "application/octet-stream")
+	c.Header("Content-Length", strconv.Itoa(len(data)))
+	c.Data(200, "application/octet-stream", data)
+}
+
+// sanitizeFilenameSuffix strips characters that are unsafe inside a quoted
+// Content-Disposition filename or that could break the header (quotes,
+// CR/LF and path separators). Unicode letters, dots and spaces are kept.
+func sanitizeFilenameSuffix(s string) string {
+	replacer := strings.NewReplacer(
+		`"`, "_",
+		`/`, "_",
+		`\`, "_",
+		"\r", "_",
+		"\n", "_",
+		"\t", "_",
+	)
+	return replacer.Replace(s)
 }
 
 func getSubtitlesForVideo(videoPath string, stg storage.Storage) []SubtitleInfo {

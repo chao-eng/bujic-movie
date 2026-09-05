@@ -4,7 +4,7 @@ import client from '@/api/client'
 import { Card, CardContent } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
 import { Button } from '@/components/ui/button'
-import { Search, Film, Database, Loader2, RefreshCw, Folder, Upload, X, ArrowLeft, Check, AlertCircle, Trash2, ChevronDown, ChevronUp } from 'lucide-vue-next'
+import { Search, Film, Database, Loader2, RefreshCw, Folder, Upload, Download, X, ArrowLeft, Check, AlertCircle, Trash2, ChevronDown, ChevronUp } from 'lucide-vue-next'
 import { toast } from 'vue-sonner'
 
 const cards = ref<any[]>([])
@@ -420,6 +420,101 @@ const handleConvertSubtitle = async (sub: any, isMovie: boolean, videoPath: stri
     isConverting.value = false
   }
 }
+
+const downloadingSubCounts = ref<Record<string, number>>({})
+
+const getSubtitleKey = (sub: any, videoPath: string) => {
+  if (!sub) return ''
+  if (sub.type === 'external') {
+    return sub.path || sub.name || ''
+  }
+  return `${videoPath}_internal_${sub.index}`
+}
+
+const isSubDownloading = (key: string) => (downloadingSubCounts.value[key] || 0) > 0
+
+const beginSubDownload = (key: string) => {
+  downloadingSubCounts.value[key] = (downloadingSubCounts.value[key] || 0) + 1
+}
+
+const endSubDownload = (key: string) => {
+  if (downloadingSubCounts.value[key]) {
+    downloadingSubCounts.value[key] -= 1
+    if (downloadingSubCounts.value[key] <= 0) {
+      delete downloadingSubCounts.value[key]
+    }
+  }
+}
+
+const extractDownloadError = async (err: any): Promise<string> => {
+  if (err instanceof Blob) {
+    try {
+      const text = await err.text()
+      const parsed = JSON.parse(text)
+      return parsed?.msg || text || '下载字幕失败'
+    } catch {
+      return '下载字幕失败'
+    }
+  }
+  return err?.response?.data?.msg || err?.message || '下载字幕失败'
+}
+
+const handleDownloadSubtitle = async (sub: any, videoPath: string) => {
+  const key = getSubtitleKey(sub, videoPath)
+  if (isSubDownloading(key)) return
+  beginSubDownload(key)
+  const isInternal = sub.type === 'internal'
+  const toastId = toast.loading(isInternal ? '正在从视频中提取内置字幕并下载...' : '正在准备下载字幕...')
+
+  try {
+    const params: any = {
+      is_internal: isInternal,
+      video_path: videoPath,
+    }
+    if (isInternal) {
+      params.internal_index = sub.index
+    } else {
+      params.path = sub.path
+    }
+
+    const response = await client.get('/api/v1/subtitles/download', {
+      params,
+      responseType: 'blob',
+      timeout: 120000,
+    })
+
+    const blob = new Blob([response as any])
+    let filename = sub.name || 'subtitle.srt'
+    if (isInternal) {
+      const ext = (sub.format === 'ass' || sub.format === 'ssa') ? '.ass' : (sub.format === 'vtt' || sub.format === 'webvtt') ? '.vtt' : (sub.format === 'pgs' || sub.format === 'sup') ? '.sup' : '.srt'
+      const base = videoPath.split(/[/\\]/).pop()?.replace(/\.[^/.]+$/, '') || 'video'
+      const lang = sub.language && sub.language !== 'unknown' ? sub.language : (sub.title || `track${sub.index}`)
+      filename = `${base}.${lang}${ext}`
+    } else if (sub.path) {
+      filename = sub.path.split(/[/\\]/).pop() || filename
+    }
+
+    const downloadUrl = window.URL.createObjectURL(blob)
+    const link = document.createElement('a')
+    link.href = downloadUrl
+    link.download = filename
+    document.body.appendChild(link)
+    link.click()
+    document.body.removeChild(link)
+    window.URL.revokeObjectURL(downloadUrl)
+
+    toast.dismiss(toastId)
+    toast.success(`字幕下载成功：${filename}`)
+  } catch (err: any) {
+    toast.dismiss(toastId)
+    console.error('Failed to download subtitle', err)
+    const msg = await extractDownloadError(err)
+    toast.error(msg)
+  } finally {
+    endSubDownload(key)
+  }
+}
+
 const expandedEpisodeId = ref<number | null>(null)
 const toggleExpandEpisode = (id: number) => {
   if (expandedEpisodeId.value === id) {
@@ -863,6 +958,16 @@ onMounted(async () => {
                   </div>
                   <div class="flex items-center gap-1.5 shrink-0">
                     <button
+                      @click="handleDownloadSubtitle(sub, activeMedia.path)"
+                      :disabled="isSubDownloading(getSubtitleKey(sub, activeMedia.path))"
+                      class="text-xs bg-blue-500/10 text-blue-400 hover:bg-blue-500/20 border border-blue-500/20 px-2 py-1 rounded transition-colors cursor-pointer flex items-center gap-1 shrink-0"
+                      title="下载字幕文件"
+                    >
+                      <Download v-if="!isSubDownloading(getSubtitleKey(sub, activeMedia.path))" class="h-3.5 w-3.5" />
+                      <Loader2 v-else class="h-3.5 w-3.5 animate-spin" />
+                      <span>下载</span>
+                    </button>
+                    <button
                       v-if="formatLang(sub) === '繁体中文'"
                       @click="handleConvertSubtitle(sub, true, activeMedia.path)"
                       :disabled="isConverting"
@@ -1045,6 +1150,16 @@ onMounted(async () => {
                           </div>
                         </div>
                         <div class="flex items-center gap-1.5 shrink-0">
+                          <button
+                            @click="handleDownloadSubtitle(sub, ep.path)"
+                            :disabled="isSubDownloading(getSubtitleKey(sub, ep.path))"
+                            class="text-[10px] bg-blue-500/10 text-blue-400 hover:bg-blue-500/20 border border-blue-500/20 px-1.5 py-0.5 rounded transition-colors cursor-pointer flex items-center gap-1 shrink-0"
+                            title="下载字幕文件"
+                          >
+                            <Download v-if="!isSubDownloading(getSubtitleKey(sub, ep.path))" class="h-3 w-3" />
+                            <Loader2 v-else class="h-3 w-3 animate-spin" />
+                            <span>下载</span>
+                          </button>
                           <button
                             v-if="formatLang(sub) === '繁体中文'"
                             @click="handleConvertSubtitle(sub, false, ep.path)"

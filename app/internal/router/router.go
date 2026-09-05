@@ -101,6 +101,7 @@ func SetupRouter(gormDB *gorm.DB, cfg *config.Config) *gin.Engine {
 		protected.GET("/media/subtitles", mediaCtrl.ListSubtitles)
 		protected.POST("/subtitles/delete", mediaCtrl.DeleteSubtitle)
 		protected.POST("/subtitles/convert", mediaCtrl.ConvertSubtitle)
+		protected.GET("/subtitles/download", mediaCtrl.DownloadSubtitle)
 
 		// Settings
 		protected.GET("/settings", settingCtrl.Get)
