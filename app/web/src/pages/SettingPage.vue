@@ -9,6 +9,7 @@ import { Save, Loader2, CheckCircle2, Plus, Trash2, Star, Film, Tv, KeyRound, Se
 import { useConfirm } from '@/composables/useConfirm'
 import { toast } from 'vue-sonner'
 import { encryptAESGCM } from '@/lib/crypto'
+import { copyText } from '@/lib/utils'
 
 const { confirm } = useConfirm()
 
@@ -574,10 +575,10 @@ const closeSecret = () => {
 }
 
 const copySecret = async () => {
-  try {
-    await navigator.clipboard.writeText(secretText.value)
+  const ok = await copyText(secretText.value)
+  if (ok) {
     toast.success('已复制，请妥善保存（仅显示一次）')
-  } catch {
+  } else {
     toast.error('复制失败，请手动复制')
   }
 }
@@ -594,10 +595,10 @@ const copyMCPConfig = async (key: any) => {
       },
     },
   }
-  try {
-    await navigator.clipboard.writeText(JSON.stringify(cfg, null, 2))
+  const ok = await copyText(JSON.stringify(cfg, null, 2))
+  if (ok) {
     toast.success('MCP 配置已复制，粘贴到 Agent 的 MCP 配置即可')
-  } catch {
+  } else {
     toast.error('复制失败')
   }
 }
