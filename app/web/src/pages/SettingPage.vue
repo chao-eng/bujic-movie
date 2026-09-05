@@ -592,12 +592,22 @@ const copyMCPConfig = async (key: any) => {
         type: 'http',
         url: `${location.origin}/api/v1/mcp`,
         headers: { Authorization: `Bearer ${token}` },
+        toolNames: [
+          'query_media_list',
+          'query_media_subtitles',
+          'fetch_subtitle',
+          'upload_subtitle',
+        ],
       },
     },
   }
   const ok = await copyText(JSON.stringify(cfg, null, 2))
   if (ok) {
-    toast.success('MCP 配置已复制，粘贴到 Agent 的 MCP 配置即可')
+    if (token) {
+      toast.success('MCP 配置已复制，粘贴到 Agent 的 MCP 配置即可')
+    } else {
+      toast.warning('已复制配置模板（列表不含明文 Key），请手动填入完整 API Key')
+    }
   } else {
     toast.error('复制失败')
   }
@@ -1355,9 +1365,9 @@ onUnmounted(() => {
                       variant="outline"
                       class="h-8 border-slate-700 text-slate-300 hover:bg-slate-800"
                       @click="copyMCPConfig(k)"
-                      title="复制 MCP 配置片段"
+                      title="复制配置模板（不含明文 Key，需手动填入 API Key）"
                     >
-                      <Copy class="h-3.5 w-3.5 mr-1" /> 配置
+                      <Copy class="h-3.5 w-3.5 mr-1" /> 配置模板
                     </Button>
                     <Button
                       :disabled="togglingKeyId === k.id"
