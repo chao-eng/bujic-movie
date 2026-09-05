@@ -1,9 +1,9 @@
 # ===== Phase 1: Frontend Build =====
 FROM --platform=$BUILDPLATFORM node:20-alpine AS frontend-builder
 WORKDIR /app/web
-COPY web/package*.json ./
+COPY web/package.json ./
 RUN --mount=type=cache,target=/root/.npm \
-    npm ci
+    npm install
 COPY web/ .
 RUN npm run build
 
