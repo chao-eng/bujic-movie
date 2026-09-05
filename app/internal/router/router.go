@@ -8,7 +8,9 @@ import (
 	"github.com/bujic-movie/bujic-movie/internal/config"
 	"github.com/bujic-movie/bujic-movie/internal/controller"
 	"github.com/bujic-movie/bujic-movie/internal/db"
+	"github.com/bujic-movie/bujic-movie/internal/mcp"
 	"github.com/bujic-movie/bujic-movie/internal/middleware"
+	"github.com/bujic-movie/bujic-movie/internal/model/entity"
 	"github.com/bujic-movie/bujic-movie/internal/repository"
 	"github.com/bujic-movie/bujic-movie/internal/service"
 	"github.com/bujic-movie/bujic-movie/internal/storage/local"
@@ -39,6 +41,8 @@ func SetupRouter(gormDB *gorm.DB, cfg *config.Config) *gin.Engine {
 	mediaCardRepo := repository.NewMediaCardRepository(gormDB)
 	mediaLibraryRepo := repository.NewMediaLibraryRepository(gormDB)
 	notifyChannelRepo := repository.NewNotifyChannelRepository(gormDB)
+	mcpAPIKeyRepo := repository.NewMCPAPIKeyRepository(gormDB)
+	mcpCallRecordRepo := repository.NewMCPCallRecordRepository(gormDB)
 
 	// 3. Services Instantiation
 	recognizeSvc := service.NewRecognizeService(tmdbClient)
@@ -54,6 +58,24 @@ func SetupRouter(gormDB *gorm.DB, cfg *config.Config) *gin.Engine {
 	}
 	mediaCardSvc := service.NewMediaCardService(mediaCardRepo, watcherSvc)
 	mediaLibrarySvc := service.NewMediaLibraryService(mediaLibraryRepo)
+	subtitleAgentSvc := service.NewSubtitleAgentService(mediaRepo, mediaCardRepo, stg)
+	mcpAPIKeySvc := service.NewMCPAPIKeyService(mcpAPIKeyRepo, mcpCallRecordRepo)
+	mcpAPIKeySvc.StartRetentionLoop(0, 0) // default 180d retention, hourly tick
+
+	// MCP gateway: 5 tools wired to the agent service; API-key auth happens in
+	// Gateway.ServeHTTP. Call records persist via the record repo (BR-26).
+	mcpGateway := mcp.NewGateway(subtitleAgentSvc, mcpAPIKeySvc, func(r mcp.Record) error {
+		return mcpCallRecordRepo.Create(&entity.MCPCallRecord{
+			APIKeyID:    r.APIKeyID,
+			Tool:        r.Tool,
+			Status:      r.Status,
+			ErrorCode:   r.ErrorCode,
+			DurationMS:  r.DurationMS,
+			InputMeta:   r.InputMeta,
+			ResultBytes: r.ResultBytes,
+			ClientIP:    r.ClientIP,
+		})
+	})
 
 	// 4. Controllers Instantiation
 	authCtrl := controller.NewAuthController()
@@ -68,6 +90,7 @@ func SetupRouter(gormDB *gorm.DB, cfg *config.Config) *gin.Engine {
 	mediaCardCtrl := controller.NewMediaCardController(mediaCardSvc)
 	mediaLibraryCtrl := controller.NewMediaLibraryController(mediaLibrarySvc)
 	notifyChannelCtrl := controller.NewNotifyChannelController(msgNotifySvc)
+	mcpAPIKeyCtrl := controller.NewMCPAPIKeyController(mcpAPIKeySvc)
 
 	// Public Routes
 	api := r.Group("/api/v1")
@@ -76,6 +99,10 @@ func SetupRouter(gormDB *gorm.DB, cfg *config.Config) *gin.Engine {
 		api.GET("/auth/login-key", authCtrl.GetLoginKey)
 		api.POST("/auth/login", authCtrl.Login)
 		api.GET("/ws", wsCtrl.Handle) // WebSocket can be public for easy browser handshakes
+		// MCP Streamable HTTP endpoint — auth is API-Key only (BR-18a/BR-19),
+		// enforced inside the Gateway handler, so it is intentionally NOT in the
+		// JWT-protected group below.
+		api.Any("/mcp", gin.WrapH(mcpGateway))
 	}
 
 	// Protected Routes (Require JWT Auth)
@@ -142,6 +169,14 @@ func SetupRouter(gormDB *gorm.DB, cfg *config.Config) *gin.Engine {
 		protected.PUT("/notify-channels/:id", notifyChannelCtrl.Update)
 		protected.DELETE("/notify-channels/:id", notifyChannelCtrl.Delete)
 		protected.POST("/notify-channels/:id/test", notifyChannelCtrl.Test)
+
+		// MCP API Key management (human channel, JWT protected, BR-18a/BR-19)
+		protected.POST("/mcp/api-keys", mcpAPIKeyCtrl.Create)
+		protected.GET("/mcp/api-keys", mcpAPIKeyCtrl.List)
+		protected.GET("/mcp/api-keys/:id", mcpAPIKeyCtrl.GetByID)
+		protected.PUT("/mcp/api-keys/:id/:action", mcpAPIKeyCtrl.SetStatus)
+		protected.GET("/mcp/api-keys/:id/records", mcpAPIKeyCtrl.Records)
+		protected.GET("/mcp/call-records", mcpAPIKeyCtrl.AllRecords)
 	}
 
 	// Serve Static Frontend Files

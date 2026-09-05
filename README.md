@@ -26,6 +26,11 @@
   - 拥有精心调配的深色模式、流畅的动画效果和响应式布局。
   - 包含仪表盘、媒体库浏览、刮削控制台、整理队列、后台任务及全局设置面板。
 
+- **🤖 MCP / Agent 工具面**
+  - 内置 MCP (Streamable HTTP) 端点，向 Agent 开放媒体库查询与字幕工具（列表 / 字幕明细 / 获取 / 上传）。
+  - 配套 API Key 生命周期管理（创建 / 启停 / 调用记录审计）与字幕翻译 Skill。
+  - 详见下文「MCP / Agent 接入」章节。
+
 ---
 
 ## 🛠️ 技术栈选型
@@ -110,6 +115,46 @@ services:
 > 
 > 本系统生成的 NFO 文件中会包含绝对路径的海报标签（例如指向 `/media/TV/.../episode.jpg`）。
 > 为了确保 Emby / Jellyfin / Plex 等媒体服务器能够百分之百读取并正确显示刮削出的海报，**强烈建议保持其他媒体服务器容器的媒体目录挂载路径与本系统一致**（即：大家都将宿主机上同一个媒体文件夹挂载到各自容器内的同一个路径下，例如统一挂载为 `/media`）。
+
+---
+
+## 🤖 MCP / Agent 接入
+
+Bujic Movie 通过内置的 MCP (Model Context Protocol) **Streamable HTTP** 端点向 Agent（如 Claude Code、OpenCode 等支持 MCP 的运行时）开放媒体库查询与字幕工具，可用于「查询媒体列表 → 下载英文字幕 → 翻译 → 上传中文字幕」等自动化闭环。
+
+### 1. 获取 API Key
+
+在 Web 后台 **「系统设置 → MCP / API Key」** 中创建一个 API Key。密钥明文仅在创建时展示一次，请妥善保存；每个 Key 可独立 **禁用 / 启用**，并可在同一页面查看该 Key 的调用记录（含脱敏入参、耗时、结果大小）。
+
+### 2. MCP Server 配置示例
+
+将下列 JSON 加入你的 MCP 客户端配置（Claude Code 的 `claude_desktop_config.json`、OpenCode 的 `.mcp.json` 等，字段以客户端实际格式为准）：
+
+```jsonc
+// MCP Server 配置示例
+{
+  "mcpServers": {
+    "bujic-movie": {
+      "type": "http",
+      "url": "${SERVER_URL}/api/v1/mcp",
+      // SERVER_URL 为服务器完整地址（scheme://host:port 整体为变量），
+      // 例如 http://192.168.1.10:8080 或 http://localhost:8080；/api/v1/mcp 为固定路径
+      "headers": { "Authorization": "Bearer <API_KEY>" },
+      "toolNames": [
+        "query_media_list",       // 查询媒体库列表（含字幕状态）
+        "query_media_subtitles",  // 查询单个媒体/视频的字幕明细
+        "fetch_subtitle",         // 获取字幕内容（外挂 / 内嵌）
+        "upload_subtitle"         // 上传字幕文件
+      ]
+    }
+  }
+}
+```
+
+- MCP 端点**仅接受 API Key 鉴权**（不接受网页登录 JWT）；管理 REST 与 Web UI 仅接受 JWT，两者互不通用。
+- 端点内置 `mcp_ping` 工具，可用于连通性与鉴权自测（不读业务数据、不计入调用记录）。
+- 对接 Agent 使用的配套 Skill 见仓库 `.agents/skills/bujic-subtitle/SKILL.md`（含完整工具编排流程与字幕翻译规范）。
+- 详细设计见 `doc/影视字幕Agent能力PRD.md`（v0.3，BR 权威来源）。
 
 ---
 

@@ -15,6 +15,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/bujic-movie/bujic-movie/internal/mediautil"
 	"github.com/bujic-movie/bujic-movie/internal/model/entity"
 	"github.com/bujic-movie/bujic-movie/internal/repository"
 	"github.com/bujic-movie/bujic-movie/internal/service"
@@ -155,15 +156,9 @@ func (ctrl *MediaController) Delete(c *gin.Context) {
 	})
 }
 
-type SubtitleInfo struct {
-	Type     string `json:"type"` // "external" or "internal"
-	Name     string `json:"name"` // filename for external, codec name for internal
-	Language string `json:"language"`
-	Title    string `json:"title"`
-	Format   string `json:"format"` // srt, ass, pgs, etc.
-	Path     string `json:"path"`   // absolute path for external, empty for internal
-	Index    int    `json:"index"`
-}
+// SubtitleInfo describes one external/internal subtitle for a video. It is
+// aliased to the shared mediautil type so REST and MCP surfaces stay identical.
+type SubtitleInfo = mediautil.SubtitleInfo
 
 type EpisodeDTO struct {
 	entity.Media
@@ -207,7 +202,7 @@ func (ctrl *MediaController) GetEpisodes(c *gin.Context) {
 		go func(index int, videoPath string) {
 			ch <- result{
 				idx:  index,
-				subs: getSubtitlesForVideo(videoPath, ctrl.storage),
+				subs: mediautil.GetSubtitlesForVideo(videoPath, ctrl.storage),
 			}
 		}(i, ep.Path)
 	}
@@ -626,7 +621,7 @@ func (ctrl *MediaController) ListSubtitles(c *gin.Context) {
 		return
 	}
 
-	subs := getSubtitlesForVideo(videoPath, ctrl.storage)
+	subs := mediautil.GetSubtitlesForVideo(videoPath, ctrl.storage)
 	response.Success(c, subs)
 }
 
@@ -1018,168 +1013,20 @@ func (ctrl *MediaController) DownloadSubtitle(c *gin.Context) {
 // Content-Disposition filename or that could break the header (quotes,
 // CR/LF and path separators). Unicode letters, dots and spaces are kept.
 func sanitizeFilenameSuffix(s string) string {
-	replacer := strings.NewReplacer(
-		`"`, "_",
-		`/`, "_",
-		`\`, "_",
-		"\r", "_",
-		"\n", "_",
-		"\t", "_",
-	)
-	return replacer.Replace(s)
+	return mediautil.SanitizeFilenameSuffix(s)
 }
 
-func getSubtitlesForVideo(videoPath string, stg storage.Storage) []SubtitleInfo {
-	subs := make([]SubtitleInfo, 0)
-
-	dir := filepath.Dir(videoPath)
-	videoBase := strings.TrimSuffix(filepath.Base(videoPath), filepath.Ext(videoPath))
-
-	items, err := stg.List(dir)
-	if err == nil {
-		for _, item := range items {
-			if !item.IsDir && fileutil.IsSubtitle(item.Name) {
-				if strings.HasPrefix(item.Name, videoBase) {
-					subInfo := parser.ParseSubtitle(item.Path)
-					subs = append(subs, SubtitleInfo{
-						Type:     "external",
-						Name:     item.Name,
-						Language: subInfo.Language,
-						Title:    "",
-						Format:   subInfo.Format,
-						Path:     item.Path,
-						Index:    0,
-					})
-				}
-			}
-		}
-	}
-
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
-	defer cancel()
-	details, err := mediainfo.Probe(ctx, videoPath)
-	if err == nil && details != nil {
-		for _, subStream := range details.Subtitle {
-			lang := subStream.Language
-			if lang == "" {
-				lang = "unknown"
-			}
-			subs = append(subs, SubtitleInfo{
-				Type:     "internal",
-				Name:     subStream.Codec,
-				Language: lang,
-				Title:    subStream.Title,
-				Format:   subStream.Micodec,
-				Index:    subStream.Index,
-			})
-		}
-	}
-
-	return subs
-}
-
-func getShowInfoFromPath(path string) (string, string) {
-	parentDir := filepath.Clean(filepath.Dir(path))
-	parentName := filepath.Base(parentDir)
-
-	isSeasonDir := false
-	seasonRe := regexp.MustCompile(`(?i)^(?:season\s*|s)(\d+)$`)
-	if seasonRe.MatchString(parentName) {
-		isSeasonDir = true
-	}
-
-	var seriesDir string
-	if isSeasonDir {
-		seriesDir = filepath.Dir(parentDir)
-	} else {
-		seriesDir = parentDir
-	}
-
-	return seriesDir, filepath.Base(seriesDir)
-}
-
-func getShowTitleAndID(seriesDir string) (string, int) {
-	nfoPath := filepath.Join(seriesDir, "tvshow.nfo")
-	if _, err := os.Stat(nfoPath); err == nil {
-		if data, err := os.ReadFile(nfoPath); err == nil {
-			title := ""
-			tmdbID := 0
-
-			reTitle := regexp.MustCompile(`(?i)<title>([^<]+)</title>`)
-			if m := reTitle.FindStringSubmatch(string(data)); len(m) > 1 {
-				title = html.UnescapeString(m[1])
-			}
-
-			reTMDB := regexp.MustCompile(`(?i)<tmdbid>(\d+)</tmdbid>`)
-			if m := reTMDB.FindStringSubmatch(string(data)); len(m) > 1 {
-				tmdbID, _ = strconv.Atoi(m[1])
-			}
-
-			if tmdbID == 0 {
-				reUnique := regexp.MustCompile(`(?i)<uniqueid[^>]*type="tmdb"[^>]*>(\d+)</uniqueid>`)
-				if m := reUnique.FindStringSubmatch(string(data)); len(m) > 1 {
-					tmdbID, _ = strconv.Atoi(m[1])
-				}
-			}
-
-			if title == "" {
-				title = filepath.Base(seriesDir)
-			}
-			return title, tmdbID
-		}
-	}
-	return filepath.Base(seriesDir), 0
-}
-
+// groupMedias applies the same "card" aggregation the REST list endpoint has
+// always used (movie by TMDBID, TV by series-dir + season) via the shared
+// mediautil helper, persisting season backfills like before.
 func (ctrl *MediaController) groupMedias(rawMedias []entity.Media) []entity.Media {
-	var grouped []entity.Media
-	seen := make(map[string]int)
-
-	for _, m := range rawMedias {
-		if m.Type == "tv" {
-			if m.Season == 0 {
-				meta := parser.ParseFilename(m.Path)
-				if meta.Season > 0 {
-					m.Season = meta.Season
-				} else {
-					m.Season = 1
-				}
-				_ = ctrl.mediaRepo.Update(&m)
-			}
-
-			seriesDir, seriesName := getShowInfoFromPath(m.Path)
-			showTitle, showTMDBID := getShowTitleAndID(seriesDir)
-			if showTitle == "" {
-				showTitle = seriesName
-			}
-
-			// Group all TV shows (matched or unmatched) by their Series Directory and Season
-			key := fmt.Sprintf("tv-%s-%d", seriesDir, m.Season)
-
-			if _, ok := seen[key]; ok {
-				continue
-			}
-			m.Title = fmt.Sprintf("%s (第 %d 季)", showTitle, m.Season)
-			m.TMDBID = showTMDBID
-			m.Path = filepath.Dir(m.Path)
-			grouped = append(grouped, m)
-			seen[key] = len(grouped) - 1
-		} else {
-			var key string
-			if m.TMDBID > 0 {
-				key = fmt.Sprintf("movie-%d", m.TMDBID)
-			} else {
-				key = fmt.Sprintf("movie-unmatched-%d", m.ID)
-			}
-
-			if _, ok := seen[key]; ok {
-				continue
-			}
-			grouped = append(grouped, m)
-			seen[key] = len(grouped) - 1
+	return mediautil.GroupMedias(rawMedias, func(m *entity.Media) {
+		seasonBefore := m.Season
+		mediautil.NormalizeSeason(m)
+		if m.Season != seasonBefore && m.Type == "tv" {
+			_ = ctrl.mediaRepo.Update(m)
 		}
-	}
-	return grouped
+	})
 }
 
 func isExtraFile(path string) bool {

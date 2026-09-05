@@ -5,14 +5,14 @@ import { Card, CardHeader, CardTitle, CardDescription, CardContent } from '@/com
 import { Input } from '@/components/ui/input'
 import { Button } from '@/components/ui/button'
 import { Switch } from '@/components/ui/switch'
-import { Save, Loader2, CheckCircle2, Plus, Trash2, Star, Film, Tv, KeyRound, Server, Plug, RefreshCw, SlidersHorizontal, FolderTree, ShieldCheck, Clapperboard, Bell, Send } from 'lucide-vue-next'
+import { Save, Loader2, CheckCircle2, Plus, Trash2, Star, Film, Tv, KeyRound, Server, Plug, RefreshCw, SlidersHorizontal, FolderTree, ShieldCheck, Clapperboard, Bell, Send, Bot, Copy, History } from 'lucide-vue-next'
 import { useConfirm } from '@/composables/useConfirm'
 import { toast } from 'vue-sonner'
 import { encryptAESGCM } from '@/lib/crypto'
 
 const { confirm } = useConfirm()
 
-type TabKey = 'general' | 'directories' | 'servers' | 'notify' | 'security'
+type TabKey = 'general' | 'directories' | 'servers' | 'notify' | 'security' | 'mcp'
 const activeTab = ref<TabKey>('general')
 const tabs: { key: TabKey; label: string; icon: any }[] = [
   { key: 'general', label: '常规', icon: SlidersHorizontal },
@@ -20,6 +20,7 @@ const tabs: { key: TabKey; label: string; icon: any }[] = [
   { key: 'servers', label: '媒体服务器', icon: Server },
   { key: 'notify', label: '通知配置', icon: Bell },
   { key: 'security', label: '安全', icon: ShieldCheck },
+  { key: 'mcp', label: 'MCP / API Key', icon: Bot },
 ]
 
 const settings = ref({
@@ -515,6 +516,144 @@ const changePassword = async () => {
   }
 }
 
+// ===== MCP / API Key =====
+const locationOrigin = typeof window !== 'undefined' ? window.location.origin : ''
+const mcpKeys = ref<any[]>([])
+const newKeyName = ref('')
+const creatingKey = ref(false)
+const showSecret = ref<number | null>(null)   // key id whose plaintext modal is open
+const secretText = ref('')
+const secretName = ref('')
+const togglingKeyId = ref<number | null>(null)
+// call records
+const mcpRecords = ref<any[]>([])
+const recordsTotal = ref(0)
+const recordsPage = ref(1)
+const recordsLimit = ref(20)
+const recordsFilterKey = ref<number | ''>('')
+const recordsFilterTool = ref('')
+const recordsFilterStatus = ref('')
+const loadingRecords = ref(false)
+
+const fetchMCPKeys = async () => {
+  try {
+    const res: any = await client.get('/api/v1/mcp/api-keys')
+    if (res.code === 0) mcpKeys.value = res.data || []
+  } catch (err) {
+    console.error('Failed to load mcp keys', err)
+  }
+}
+
+const createMCPKey = async () => {
+  if (!newKeyName.value.trim()) {
+    toast.warning('请填写用途名称')
+    return
+  }
+  creatingKey.value = true
+  try {
+    const res: any = await client.post('/api/v1/mcp/api-keys', { name: newKeyName.value.trim() })
+    if (res.code === 0) {
+      secretText.value = res.data.key
+      secretName.value = res.data.name
+      showSecret.value = res.data.id
+      newKeyName.value = ''
+      await fetchMCPKeys()
+    } else {
+      toast.error(res.msg || '创建失败')
+    }
+  } catch (err: any) {
+    toast.error(err.response?.data?.msg || '创建失败')
+  } finally {
+    creatingKey.value = false
+  }
+}
+
+const closeSecret = () => {
+  showSecret.value = null
+  secretText.value = ''
+}
+
+const copySecret = async () => {
+  try {
+    await navigator.clipboard.writeText(secretText.value)
+    toast.success('已复制，请妥善保存（仅显示一次）')
+  } catch {
+    toast.error('复制失败，请手动复制')
+  }
+}
+
+const copyMCPConfig = async (key: any) => {
+  // 从创建弹窗或已有 key（仅前缀，不含明文）复制端点模板
+  const token = key?.key || secretText.value
+  const cfg = {
+    mcpServers: {
+      'bujic-movie': {
+        type: 'http',
+        url: `${location.origin}/api/v1/mcp`,
+        headers: { Authorization: `Bearer ${token}` },
+      },
+    },
+  }
+  try {
+    await navigator.clipboard.writeText(JSON.stringify(cfg, null, 2))
+    toast.success('MCP 配置已复制，粘贴到 Agent 的 MCP 配置即可')
+  } catch {
+    toast.error('复制失败')
+  }
+}
+
+const toggleMCPKey = async (k: any) => {
+  const target = k.status === 'active' ? 'disable' : 'enable'
+  const actionLabel = target === 'disable' ? '禁用' : '启用'
+  if (target === 'disable' && !(await confirm('确定禁用此 API Key？使用它的 Agent 将立即无法调用。'))) return
+  togglingKeyId.value = k.id
+  try {
+    const res: any = await client.put(`/api/v1/mcp/api-keys/${k.id}/${target}`)
+    if (res.code === 0) {
+      toast.success(`已${actionLabel}`)
+      await fetchMCPKeys()
+    } else {
+      toast.error(res.msg || '操作失败')
+    }
+  } catch (err: any) {
+    toast.error(err.response?.data?.msg || '操作失败')
+  } finally {
+    togglingKeyId.value = null
+  }
+}
+
+const fmtTime = (s?: string) => (s ? new Date(s).toLocaleString() : '—')
+
+const fetchMCPRecords = async () => {
+  loadingRecords.value = true
+  try {
+    const params: Record<string, any> = { page: recordsPage.value, limit: recordsLimit.value }
+    if (recordsFilterTool.value) params.tool = recordsFilterTool.value
+    if (recordsFilterStatus.value) params.status = recordsFilterStatus.value
+    let url = '/api/v1/mcp/call-records'
+    if (recordsFilterKey.value) url = `/api/v1/mcp/api-keys/${recordsFilterKey.value}/records`
+    const res: any = await client.get(url, { params })
+    if (res.code === 0) {
+      mcpRecords.value = res.data.records || []
+      recordsTotal.value = res.data.total || 0
+    }
+  } catch (err) {
+    console.error('Failed to load mcp records', err)
+  } finally {
+    loadingRecords.value = false
+  }
+}
+
+const openRecords = async () => {
+  recordsPage.value = 1
+  await fetchMCPRecords()
+}
+
+const keyStatusBadge = (s: string) =>
+  s === 'active'
+    ? 'bg-emerald-500/15 text-emerald-400 border-emerald-500/30'
+    : 'bg-rose-500/15 text-rose-400 border-rose-500/30'
+
 onMounted(() => {
   fetchSettings()
   fetchCards()
@@ -522,7 +661,14 @@ onMounted(() => {
   fetchStatuses()
   fetchNotifyChannels()
   fetchChannelTypes()
+  fetchMCPKeys()
   statusTimer = setInterval(fetchStatuses, 30000)
+})
+
+watch(activeTab, (tab) => {
+  if (tab === 'mcp') {
+    fetchMCPKeys()
+  }
 })
 
 onUnmounted(() => {
@@ -1132,6 +1278,185 @@ onUnmounted(() => {
                       <Loader2 v-if="isChangingPassword" class="h-4 w-4 animate-spin" />
                       <span>修改密码</span>
                     </Button>
+                  </div>
+                </div>
+              </CardContent>
+            </Card>
+          </template>
+
+          <!-- ===================== MCP / API Key ===================== -->
+          <template v-else-if="activeTab === 'mcp'">
+            <div class="flex items-center justify-between gap-4 mb-2">
+              <div class="min-w-0">
+                <h2 class="text-xl font-bold text-slate-100">MCP / API Key</h2>
+                <p class="text-slate-400 text-sm truncate">为 Agent 提供媒体库查询与字幕工具的访问凭证</p>
+              </div>
+              <div class="flex items-center gap-2">
+                <Button @click="openRecords" class="shrink-0 bg-slate-800 hover:bg-slate-700 text-slate-200 flex items-center gap-2">
+                  <History class="h-4 w-4" />
+                  查看调用记录
+                </Button>
+              </div>
+            </div>
+
+            <!-- Intro / endpoint -->
+            <Card class="bg-slate-900 border-slate-800 text-slate-100">
+              <CardContent class="pt-6 space-y-3">
+                <div class="flex items-center gap-2 text-slate-300 text-sm">
+                  <Bot class="h-5 w-5 text-amber-400 shrink-0" />
+                  <span>MCP 端点（仅 API Key 鉴权，不接受网页登录态）：</span>
+                  <code class="px-2 py-1 rounded bg-slate-950 border border-slate-800 text-amber-300 text-xs font-mono">{{ locationOrigin }}/api/v1/mcp</code>
+                </div>
+                <p class="text-xs text-slate-500">创建 Key 后把完整密钥填入 Agent 的 MCP 配置（<code class="text-slate-400">Authorization: Bearer &lt;key&gt;</code>）。明文仅在创建时展示一次。</p>
+              </CardContent>
+            </Card>
+
+            <!-- Create -->
+            <Card class="bg-slate-900 border-slate-800 text-slate-100">
+              <CardHeader>
+                <CardTitle class="text-amber-500 flex items-center gap-2">
+                  <Plus class="h-5 w-5" />
+                  创建 API Key
+                </CardTitle>
+                <CardDescription class="text-slate-400">每个 Agent / 用途一个独立 Key，便于按需禁用与审计</CardDescription>
+              </CardHeader>
+              <CardContent class="flex gap-3">
+                <Input v-model="newKeyName" placeholder="用途备注，例如: Claude Code 字幕助手" class="bg-slate-950 border-slate-800 text-slate-100 flex-1" @keyup.enter="createMCPKey" />
+                <Button @click="createMCPKey" :disabled="creatingKey" class="bg-amber-500 hover:bg-amber-600 text-slate-950 font-bold flex items-center gap-2 shrink-0">
+                  <Loader2 v-if="creatingKey" class="h-4 w-4 animate-spin" />
+                  <KeyRound v-else class="h-4 w-4" />
+                  创建
+                </Button>
+              </CardContent>
+            </Card>
+
+            <!-- Key list -->
+            <Card class="bg-slate-900 border-slate-800 text-slate-100">
+              <CardHeader>
+                <CardTitle class="text-slate-100">已有 Key</CardTitle>
+              </CardHeader>
+              <CardContent class="space-y-3">
+                <div
+                  v-for="k in mcpKeys"
+                  :key="k.id"
+                  class="flex flex-wrap items-center gap-x-4 gap-y-2 rounded-lg border border-slate-800 bg-slate-950/60 px-4 py-3"
+                >
+                  <div class="min-w-0 flex-1">
+                    <div class="text-sm font-semibold text-slate-200">{{ k.name }}</div>
+                    <div class="text-xs text-slate-500 font-mono mt-0.5">{{ k.key_prefix }}</div>
+                  </div>
+                  <span :class="['text-xs font-semibold px-2 py-1 rounded-full border', keyStatusBadge(k.status)]">
+                    {{ k.status === 'active' ? '启用' : '已禁用' }}
+                  </span>
+                  <span class="text-xs text-slate-500">{{ k.last_used_at ? '最近使用: ' + fmtTime(k.last_used_at) : '从未使用' }}</span>
+                  <div class="flex items-center gap-1">
+                    <Button
+                      variant="outline"
+                      class="h-8 border-slate-700 text-slate-300 hover:bg-slate-800"
+                      @click="copyMCPConfig(k)"
+                      title="复制 MCP 配置片段"
+                    >
+                      <Copy class="h-3.5 w-3.5 mr-1" /> 配置
+                    </Button>
+                    <Button
+                      :disabled="togglingKeyId === k.id"
+                      :class="k.status === 'active'
+                        ? 'h-8 border border-rose-500/40 text-rose-400 hover:bg-rose-500/10'
+                        : 'h-8 border border-emerald-500/40 text-emerald-400 hover:bg-emerald-500/10'"
+                      variant="outline"
+                      @click="toggleMCPKey(k)"
+                    >
+                      <Loader2 v-if="togglingKeyId === k.id" class="h-3.5 w-3.5 animate-spin" />
+                      {{ k.status === 'active' ? '禁用' : '启用' }}
+                    </Button>
+                  </div>
+                </div>
+
+                <!-- Empty State -->
+                <div v-if="mcpKeys.length === 0" class="text-center py-10 bg-slate-950/40 rounded-lg border border-dashed border-slate-800">
+                  <p class="text-slate-500 text-sm">暂无 API Key，请先在上方创建</p>
+                </div>
+              </CardContent>
+            </Card>
+
+            <!-- Secret modal (created once) -->
+            <div v-if="showSecret !== null" class="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/80 p-4">
+              <div class="w-full max-w-lg rounded-2xl border border-amber-500/30 bg-slate-900 p-6 space-y-4 shadow-2xl">
+                <h3 class="text-lg font-bold text-amber-500 flex items-center gap-2">
+                  <KeyRound class="h-5 w-5" />
+                  Key 创建成功（{{ secretName }}）
+                </h3>
+                <p class="text-sm text-rose-400 font-semibold">⚠ 明文仅显示这一次，关闭后无法再次查看。请立即复制并妥善保存。</p>
+                <div class="flex gap-2">
+                  <Input :model-value="secretText" readonly class="bg-slate-950 border-slate-800 text-amber-300 font-mono flex-1" />
+                  <Button @click="copySecret" class="bg-amber-500 hover:bg-amber-600 text-slate-950 font-bold shrink-0">
+                    <Copy class="h-4 w-4 mr-1" /> 复制
+                  </Button>
+                </div>
+                <div class="flex gap-2">
+                  <Button @click="copyMCPConfig({ key: secretText })" variant="outline" class="border-slate-700 text-slate-300 hover:bg-slate-800 flex-1">
+                    复制 MCP 配置片段
+                  </Button>
+                  <Button @click="closeSecret" variant="outline" class="border-slate-700 text-slate-300 hover:bg-slate-800 flex-1">
+                    我已保存，关闭
+                  </Button>
+                </div>
+              </div>
+            </div>
+
+            <!-- Call records -->
+            <Card class="bg-slate-900 border-slate-800 text-slate-100" v-if="mcpRecords.length > 0 || recordsTotal > 0">
+              <CardHeader class="pb-3">
+                <div class="flex items-center justify-between">
+                  <CardTitle class="text-slate-100 flex items-center gap-2">
+                    <History class="h-5 w-5 text-amber-400" />
+                    调用记录
+                  </CardTitle>
+                  <div class="flex items-center gap-2">
+                    <select v-model.number="recordsFilterKey" @change="openRecords" class="bg-slate-950 border border-slate-800 rounded-lg px-2 py-1.5 text-xs text-slate-300 focus:outline-none focus:border-amber-500">
+                      <option value="">全部 Key</option>
+                      <option v-for="k in mcpKeys" :key="k.id" :value="k.id">{{ k.name }}</option>
+                    </select>
+                    <select v-model="recordsFilterTool" @change="openRecords" class="bg-slate-950 border border-slate-800 rounded-lg px-2 py-1.5 text-xs text-slate-300 focus:outline-none focus:border-amber-500">
+                      <option value="">全部工具</option>
+                      <option value="query_media_list">query_media_list</option>
+                      <option value="query_media_subtitles">query_media_subtitles</option>
+                      <option value="fetch_subtitle">fetch_subtitle</option>
+                      <option value="upload_subtitle">upload_subtitle</option>
+                    </select>
+                    <Button @click="openRecords" variant="outline" class="h-8 border-slate-700 text-slate-300 hover:bg-slate-800">
+                      <RefreshCw :class="['h-3.5 w-3.5', loadingRecords ? 'animate-spin' : '']" />
+                    </Button>
+                  </div>
+                </div>
+              </CardHeader>
+              <CardContent>
+                <div v-if="loadingRecords" class="text-center py-8 text-slate-500 text-sm">加载中…</div>
+                <div v-else class="space-y-2 max-h-96 overflow-y-auto pr-1">
+                  <div
+                    v-for="r in mcpRecords"
+                    :key="r.id"
+                    class="flex flex-wrap items-center gap-x-3 gap-y-1 rounded border border-slate-800 bg-slate-950/40 px-3 py-2 text-xs"
+                  >
+                    <span class="text-slate-400 font-mono">{{ fmtTime(r.created_at) }}</span>
+                    <span class="text-amber-300 font-mono">{{ r.tool }}</span>
+                    <span :class="['px-1.5 py-0.5 rounded-full border font-semibold',
+                      r.status === 'ok' ? 'border-emerald-500/30 text-emerald-400'
+                        : 'border-rose-500/30 text-rose-400']">
+                      {{ r.status }}
+                    </span>
+                    <span class="text-slate-500">耗时 {{ r.duration_ms }}ms</span>
+                    <span class="text-slate-500">结果 {{ r.result_bytes }}B</span>
+                    <span class="text-slate-500 truncate max-w-[30ch]" :title="r.input_meta">{{ r.input_meta }}</span>
+                  </div>
+                  <div v-if="mcpRecords.length === 0" class="text-center py-6 text-slate-500 text-sm">暂无记录</div>
+                </div>
+                <div v-if="recordsTotal > 0" class="text-xs text-slate-500 mt-3 flex items-center justify-between">
+                  <span>共 {{ recordsTotal }} 条</span>
+                  <div class="flex items-center gap-1">
+                    <button :disabled="recordsPage <= 1" @click="recordsPage--; fetchMCPRecords()" class="px-2 py-0.5 rounded hover:bg-slate-800 disabled:opacity-40 text-slate-400">‹</button>
+                    <span class="text-slate-400 px-1">{{ recordsPage }}</span>
+                    <button :disabled="recordsPage * recordsLimit >= recordsTotal" @click="recordsPage++; fetchMCPRecords()" class="px-2 py-0.5 rounded hover:bg-slate-800 disabled:opacity-40 text-slate-400">›</button>
                   </div>
                 </div>
               </CardContent>
