@@ -79,11 +79,12 @@ type VideoSubtitleDetail struct {
 }
 
 // QuerySubtitlesRequest identifies a target for query_media_subtitles.
+// IncludeInternal defaults to true when nil.
 type QuerySubtitlesRequest struct {
 	MediaID         uint
 	Path            string
 	MediaCardID     uint
-	IncludeInternal bool
+	IncludeInternal *bool
 }
 
 // FetchSubtitleRequest identifies a subtitle to fetch (UC-03).
@@ -289,17 +290,24 @@ func (s *subtitleAgentService) QueryMediaList(ctx context.Context, req MediaList
 func (s *subtitleAgentService) scanVideoSubtitles(ctx context.Context, videoPath string) SubtitleStatus {
 	res := SubtitleStatus{Status: SubtitleStatusNone}
 	external := mediautil.ExternalSubtitlesForVideo(videoPath, s.storage)
-	langs := make(map[string]bool)
+	langs := make(map[string]bool)      // external-only languages (IETF)
+	hasInternalZHCN := false            // normalized internal-track language contains zh-CN
+
 	for _, sub := range external {
 		if sub.Language != "" && sub.Language != "unknown" {
 			langs[sub.Language] = true
 		}
 	}
 
-	// internal probe (cached) - may be unavailable on cold cache
-	internal, ok := s.probeInternalCached(ctx, videoPath)
+	// internal probe (cached, NFO fast path) - may be unavailable on cold cache
+	internal, ok := s.probeInternalCached(ctx, videoPath, true)
 	if ok && len(internal) > 0 {
 		res.HasSubtitle = true
+		for _, sub := range internal {
+			if mediautil.NormalizeSubtitleLang(sub.Language) == "zh-CN" {
+				hasInternalZHCN = true
+			}
+		}
 	}
 	if len(external) > 0 {
 		res.HasSubtitle = true
@@ -323,8 +331,10 @@ func (s *subtitleAgentService) scanVideoSubtitles(ctx context.Context, videoPath
 		res.Status = SubtitleStatusFull
 	}
 
-	// Determine missing zh-CN (only reliable in full state).
-	hasZHCN := langs["zh-CN"]
+	// Determine missing zh-CN (only reliable in full state). Chinese is present
+	// via either an external zh-CN file OR an internal track whose language
+	// normalizes to zh-CN (chi/zho/zh-hans/...).
+	hasZHCN := langs["zh-CN"] || hasInternalZHCN
 	if res.Status == SubtitleStatusFull && !hasZHCN {
 		res.MissingSubtitles = append(res.MissingSubtitles, "zh-CN")
 	}
@@ -342,6 +352,7 @@ func (s *subtitleAgentService) scanDirSubtitles(ctx context.Context, dir string)
 	extLangs := make(map[string]bool)
 	anyInternal := false
 	anyExternal := false
+	hasInternalZHCN := false
 
 	for _, v := range videos {
 		ext := mediautil.ExternalSubtitlesForVideo(v, s.storage)
@@ -352,9 +363,14 @@ func (s *subtitleAgentService) scanDirSubtitles(ctx context.Context, dir string)
 			}
 		}
 		if len(videos) <= 16 { // BR-31: bounded probing for season aggregate
-			internal, ok := s.probeInternalCached(ctx, v)
+			internal, ok := s.probeInternalCached(ctx, v, true)
 			if ok && len(internal) > 0 {
 				anyInternal = true
+				for _, sub := range internal {
+					if mediautil.NormalizeSubtitleLang(sub.Language) == "zh-CN" {
+						hasInternalZHCN = true
+					}
+				}
 			}
 		}
 	}
@@ -366,7 +382,7 @@ func (s *subtitleAgentService) scanDirSubtitles(ctx context.Context, dir string)
 	sort.Strings(res.ExternalLanguages)
 	res.Status = SubtitleStatusFull
 
-	hasZHCN := extLangs["zh-CN"]
+	hasZHCN := extLangs["zh-CN"] || hasInternalZHCN
 	if res.Status == SubtitleStatusFull && !hasZHCN {
 		res.MissingSubtitles = append(res.MissingSubtitles, "zh-CN")
 	}
@@ -378,7 +394,11 @@ func (s *subtitleAgentService) statMissing(path string) error {
 	return err
 }
 
-func (s *subtitleAgentService) probeInternalCached(ctx context.Context, videoPath string) ([]mediautil.SubtitleInfo, bool) {
+// probeInternalCached returns the internal subtitle tracks of a video.
+// When nfoFastPath is true the scraped NFO's <streamdetails> is used first
+// (milliseconds, no subprocess); otherwise a live ffprobe runs. The result is
+// always cached keyed by file size+mtime.
+func (s *subtitleAgentService) probeInternalCached(ctx context.Context, videoPath string, nfoFastPath bool) ([]mediautil.SubtitleInfo, bool) {
 	stat, err := s.storage.Stat(videoPath)
 	if err != nil {
 		return nil, false
@@ -390,11 +410,27 @@ func (s *subtitleAgentService) probeInternalCached(ctx context.Context, videoPat
 		return entry.Subs, true
 	}
 
-	// probe (2s timeout), then cache
-	subs := mediautil.GetSubtitlesForVideo(videoPath, s.storage)
+	// Fast path: the scraped NFO next to the video already records the internal
+	// subtitle tracks (<streamdetails>). Reading it is far cheaper than probing
+	// each video with ffprobe. Only fall back to ffprobe when no trustworthy NFO
+	// exists (e.g. not scraped, or scraped without streamdetails).
+	if nfoFastPath {
+		if nfoPath := mediautil.NFOForVideo(videoPath); nfoPath != "" {
+			if subs, trust := mediautil.InternalSubsFromNFO(nfoPath); trust {
+				s.probeMu.Lock()
+				s.probeCache[videoPath] = probeCacheEntry{Size: stat.Size, ModTime: stat.ModTime, Subs: subs}
+				s.probeMu.Unlock()
+				return subs, true
+			}
+		}
+	}
+
+	// live probe (2s timeout), then cache
+	all := mediautil.GetSubtitlesForVideo(videoPath, s.storage)
 	internalOnly := make([]mediautil.SubtitleInfo, 0)
-	for _, sub := range subs {
+	for _, sub := range all {
 		if sub.Type == "internal" {
+			sub.Language = mediautil.NormalizeSubtitleLang(sub.Language)
 			internalOnly = append(internalOnly, sub)
 		}
 	}
@@ -412,7 +448,10 @@ func (s *subtitleAgentService) QuerySubtitles(ctx context.Context, req QuerySubt
 	if req.MediaID == 0 && req.Path == "" {
 		return nil, errors.New("media_id or path is required")
 	}
-	includeInternal := req.IncludeInternal
+	includeInternal := true
+	if req.IncludeInternal != nil {
+		includeInternal = *req.IncludeInternal
+	}
 
 	// Resolve target video paths.
 	var videoPaths []string
@@ -451,7 +490,9 @@ func (s *subtitleAgentService) QuerySubtitles(ctx context.Context, req QuerySubt
 		detail := VideoSubtitleDetail{VideoPath: vp}
 		subs := mediautil.ExternalSubtitlesForVideo(vp, s.storage)
 		if includeInternal {
-			internal, ok := s.probeInternalCached(ctx, vp)
+			// NFO fast path first (consistent with list); ffprobe fallback only
+			// when no trustworthy scraped NFO exists.
+			internal, ok := s.probeInternalCached(ctx, vp, true)
 			if ok {
 				subs = append(subs, internal...)
 			} else {

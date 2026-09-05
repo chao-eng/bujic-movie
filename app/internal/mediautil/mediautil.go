@@ -5,6 +5,7 @@ package mediautil
 
 import (
 	"context"
+	"encoding/xml"
 	"html"
 	"os"
 	"path/filepath"
@@ -259,4 +260,107 @@ func GroupMedias(rawMedias []entity.Media, normalize func(m *entity.Media)) []en
 func ShowIDFromNFO(videoPath string) (string, int) {
 	seriesDir, _ := getShowInfoFromPath(videoPath)
 	return getShowTitleAndID(seriesDir)
+}
+
+// NormalizeSubtitleLang maps an internal-track/ffprobe language tag to the same
+// IETF tags used for external subtitles (zh-CN/en/ja/ko/...), so that "does it
+// already have Chinese subs" checks work across both internal and external
+// sources. Unknown tags are returned lowercased as-is.
+func NormalizeSubtitleLang(lang string) string {
+	switch strings.ToLower(strings.TrimSpace(lang)) {
+	case "zh", "zho", "chi", "zh-cn", "zh-hans", "cmn", "cn", "chs", "sc", "简体", "简中":
+		return "zh-CN"
+	case "zh-tw", "zh-hk", "zh-hant", "big5", "tc", "cht", "繁體", "繁中":
+		return "zh-TW"
+	case "en", "eng", "en-us", "en-gb":
+		return "en"
+	case "ja", "jpn", "jp":
+		return "ja"
+	case "ko", "kor", "kr":
+		return "ko"
+	case "fr", "fre", "fra":
+		return "fr"
+	case "de", "ger", "deu":
+		return "de"
+	case "es", "spa":
+		return "es"
+	case "it", "ita":
+		return "it"
+	case "pt", "por":
+		return "pt"
+	case "ru", "rus":
+		return "ru"
+	}
+	return strings.ToLower(strings.TrimSpace(lang))
+}
+
+// ---- NFO <streamdetails> reading (fast path for internal tracks) ----
+
+// nfoSubtitleXML mirrors the <subtitle> elements under <fileinfo><streamdetails>.
+type nfoSubtitleXML struct {
+	Index    int    `xml:"index"`
+	Codec    string `xml:"codec"`
+	Language string `xml:"language"`
+}
+
+type nfoStreamDetailsXML struct {
+	Subtitles []nfoSubtitleXML `xml:"subtitle"`
+}
+
+type nfoFileinfoXML struct {
+	StreamDetails *nfoStreamDetailsXML `xml:"streamdetails"`
+}
+
+type nfoWithStreamXML struct {
+	Fileinfo *nfoFileinfoXML `xml:"fileinfo"`
+}
+
+// InternalSubsFromNFO reads the internal subtitle tracks recorded in a scraped
+// NFO's <fileinfo><streamdetails> block. Returns the list of internal subtitles
+// and true only when the NFO exists AND carries a <streamdetails> block (i.e.
+// the recorded track list is trustworthy). When false, callers should fall back
+// to probing the video with ffprobe.
+func InternalSubsFromNFO(nfoPath string) ([]SubtitleInfo, bool) {
+	data, err := os.ReadFile(nfoPath)
+	if err != nil {
+		return nil, false
+	}
+	var doc nfoWithStreamXML
+	if err := xml.Unmarshal(data, &doc); err != nil {
+		return nil, false
+	}
+	if doc.Fileinfo == nil || doc.Fileinfo.StreamDetails == nil {
+		// NFO exists but has no <streamdetails> block; not trustworthy.
+		return nil, false
+	}
+	subs := make([]SubtitleInfo, 0, len(doc.Fileinfo.StreamDetails.Subtitles))
+	for _, st := range doc.Fileinfo.StreamDetails.Subtitles {
+		lang := NormalizeSubtitleLang(st.Language)
+		subs = append(subs, SubtitleInfo{
+			Type:     "internal",
+			Name:     st.Codec,
+			Language: lang,
+			Format:   st.Codec,
+			Index:    st.Index,
+		})
+	}
+	return subs, true
+}
+
+// NFOForVideo locates the NFO that describes a video file: <videoBase>.nfo
+// next to the video, falling back to movie.nfo for movie directories (matching
+// the REST scan logic). Returns "" when none exists.
+func NFOForVideo(videoPath string) string {
+	dir := filepath.Dir(videoPath)
+	base := strings.TrimSuffix(filepath.Base(videoPath), filepath.Ext(videoPath))
+	candidates := []string{
+		filepath.Join(dir, base+".nfo"),
+		filepath.Join(dir, "movie.nfo"),
+	}
+	for _, c := range candidates {
+		if info, err := os.Stat(c); err == nil && !info.IsDir() {
+			return c
+		}
+	}
+	return ""
 }

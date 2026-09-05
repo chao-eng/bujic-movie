@@ -100,7 +100,7 @@ func registerTools(
 			MediaID:         p.MediaID,
 			Path:            p.Path,
 			MediaCardID:     p.MediaCardID,
-			IncludeInternal: includeInternal,
+			IncludeInternal: p.IncludeInternal,
 		})
 		if err != nil {
 			return nil, err
