@@ -1,6 +1,7 @@
 package service
 
 import (
+	"fmt"
 	"testing"
 	"time"
 
@@ -10,14 +11,22 @@ import (
 	"gorm.io/gorm"
 )
 
+func openCallRecordDB(t *testing.T) *gorm.DB {
+	t.Helper()
+	db, err := gorm.Open(sqlite.Open(
+		fmt.Sprintf("file:rec-%d?mode=memory&cache=shared", time.Now().UnixNano()),
+	), &gorm.Config{})
+	if err != nil {
+		t.Fatalf("open sqlite: %v", err)
+	}
+	return db
+}
+
 // TestMCPCallRecords covers BR-26/BR-27 basics at the repository/service layer:
 // records are queryable with filters/pagination and the retention purge removes
 // old rows in bounded batches.
 func TestMCPCallRecords(t *testing.T) {
-	db, err := gorm.Open(sqlite.Open("file::memory:?cache=shared"), &gorm.Config{})
-	if err != nil {
-		t.Fatalf("open sqlite: %v", err)
-	}
+	db := openCallRecordDB(t)
 	recRepo := repository.NewMCPCallRecordRepository(db)
 
 	now := time.Now()
@@ -63,5 +72,29 @@ func TestMCPCallRecords(t *testing.T) {
 	_, totalAfter, _ := recRepo.Query(repository.MCPCallRecordFilter{}, 0, 10)
 	if totalAfter != 2 {
 		t.Fatalf("expected 2 remaining, got %d", totalAfter)
+	}
+}
+
+// TestMCPCallRecordDeleteAll: DeleteAll wipes every audit row (admin 清空).
+func TestMCPCallRecordDeleteAll(t *testing.T) {
+	db := openCallRecordDB(t)
+	recRepo := repository.NewMCPCallRecordRepository(db)
+
+	for i := 0; i < 3; i++ {
+		rec := &entity.MCPCallRecord{APIKeyID: uint(i + 1), Tool: "query_media_list", Status: "ok"}
+		if err := recRepo.Create(rec); err != nil {
+			t.Fatalf("create rec: %v", err)
+		}
+	}
+	_, total, _ := recRepo.Query(repository.MCPCallRecordFilter{}, 0, 10)
+	if total != 3 {
+		t.Fatalf("expected 3 before clear, got %d", total)
+	}
+	if err := recRepo.DeleteAll(); err != nil {
+		t.Fatalf("DeleteAll: %v", err)
+	}
+	_, totalAfter, _ := recRepo.Query(repository.MCPCallRecordFilter{}, 0, 10)
+	if totalAfter != 0 {
+		t.Fatalf("expected 0 after clear, got %d", totalAfter)
 	}
 }

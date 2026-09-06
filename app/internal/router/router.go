@@ -175,8 +175,10 @@ func SetupRouter(gormDB *gorm.DB, cfg *config.Config) *gin.Engine {
 		protected.GET("/mcp/api-keys", mcpAPIKeyCtrl.List)
 		protected.GET("/mcp/api-keys/:id", mcpAPIKeyCtrl.GetByID)
 		protected.PUT("/mcp/api-keys/:id/:action", mcpAPIKeyCtrl.SetStatus)
+		protected.DELETE("/mcp/api-keys/:id", mcpAPIKeyCtrl.Delete)
 		protected.GET("/mcp/api-keys/:id/records", mcpAPIKeyCtrl.Records)
 		protected.GET("/mcp/call-records", mcpAPIKeyCtrl.AllRecords)
+		protected.DELETE("/mcp/call-records", mcpAPIKeyCtrl.ClearRecords)
 	}
 
 	// Serve Static Frontend Files

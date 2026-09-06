@@ -14,6 +14,7 @@ type MCPAPIKeyRepository interface {
 	List() ([]entity.MCPAPIKey, error)
 	SetStatus(id uint, status string) (*entity.MCPAPIKey, error)
 	TouchLastUsed(id uint) error
+	Delete(id uint) error
 }
 
 type mcpAPIKeyRepository struct {
@@ -63,4 +64,10 @@ func (r *mcpAPIKeyRepository) SetStatus(id uint, status string) (*entity.MCPAPIK
 
 func (r *mcpAPIKeyRepository) TouchLastUsed(id uint) error {
 	return r.db.Model(&entity.MCPAPIKey{}).Where("id = ?", id).Update("last_used_at", time.Now()).Error
+}
+
+// Delete soft-deletes an API key (gorm.DeletedAt). Historical call records are
+// intentionally kept for audit; Validate never returns soft-deleted keys.
+func (r *mcpAPIKeyRepository) Delete(id uint) error {
+	return r.db.Delete(&entity.MCPAPIKey{}, id).Error
 }

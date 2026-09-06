@@ -1,7 +1,9 @@
 package service
 
 import (
+	"fmt"
 	"testing"
+	"time"
 
 	"github.com/bujic-movie/bujic-movie/internal/repository"
 	"github.com/glebarez/sqlite"
@@ -10,7 +12,9 @@ import (
 
 func setupAPIKeyHarness(t *testing.T) MCPAPIKeyService {
 	t.Helper()
-	db, err := gorm.Open(sqlite.Open("file::memory:?cache=shared"), &gorm.Config{})
+	db, err := gorm.Open(sqlite.Open(
+		fmt.Sprintf("file:apikey-%d?mode=memory&cache=shared", time.Now().UnixNano()),
+	), &gorm.Config{})
 	if err != nil {
 		t.Fatalf("open sqlite: %v", err)
 	}
@@ -75,5 +79,40 @@ func TestMCPAPIKeyLifecycle(t *testing.T) {
 	}
 	if keys[0].KeyHash == "" {
 		t.Errorf("key_hash should be stored")
+	}
+}
+
+// TestMCPAPIKeyDelete: deleting a key makes it invalid immediately (auth fails)
+// while its rows stay queryable; list no longer shows it.
+func TestMCPAPIKeyDelete(t *testing.T) {
+	svc := setupAPIKeyHarness(t)
+
+	key, plain, err := svc.Create("to-delete")
+	if err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	if _, err := svc.Validate(plain); err != nil {
+		t.Fatalf("validate before delete: %v", err)
+	}
+
+	if err := svc.Delete(key.ID); err != nil {
+		t.Fatalf("delete: %v", err)
+	}
+
+	// key must not validate any more
+	if _, err := svc.Validate(plain); err == nil {
+		t.Errorf("expected validate to fail after delete")
+	}
+	// list excludes deleted key
+	keys, err := svc.List()
+	if err != nil {
+		t.Fatalf("list: %v", err)
+	}
+	if len(keys) != 0 {
+		t.Errorf("expected 0 keys after delete, got %d", len(keys))
+	}
+	// deleting a non-existent key errors
+	if err := svc.Delete(99999); err == nil {
+		t.Errorf("expected error deleting missing key")
 	}
 }

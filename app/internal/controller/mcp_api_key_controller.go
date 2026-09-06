@@ -88,6 +88,29 @@ func (ctrl *MCPAPIKeyController) SetStatus(c *gin.Context) {
 	})
 }
 
+// Delete removes an API key (soft delete, records kept). DELETE /:id
+func (ctrl *MCPAPIKeyController) Delete(c *gin.Context) {
+	id, err := strconv.ParseUint(c.Param("id"), 10, 32)
+	if err != nil {
+		response.BadRequest(c, "Invalid ID")
+		return
+	}
+	if err := ctrl.keySvc.Delete(uint(id)); err != nil {
+		response.NotFound(c, err.Error())
+		return
+	}
+	response.Success(c, gin.H{"id": id})
+}
+
+// ClearRecords deletes all call records. DELETE /call-records
+func (ctrl *MCPAPIKeyController) ClearRecords(c *gin.Context) {
+	if err := ctrl.keySvc.ClearRecords(); err != nil {
+		response.InternalServerError(c, err.Error())
+		return
+	}
+	response.Success(c, gin.H{"message": "调用记录已清空"})
+}
+
 type recordsQuery struct {
 	Tool   string `form:"tool"`
 	Status string `form:"status"`

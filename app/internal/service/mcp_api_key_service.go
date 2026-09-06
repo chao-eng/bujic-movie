@@ -20,6 +20,8 @@ const keyPrefix = "bmk_"
 type MCPAPIKeyService interface {
 	Create(name string) (*entity.MCPAPIKey, string, error) // returns key + plaintext (once)
 	SetStatus(id uint, status string) (*entity.MCPAPIKey, error)
+	Delete(id uint) error
+	ClearRecords() error
 	Validate(rawKey string) (*entity.MCPAPIKey, error)
 	List() ([]entity.MCPAPIKey, error)
 	GetByID(id uint) (*entity.MCPAPIKey, error)
@@ -90,6 +92,20 @@ func (s *mcpAPIKeyService) SetStatus(id uint, status string) (*entity.MCPAPIKey,
 		return nil, errors.New("status must be active or disabled")
 	}
 	return s.keyRepo.SetStatus(id, status)
+}
+
+// Delete removes an API key (soft delete). The key stops validating
+// immediately; its historical call records are preserved for audit.
+func (s *mcpAPIKeyService) Delete(id uint) error {
+	if _, err := s.keyRepo.GetByID(id); err != nil {
+		return errors.New("api key not found")
+	}
+	return s.keyRepo.Delete(id)
+}
+
+// ClearRecords deletes ALL MCP call records (admin "清空调用记录").
+func (s *mcpAPIKeyService) ClearRecords() error {
+	return s.recRepo.DeleteAll()
 }
 
 // Validate checks a raw key against stored active keys. Returns the matched key

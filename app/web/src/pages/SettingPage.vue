@@ -643,6 +643,48 @@ const toggleMCPKey = async (k: any) => {
   }
 }
 
+const deleteMCPKey = async (k: any) => {
+  const ok = await confirm({
+    title: '删除 API Key',
+    message: `确定删除 Key「${k.name}」？删除后立即失效不可恢复（历史调用记录会保留）。`,
+    confirmText: '删除',
+  })
+  if (!ok) return
+  try {
+    const res: any = await client.delete(`/api/v1/mcp/api-keys/${k.id}`)
+    if (res.code === 0) {
+      toast.success('已删除')
+      if (recordsFilterKey.value === k.id) recordsFilterKey.value = ''
+      await fetchMCPKeys()
+    } else {
+      toast.error(res.msg || '删除失败')
+    }
+  } catch (err: any) {
+    toast.error(err.response?.data?.msg || '删除失败')
+  }
+}
+
+const clearMCPRecords = async () => {
+  const ok = await confirm({
+    title: '清空调用记录',
+    message: '确定清空全部 MCP 调用记录？此操作不可撤销。',
+    confirmText: '清空',
+  })
+  if (!ok) return
+  try {
+    const res: any = await client.delete('/api/v1/mcp/call-records')
+    if (res.code === 0) {
+      toast.success('已清空')
+      mcpRecords.value = []
+      recordsTotal.value = 0
+    } else {
+      toast.error(res.msg || '清空失败')
+    }
+  } catch (err: any) {
+    toast.error(err.response?.data?.msg || '清空失败')
+  }
+}
+
 const fmtTime = (s?: string) => (s ? new Date(s).toLocaleString() : '—')
 
 const fetchMCPRecords = async () => {
@@ -1390,6 +1432,14 @@ onUnmounted(() => {
                       <Loader2 v-if="togglingKeyId === k.id" class="h-3.5 w-3.5 animate-spin" />
                       {{ k.status === 'active' ? '禁用' : '启用' }}
                     </Button>
+                    <Button
+                      variant="outline"
+                      class="h-8 border border-slate-700 text-rose-400 hover:bg-rose-500/10"
+                      @click="deleteMCPKey(k)"
+                      title="删除此 Key（历史调用记录保留）"
+                    >
+                      <Trash2 class="h-3.5 w-3.5" />
+                    </Button>
                   </div>
                 </div>
 
@@ -1448,6 +1498,15 @@ onUnmounted(() => {
                     </select>
                     <Button @click="openRecords" variant="outline" class="h-8 border-slate-700 text-slate-300 hover:bg-slate-800">
                       <RefreshCw :class="['h-3.5 w-3.5', loadingRecords ? 'animate-spin' : '']" />
+                    </Button>
+                    <Button
+                      v-if="recordsTotal > 0"
+                      variant="outline"
+                      class="h-8 border border-rose-500/40 text-rose-400 hover:bg-rose-500/10"
+                      @click="clearMCPRecords"
+                      title="清空全部调用记录"
+                    >
+                      <Trash2 class="h-3.5 w-3.5 mr-1" /> 清空
                     </Button>
                   </div>
                 </div>

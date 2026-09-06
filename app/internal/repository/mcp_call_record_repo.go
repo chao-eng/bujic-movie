@@ -19,6 +19,7 @@ type MCPCallRecordRepository interface {
 	Create(rec *entity.MCPCallRecord) error
 	Query(f MCPCallRecordFilter, offset, limit int) ([]entity.MCPCallRecord, int64, error)
 	PurgeBefore(cutoff time.Time, batch int) (int64, error)
+	DeleteAll() error
 }
 
 type mcpCallRecordRepository struct {
@@ -77,4 +78,9 @@ func (r *mcpCallRecordRepository) PurgeBefore(cutoff time.Time, batch int) (int6
 		deleted += res.RowsAffected
 	}
 	return deleted, nil
+}
+
+// DeleteAll truncates the call-record audit table (admin "清空调用记录").
+func (r *mcpCallRecordRepository) DeleteAll() error {
+	return r.db.Where("1 = 1").Delete(&entity.MCPCallRecord{}).Error
 }
