@@ -534,6 +534,7 @@ const recordsLimit = ref(20)
 const recordsFilterKey = ref<number | ''>('')
 const recordsFilterTool = ref('')
 const TOOL_LABELS: Record<string, string> = {
+  list_media_cards: '查询媒体卡片',
   query_media_list: '查询媒体列表',
   query_media_subtitles: '查询字幕明细',
   fetch_subtitle: '获取字幕内容',
@@ -601,6 +602,7 @@ const copyMCPConfig = async (key: any) => {
         url: `${location.origin}/api/v1/mcp`,
         headers: { Authorization: `Bearer ${token}` },
         toolNames: [
+          'list_media_cards',
           'query_media_list',
           'query_media_subtitles',
           'fetch_subtitle',
@@ -1439,7 +1441,7 @@ onUnmounted(() => {
                     <select v-model="recordsFilterTool" @change="openRecords" class="bg-slate-950 border border-slate-800 rounded-lg px-2 py-1.5 text-xs text-slate-300 focus:outline-none focus:border-amber-500">
                       <option value="">全部工具</option>
                       <option
-                        v-for="tool in ['query_media_list','query_media_subtitles','fetch_subtitle','upload_subtitle']"
+                        v-for="tool in ['list_media_cards','query_media_list','query_media_subtitles','fetch_subtitle','upload_subtitle']"
                         :key="tool"
                         :value="tool"
                       >{{ TOOL_LABELS[tool] }}</option>
