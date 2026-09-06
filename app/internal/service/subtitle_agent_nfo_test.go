@@ -42,6 +42,9 @@ func TestAgentSubtitleFlowNFOFastPath(t *testing.T) {
 	if !item.HasSubtitle {
 		t.Errorf("expected has_subtitle=true (internal zh via NFO)")
 	}
+	if !containsStr(item.Languages, "zh-CN") {
+		t.Errorf("expected languages to include zh-CN from internal track via NFO, got %v", item.Languages)
+	}
 	if containsStr(item.MissingSubtitles, "zh-CN") {
 		t.Errorf("expected NO missing zh-CN via NFO fast path, got missing=%v", item.MissingSubtitles)
 	}
@@ -60,6 +63,51 @@ func TestAgentSubtitleFlowNFOFastPath(t *testing.T) {
 	}
 	if !found {
 		t.Errorf("expected internal zh-CN from NFO, got %+v", details)
+	}
+}
+
+// TestAgentZhoNFORegression reproduces the real-world media that triggered the
+// "full but languages empty" report: an episode whose ONLY subtitles are muxed
+// tracks (recorded in the scraped NFO as <language>zho</language>, no external
+// .srt files). The list must surface zh-CN in languages and NOT mark it missing.
+func TestAgentZhoNFORegression(t *testing.T) {
+	h := setupSubtitleAgentHarness(t)
+	ctx := context.Background()
+
+	nfo := `<?xml version="1.0" encoding="utf-8" standalone="yes"?>
+<movie>
+  <title>zho (2017)</title>
+  <fileinfo>
+    <streamdetails>
+      <video><codec>hevc</codec><language>eng</language></video>
+      <audio><codec>eac3</codec><language>eng</language></audio>
+      <subtitle><codec>subrip</codec><language>eng</language></subtitle>
+      <subtitle><codec>subrip</codec><language>zho</language></subtitle>
+    </streamdetails>
+  </fileinfo>
+</movie>
+`
+	base := "zho (2017) [1080p]"
+	videoPath := writeFile(t, filepath.Join(h.archive, base+".mkv"), "video")
+	writeFile(t, filepath.Join(h.archive, base+".nfo"), nfo)
+	addMovieRow(h, "zho (2017)", 2017, videoPath)
+
+	list, err := h.svc.QueryMediaList(ctx, MediaListRequest{MediaType: "movie"})
+	if err != nil {
+		t.Fatalf("QueryMediaList: %v", err)
+	}
+	if list.Total != 1 {
+		t.Fatalf("expected 1 media, got %d", list.Total)
+	}
+	item := list.Items[0]
+	if !item.HasSubtitle {
+		t.Errorf("expected has_subtitle=true (internal zho via NFO)")
+	}
+	if !containsStr(item.Languages, "zh-CN") {
+		t.Errorf("expected languages to include zh-CN from zho internal track, got %v", item.Languages)
+	}
+	if containsStr(item.MissingSubtitles, "zh-CN") {
+		t.Errorf("expected NO missing zh-CN, got %v", item.MissingSubtitles)
 	}
 }
 

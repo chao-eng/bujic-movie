@@ -62,7 +62,7 @@
 | G-05 复用既有安全模型，不开口子 | 路径读写沿用 MediaCard 前缀白名单；**MCP 仅接受有效 API Key** | §5.3/§6.3、BR-09 |
 | G-06 可创建 API Key 用于 MCP 调用 | 创建返回一次性明文；库中仅存哈希；列表/记录均不回显明文 | UC-06、§6.5 V-8 |
 | G-07 API Key 可启用/禁用 | 禁用后 MCP 调用即时被拒（401 + `KEY_DISABLED`），再启用恢复 | UC-07、§6.5 V-8 |
-| G-08 可查看 API Key 调用记录 | 每次业务 `tools/call`（4 tool）落库（Key/工具/状态/耗时/IP/时间）；`mcp_ping` 自测不计入；可按条件查询 | UC-08、§6.5 V-9/V-14 |
+| G-08 可查看 API Key 调用记录 | 每次业务 `tools/call`（5 tool）落库（Key/工具/状态/耗时/IP/时间）；`mcp_ping` 自测不计入；可按条件查询 | UC-08、§6.5 V-9/V-14 |
 | G-09 翻译规范与 `subtitle-translator-zh` 对齐 | Skill 的翻译子任务在逐行映射、时间轴保留、术语一致性、格式守则、错误处理上符合 §8.2 | BR-28、§6.5 V-10 |
 
 ### 1.3 系统范围
@@ -71,7 +71,7 @@
 |------|------|-----------|
 | **Bujic Movie 核心后端** | 媒体库元数据、字幕盘态扫描/探测/抽取、目录刷新、既有权验逻辑 | 既有 `app/internal/*` |
 | **Subtitle Agent 服务层（新增）** | 列表含字幕 / 字幕明细 / 字幕获取（外挂直读 + 内嵌抽取）/ 字幕上传 的进程内函数 | `app/internal/service/subtitle_agent_service.go`，`router.go` 装配 |
-| **MCP Server（新增）** | MCP Streamable HTTP 暴露 4 个 tool；鉴权 + 调用记录落库 | `app/internal/mcp/`（内嵌 handler）；`app/cmd/mcp/main.go`（独立进程） |
+| **MCP Server（新增）** | MCP Streamable HTTP 暴露 5 个业务 tool + `mcp_ping`；鉴权 + 调用记录落库 | `app/internal/mcp/`（内嵌 handler）；`app/cmd/mcp/main.go`（独立进程） |
 | **MCP API Key 管理（新增）** | 创建/启用/禁用 API Key、调用记录查询 | `service/mcp_api_key_service.go`、`repository/mcp_api_key_repo.go` + `mcp_call_record_repo.go`、`controller/mcp_api_key_controller.go` |
 | **数据实体（新增）** | `mcp_api_keys`、`mcp_call_records` 两表（AutoMigrate） | `app/internal/model/entity/` |
 | **Agent Skill（新增）** | 固化 MCP 编排 + 字幕翻译规范（对齐 `subtitle-translator-zh`） | `.agents/skills/bujic-subtitle/SKILL.md` |
@@ -97,10 +97,11 @@
                         │                                                │
   ┌─────────┐   MCP      │   ┌────────────────────────────────────────┐  │
   │  Agent  │  (tools+   │   │         Subtitle Agent 服务层           │  │
-  └────┬────┘  API Key)  │   │   query_media_list      (UC-01)        │  │
-       │                │   │   query_media_subtitles  (UC-02)        │  │
-       │                │   │   fetch_subtitle         (UC-03)        │  │
-       │                │   │   upload_subtitle        (UC-04)        │  │
+  └────┬────┘  API Key)  │   │   list_media_cards     (UC-09)        │  │
+       │                 │   │   query_media_list      (UC-01)        │  │
+       │                 │   │   query_media_subtitles  (UC-02)        │  │
+       │                 │   │   fetch_subtitle         (UC-03)        │  │
+       │                 │   │   upload_subtitle        (UC-04)        │  │
        │                │   │─────────────────────────────────────────│  │
        │                │   │   磁盘扫描 / ffprobe / ffmpeg            │  │
        │                │   └────────────────────────────────────────┘  │
@@ -128,13 +129,17 @@
 | UC-06 | 创建 API Key | 系统管理员 | 高 |
 | UC-07 | 启用/禁用 API Key | 系统管理员 | 高 |
 | UC-08 | 查看 API Key 调用记录 | 系统管理员 | 高 |
+| UC-09 | 枚举媒体卡（确定 `media_card_id` 范围） | Agent | 高 |
 
 ### 2.4 用例关系
 
 ```
 UC-01 查询媒体列表（含字幕状态）
-   ├──<include>── 读取 MediaCard（限定媒体库范围，缺省用默认卡）
+   ├──<include>── 读取 MediaCard 范围（缺省/0=全部卡，>0=指定卡，先经 UC-09 枚举）
    └──<extend>──> UC-02 查询媒体/视频字幕明细
+
+UC-09 枚举媒体卡
+   └── 返回卡片清单供 Agent 决定 media_card_id 范围（不涉及磁盘扫描/字幕）
 
 UC-03 获取字幕内容
    ├──<extend>──>（内嵌）ffprobe 探测 + ffmpeg 抽取
@@ -156,7 +161,7 @@ UC-08 查看调用记录 ──<extend>──（记录来源）每次 MCP tools/
 
 ## 3. 详细用例规格说明
 
-> 约定：Agent 工具运行在"媒体库=MediaCard"世界观里：范围 `media_card_id`（缺省→默认卡）；媒体标识 `media_id`（`medias.id`）；`path` 为服务器绝对路径。
+> 约定：Agent 工具运行在"媒体库=MediaCard"世界观里：范围 `media_card_id`（**省略或 0→全部卡**，与 Web `GET /api/v1/media` 一致；>0→指定卡，先经 `list_media_cards` 枚举）；媒体标识 `media_id`（`medias.id`）；`path` 为服务器绝对路径。
 >
 > 说明（既有模型约束，BR-01）：`GET /api/v1/media` 响应是**聚合后的"卡片"形态**（电影按 TMDBID 分组；剧集聚合成 `剧名 (第 N 季)`，`path`=季目录，`tmdb_id`=剧集级）。本期不打破该聚合，新增 `has_subtitle` 聚合口径见 BR-01。
 
@@ -172,7 +177,7 @@ UC-08 查看调用记录 ──<extend>──（记录来源）每次 MCP tools/
 | **后置条件** | 无副作用（纯查询）；内嵌探测结果落入缓存（BR-03）则刷新缓存；本次调用落调用记录（BR-26） |
 | **基本事件流** | 1. Agent 提交：`media_type`、可选 `media_card_id`、可选 `query`、可选 `page`/`limit`<br>2. 取库：`mediaRepo.ListAll/List`<br>3. 按 `groupMedias` 聚合；以视频文件粒度计算外挂 + 内嵌（三态口径 BR-03）<br>4. 组装：`media_id/title/type/year/season/path/has_subtitle/subtitle_status/languages/missing_subtitles/warn`<br>5. 返回 `{items,total,page,limit}` |
 | **备选事件流** | 1a. 无 MediaCard：空列表 + `warn:"no media card"`<br>3a. 剧集聚合项按该季全部视频文件聚合，`has_subtitle=true` 当且仅当存在任一外挂/内嵌（BR-01/BR-03）；内嵌覆盖度见 `subtitle_status`<br>4a. 视频文件已被外部删除：`has_subtitle=false` + `warn`，跳过 ffprobe |
-| **业务规则** | BR-01：**聚合口径**——外挂：同目录 `videoBase` 前缀 + `IsSubtitle` 即视为有；内嵌：ffprobe 探测到任一 `Subtitle` 流即视为有；`has_subtitle`=二者取并；`languages` 只列**外挂**语言（内嵌不枚举，见 BR-03）<br>BR-02：仅取 MediaCard `ArchivePath`（归档媒体库），`DownloadPath` 不进入媒体列表<br>BR-03：**列表层内嵌探测性能约束与三态口径**——禁止逐文件强 ffprobe；内嵌结果用进程级缓存（键=`videoPath\|mtime\|size`，TTL≥5min；缓存 map 需 `sync.Mutex`/分片锁，BR-30）。内嵌探测**覆盖度**须以三态 `subtitle_status` 明示，避免"未探测"被误报为"确无字幕"：<br> `full`=媒体范围内全部视频的内嵌均已探测（缓存命中或 ≤200 文件同步探测）；<br> `partial`=部分文件缓存未命中且范围 >200 文件，未同步探测——此时 `has_subtitle` 以内嵌缓存命中结果为准，未命中部分**不参与** true 判定，并附 `warn:"subtitle status partial (internal not scanned)"`；<br> `none`=全部文件已探测且确无外挂/内嵌。<br> 单次 tool 调用内 ffprobe 总数 ≤16（BR-31）。后台可对 `partial` 范围做低优先级预热以逐步收敛到 `full`（可选） |
+| **业务规则** | BR-01：**聚合口径**——外挂：同目录 `videoBase` 前缀 + `IsSubtitle` 即视为有；内嵌：ffprobe 探测到任一 `Subtitle` 流即视为有；`has_subtitle`=二者取并；`languages` = **外挂语言 ∪ 内嵌轨道归一化语言**（IETF）去重（内嵌语言经 `NormalizeSubtitleLang`，`chi/zho`→`zh-CN`），保证"仅内嵌中文字幕"的媒体对 Agent 可见 `zh-CN`，与 `missing_subtitles` 判断自洽（v0.4 修正：原"只列外挂"导致 `full` 但 `languages` 空、语义矛盾）<br>BR-02：仅取 MediaCard `ArchivePath`（归档媒体库），`DownloadPath` 不进入媒体列表<br>BR-03：**列表层内嵌探测性能约束与三态口径**——禁止逐文件强 ffprobe；内嵌结果用进程级缓存（键=`videoPath\|mtime\|size`，TTL≥5min；缓存 map 需 `sync.Mutex`/分片锁，BR-30）。内嵌探测**覆盖度**须以三态 `subtitle_status` 明示，避免"未探测"被误报为"确无字幕"：<br> `full`=媒体范围内全部视频的内嵌均已探测（缓存命中或 ≤200 文件同步探测）；<br> `partial`=部分文件缓存未命中且范围 >200 文件，未同步探测——此时 `has_subtitle` 以内嵌缓存命中结果为准，未命中部分**不参与** true 判定，并附 `warn:"subtitle status partial (internal not scanned)"`；<br> `none`=全部文件已探测且确无外挂/内嵌。<br> 单次 tool 调用内 ffprobe 总数 ≤16（BR-31）。后台可对 `partial` 范围做低优先级预热以逐步收敛到 `full`（可选） |
 | **数据说明表** | 见 §3.1.1/§3.1.2 |
 
 #### 3.1.1 入参
@@ -180,7 +185,7 @@ UC-08 查看调用记录 ──<extend>──（记录来源）每次 MCP tools/
 | 字段名 | 字段中文名 | 数据类型 | 取值范围 | 是否必填 | 备注说明 |
 |--------|------------|----------|----------|----------|----------|
 | media_type | 媒体类型 | STRING | `movie`/`tv` | 否 | 缺省全部 |
-| media_card_id | 媒体库范围 | INT | ≥1 | 否 | 缺省→默认卡；0→全部卡 |
+| media_card_id | 媒体库范围 | INT | ≥0 | 否 | **缺省或 0→全部卡**；>0→指定卡（`list_media_cards` 枚举） |
 | query | 关键词 | STRING | ≤100 字符 | 否 | 标题模糊 |
 | page | 页码 | INT | ≥1 | 否 | 缺省 1 |
 | limit | 每页条数 | INT | 1~200 | 否 | 缺省 50 |
@@ -197,7 +202,7 @@ UC-08 查看调用记录 ──<extend>──（记录来源）每次 MCP tools/
 | path | 路径 | STRING | 绝对路径 | 是 | 电影=视频文件；剧集=季目录 |
 | has_subtitle | 是否有字幕 | BOOLEAN | true/false | 是 | 口径 BR-01/BR-03；`partial` 时未命中部分不参与 true 判定 |
 | subtitle_status | 内嵌探测覆盖度 | STRING | `full`/`partial`/`none` | 是 | 见 BR-03；`full` 才可断言"确无字幕" |
-| languages | 外挂字幕语言 | STRING[] | `en`/`zh-CN`/`zh-TW`/… | 否 | 去重；外挂为准 |
+| languages | 可见字幕语言（外挂+内嵌归一化） | STRING[] | `en`/`zh-CN`/`zh-TW`/… | 否 | 去重；内嵌轨道语言经归一化为 IETF；BR-01 |
 | missing_subtitles | 缺失提示 | STRING[] | `zh-CN` 等 | 否 | **仅当 `subtitle_status=full` 且确无对应外挂时给出**；`partial` 时省略以免误导 |
 
 | **接口说明** | MCP tool `query_media_list`（§4.1）；经 API Key 鉴权；落调用记录 |
@@ -266,7 +271,7 @@ UC-08 查看调用记录 ──<extend>──（记录来源）每次 MCP tools/
 | **后置条件** | 媒体库出现 `zh-CN` 外挂字幕；媒体卡刷新后 `languages` 含 `zh-CN` |
 | **基本事件流** | 1.（UC-01）查列表，确认目标与 `missing_subtitles`（是否缺 `zh-CN`）<br>2.（UC-02）取字幕明细，筛英文字幕（外挂 `en` 优先，否则内嵌 `eng`）<br>3.（UC-03）拉取英文字幕内容 + `format`<br>4.（**翻译子任务**）按 §8.2 `subtitle-translator-zh` 方法论逐行中译（保留时间轴/ass 标签、术语一致性、分批/断点/重试），输出 UTF-8<br>5.（UC-04）`video_path`+`language=zh-CN`+翻译文本上传<br>6.（可选复核）再 UC-02/UC-01 确认落盘与识别 |
 | **备选事件流** | 3a. 英文为图像字幕（pgs/sup）：文本翻译不可行——告知用户，或由 Agent 自行判断是否从在线源另取文本版（本期无内置源）<br>4a. 字幕超大：按 §8.2 分批 + ±5 上下文翻译，编号/时间轴连续校验后拼装单文件再上传（BR-16）<br>5a. `warn: language label mismatch`：复核内容语言后重译或改标签 |
-| **业务规则** | BR-14：去重/幂等——步骤 1 优先选 `missing_subtitles` 含 `zh-CN` 的媒体；已存在 `zh-CN` 默认跳过（除非用户要求覆盖）<br>BR-15：中文统一简体标记 `zh-CN`；繁体链路不在本期<br>BR-16：超长字幕分段完整性——每段只允许在空行/序号边界切割；段间序号与时间轴连续；全部段完成后拼装为**单一完整文件**再上传一次（禁止逐段覆盖同名目标）<br>BR-28：**翻译规范强制对齐**——翻译子任务必须整体遵循 `subtitle-translator-zh` 方法论（逐行映射/时间轴锚定/±5 行上下文/术语表一致性 `<terminology>`/SRT·ASS·VTT 语法/分批 20–30 条且单次 ≤500/错误处理与 ≤3 次重试/断点续译/交付自检），细则见 §8.2；不满足视为任务未完成<br>BR-29：**调用记录写入可靠性**——`mcp_call_records` 用有界批量缓冲 + 单消费者 goroutine；进程优雅退出（`server.Shutdown`）前强制 flush；缓冲满或单条写失败退化为**同步直写**，保证审计不因崩溃丢批（审核竞态 #3）<br>BR-30：**内嵌探测缓存并发安全**——缓存 map 用 `sync.Mutex`/分片锁保护读写；TTL 清理 timer 与请求并发安全；运行 `go test -race` 无告警（审核竞态 #2）<br>BR-31：**单次调用 ffprobe 预算**——单次 MCP tool 调用内 ffprobe 调用总数 ≤16（超出以缓存/`partial` 兜底，BR-03）；ffprobe/ffmpeg 子进程与并发工具调用共享同一信号量（容量 8，BR-21）<br>BR-32：**`mcp_ping` 自测工具**——工具 5，仅返回 `{ok,server_time,version}`；不读业务数据、**不落调用记录**；用于鉴权连通自测（§5.5）与排除故障（审核易用性 #2）<br>BR-33：**上传去重边界**——服务端**不强制**"已存在 zh-CN 即拒"，默认覆盖对齐既有；去重由 Skill 按 BR-14 执行；上传结果附 `overwrite_existing: true/false`（审核模糊 #7）<br>BR-34：**调用记录保留期清理**——超 180 天记录由常驻定时任务（每小时级 ticker）**分批删除**（`id < cutoff` 分页，事务内），避免长事务锁表（审核竞态 #4）<br>BR-35：**在途调用 vs 禁用边界**——`disabled` 即时生效仅约束**尚未通过鉴权**的新调用；已在执行的在途调用（如长 ffmpeg 抽取）不强制中断，随任务自然结束（审核竞态 #1）<br>BR-36：**同 Key 并发上传同名**——v0 不做乐观锁/版本控制，语义为最后写者生效；调用记录保留 `result_bytes`/`duration_ms` 供事后排查（审核竞态 #6） |
+| **业务规则** | BR-14：去重/幂等——步骤 1 优先选 `missing_subtitles` 含 `zh-CN` 的媒体；已存在 `zh-CN` 默认跳过（除非用户要求覆盖）<br>BR-15：中文统一简体标记 `zh-CN`；繁体链路不在本期<br>BR-16：超长字幕分段完整性——每段只允许在空行/序号边界切割；段间序号与时间轴连续；全部段完成后拼装为**单一完整文件**再上传一次（禁止逐段覆盖同名目标）<br>BR-28：**翻译规范强制对齐**——翻译子任务必须整体遵循 `subtitle-translator-zh` 方法论（逐行映射/时间轴锚定/±5 行上下文/术语表一致性 `<terminology>`/SRT·ASS·VTT 语法/分批 20–30 条且单次 ≤500/错误处理与 ≤3 次重试/断点续译/交付自检），细则见 §8.2；不满足视为任务未完成<br>BR-29：**调用记录写入可靠性**——`mcp_call_records` 用有界批量缓冲 + 单消费者 goroutine；进程优雅退出（`server.Shutdown`）前强制 flush；缓冲满或单条写失败退化为**同步直写**，保证审计不因崩溃丢批（审核竞态 #3）<br>BR-30：**内嵌探测缓存并发安全**——缓存 map 用 `sync.Mutex`/分片锁保护读写；TTL 清理 timer 与请求并发安全；运行 `go test -race` 无告警（审核竞态 #2）<br>BR-31：**单次调用 ffprobe 预算**——单次 MCP tool 调用内 ffprobe 调用总数 ≤16（超出以缓存/`partial` 兜底，BR-03）；ffprobe/ffmpeg 子进程与并发工具调用共享同一信号量（容量 8，BR-21）<br>BR-32：**`mcp_ping` 自测工具**——仅返回 `{ok,server_time,version}`；不读业务数据、**不落调用记录**；用于鉴权连通自测（§5.5）与排除故障（审核易用性 #2）<br>BR-33：**上传去重边界**——服务端**不强制**"已存在 zh-CN 即拒"，默认覆盖对齐既有；去重由 Skill 按 BR-14 执行；上传结果附 `overwrite_existing: true/false`（审核模糊 #7）<br>BR-34：**调用记录保留期清理**——超 180 天记录由常驻定时任务（每小时级 ticker）**分批删除**（`id < cutoff` 分页，事务内），避免长事务锁表（审核竞态 #4）<br>BR-35：**在途调用 vs 禁用边界**——`disabled` 即时生效仅约束**尚未通过鉴权**的新调用；已在执行的在途调用（如长 ffmpeg 抽取）不强制中断，随任务自然结束（审核竞态 #1）<br>BR-36：**同 Key 并发上传同名**——v0 不做乐观锁/版本控制，语义为最后写者生效；调用记录保留 `result_bytes`/`duration_ms` 供事后排查（审核竞态 #6） |
 | **数据说明表** | 无新入参；编排见 §4.2 时序图 |
 | **接口说明** | 由 Skill 固化；翻译细则对接 §8.2 |
 |------------|----|
@@ -330,7 +335,7 @@ UC-08 查看调用记录 ──<extend>──（记录来源）每次 MCP tools/
 | **后置条件** | 无（只读） |
 | **基本事件流** | 1. 管理员选择筛选：`api_key_id?`、`tool?`、`status?`、`time_range?`、`page/limit`<br>2. 服务端查 `mcp_call_records`<br>3. 返回记录数组（不含字幕正文/文件内容） |
 | **备选事件流** | 1a. 无记录：返回空列表 + `total=0` |
-| **业务规则** | BR-26：**记录范围与脱敏**——每次 MCP `tools/call`（业务 4 tool）落一条：`api_key_id/tool/status/error_code/duration_ms/input_meta/result_bytes/client_ip/created_at`。`input_meta` 为 JSON，字段精确化：<br> `query_media_list` → `{media_type?,media_card_id?,query?,page?,limit?}`（query 标题本身可记，非正文）；<br> `query_media_subtitles` → `{media_id?,media_card_id?,include_internal?}`（`path` 不记，或记为 `<红action>` 化路径前缀）；<br> `fetch_subtitle` → `{is_internal,internal_index?,byte_size}`（**不记 `path`/`video_path`/`content`**）；<br> `upload_subtitle` → `{language,format?,byte_size,overwrite_existing}`（**不记 `path`/`content`/`base64`**）。<br> `result_bytes`=返回 JSON 序列化字节数（可用于审计大结果，但**不构成内容泄露**）。鉴权失败不入库（BR-25）。记录写入策略：采用**有界批量缓冲 + 退出前 flush + 单条失败退化为同步直写**（BR-29），保证审计不因崩溃丢批<br>BR-27：**保留期**——默认保留 180 天，超期由后台定时清理（BR-34）；记录只读，不可由 Agent 经 MCP 查询（仅管理员 REST） |
+| **业务规则** | BR-26：**记录范围与脱敏**——每次 MCP `tools/call`（业务 5 tool）落一条：`api_key_id/tool/status/error_code/duration_ms/input_meta/result_bytes/client_ip/created_at`。`input_meta` 为 JSON，字段精确化：<br> `list_media_cards` → `{}`（无入参）；<br> `query_media_list` → `{media_type?,media_card_id?,query?,page?,limit?}`（query 标题本身可记，非正文）；<br> `query_media_subtitles` → `{media_id?,media_card_id?,include_internal?}`（`path` 不记，或记为 `<红action>` 化路径前缀）；<br> `fetch_subtitle` → `{is_internal,internal_index?,byte_size}`（**不记 `path`/`video_path`/`content`**）；<br> `upload_subtitle` → `{language,format?,byte_size,overwrite_existing}`（**不记 `path`/`content`/`base64`**）。<br> `result_bytes`=返回 JSON 序列化字节数（可用于审计大结果，但**不构成内容泄露**）。鉴权失败不入库（BR-25）。记录写入策略：采用**有界批量缓冲 + 退出前 flush + 单条失败退化为同步直写**（BR-29），保证审计不因崩溃丢批<br>BR-27：**保留期**——默认保留 180 天，超期由后台定时清理（BR-34）；记录只读，不可由 Agent 经 MCP 查询（仅管理员 REST） |
 | **数据说明表** | 入参：`api_key_id?`、`tool?`(`query_media_list` 等)、`status?`(`ok`/`error`/`timeout`)、`from`/`to`(DATETIME)、`page`/`limit`(缺省 20/1~200)<br>出参：记录数组 + `total/page/limit` |
 
 **数据实体 `mcp_call_records`**
@@ -339,7 +344,7 @@ UC-08 查看调用记录 ──<extend>──（记录来源）每次 MCP tools/
 |--------|------------|----------|----------|----------|------|
 | id | 主键 | BIGINT | ≥1 | 是 | |
 | api_key_id | 关联 Key | BIGINT | FK | 是 | 索引 |
-| tool | 工具名 | VARCHAR(50) | 4 个 tool | 是 | 索引 |
+| tool | 工具名 | VARCHAR(50) | 5 个业务 tool | 是 | 索引 |
 | status | 状态 | STRING | `ok`/`error`/`timeout` | 是 | |
 | error_code | 错误码 | STRING | `KEY_DISABLED`/`NOT_FOUND`/`FORBIDDEN`… | 否 | |
 | duration_ms | 耗时 | INT | ≥0 | 是 | |
@@ -349,6 +354,23 @@ UC-08 查看调用记录 ──<extend>──（记录来源）每次 MCP tools/
 | created_at | 调用时间 | DATETIME | — | 是 | 索引 |
 
 | **接口说明** | 管理 REST `GET /api/v1/mcp/api-keys/:id/records`（单 Key）与 `GET /api/v1/mcp/call-records`（跨 Key 汇总），JWT 保护（人通道）；不向 MCP（机器）开放 |
+|------------|----|
+
+### 3.9 UC-09 枚举媒体卡（确定查询范围）
+
+| 项目 | 内容 |
+|------|------|
+| **用例编号** | UC-09 |
+| **用例名称** | 枚举媒体卡 |
+| **参与者** | Agent |
+| **优先级** | 高 |
+| **前置条件** | 服务已启动；API Key 有效 |
+| **后置条件** | 无副作用（纯读 DB，不扫盘、不探测字幕）；本次调用落调用记录 |
+| **基本事件流** | 1. Agent 提交空参（无输入）<br>2. 读 `media_cards` 全表<br>3. 返回 `cards[]`：`id/name/media_type/archive_path/download_path/is_default/watch_directory` |
+| **备选事件流** | 1a. 无任何卡片：返回空数组 `cards:[]`（非错误） |
+| **业务规则** | BR-37：**范围可发现性**——Agent 在不确定目标所在卡片时，应先 `list_media_cards` 枚举卡，再决定 `query_media_list` 用**全部卡（省略/0）**还是**指定卡（>0）**，避免"只见默认卡/只见一张卡"的盲区。对齐 BR-02：本工具只读 `media_cards` 元数据，不涉及 `DownloadPath` 内容；`archive_path/download_path` 为绝对路径（供 Agent 后续 `query_media_subtitles`/`fetch_subtitle`/`upload_subtitle` 传参定位，命中卡片白名单即可放行） |
+| **数据说明表** | 入参：无<br>出参：`cards[]`：`id`(INT，卡片 ID，即 `media_card_id`)、`name`(STRING)、`media_type`(`movie`/`tv`)、`archive_path`(STRING)、`download_path`(STRING)、`is_default`(BOOLEAN)、`watch_directory`(BOOLEAN) |
+| **接口说明** | MCP tool `list_media_cards`（§4.1）；经 API Key 鉴权；落调用记录 |
 |------------|----|
 
 ---
@@ -424,10 +446,11 @@ Agent(持 Key)               MCP 网关                                         
 ```
 
 **工具注册清单（tools/list 契约，BR-20）**
-- **BR-20**：`tools/list` 返回且仅返回表内 5 个工具（4 业务 + `mcp_ping` 自测）；每个工具输入/输出 schema 与用例数据表一致；语言标记 IETF 风格（`en`/`zh-CN`/`zh-TW`/`ja`…），对齐 `pkg/parser`。
+- **BR-20**：`tools/list` 返回且仅返回表内 6 个工具（5 业务 + `mcp_ping` 自测）；每个工具输入/输出 schema 与用例数据表一致；语言标记 IETF 风格（`en`/`zh-CN`/`zh-TW`/`ja`…），对齐 `pkg/parser`。
 
 | MCP tool name | 对应用例 | 输入（必填加粗） | 输出 |
 |---|---|---|---|
+| `list_media_cards` | UC-09 | `{}` | `{cards:[{id,name,media_type,archive_path,download_path,is_default,watch_directory}]}` |
 | `query_media_list` | UC-01 | `media_type?`,`media_card_id?`,`query?`,`page?`,`limit?` | `{items,total,page,limit}` |
 | `query_media_subtitles` | UC-02 | **`media_id` 或 `path` 二选一**；`media_card_id?`,`include_internal?` | `{video_path,subtitles:[...]}`（季目录→多集） |
 | `fetch_subtitle` | UC-03 | **`path` 或（`video_path`+`internal_index`）二选一**；`media_card_id?` | §3.3 出参 |
@@ -435,13 +458,17 @@ Agent(持 Key)               MCP 网关                                         
 | `mcp_ping`（仅作连通性自测，管理员/配置校验用） | — | `{}` | `{ok:true,server_time,version}`（**不落调用记录**，BR-32） |
 
 > 语言标记 IETF 风格（`en`/`zh-CN`/`zh-TW`/`ja`…），对齐 `pkg/parser`。输入输出纯 JSON，保证各运行时可用。
-> **工具总数=5（含自测）；业务审计 tool=前 4 个**。`mcp_ping` 不读业务数据、不落记录，用于 §5.5 一键自测与 Agent 侧连通性排查。
+> `media_card_id` 语义统一：**省略或 0→全部卡；>0→指定卡（`list_media_cards` 先枚举）**，与 Web `GET /api/v1/media` 一致（BR-37）。
+> **工具总数=6（含自测）；业务审计 tool=前 5 个**。`mcp_ping` 不读业务数据、不落记录，用于 §5.5 一键自测与 Agent 侧连通性排查。
 
 ### 4.2 时序图（UC-05 全链路数据流转）
 
 ```
 Agent / Skill                    MCP Server / 服务层                 文件系统 / DB
      │                                  │                                 │
+     │ 0. list_media_cards()            │                                 │
+     │ ────────────────────────────────►│  media_cards 全表（只读）       │
+     │      ◄─── {cards:[{id,name,is_default,...}]} ─────────────────────│
      │ 1. query_media_list(type, query) │                                 │
      │ ────────────────────────────────►│  mediaRepo.List + groupMedias    │
      │                                  │────────────────────────────────►│
@@ -466,14 +493,14 @@ Agent / Skill                    MCP Server / 服务层                 文件�
      │                                  │                                 │
      │ 6. (复核) query_media_subtitles  │      ◄── 确认 zh-CN 已可见 ─────│
      │                                  │                                 │
-     （步骤 1~6 每次 tools/call 均经 API Key 鉴权 + 脱敏调用记录落库）
+     （步骤 0~6 每次 tools/call 均经 API Key 鉴权 + 脱敏调用记录落库）
 ```
 
 ### 4.3 并发与任务约束
 
 | 维度 | 约束 | 对应规则 |
 |------|------|----------|
-| 读取类（UC-01~03） | 无状态、可重复调用 | — |
+| 读取类（UC-01~03/UC-09） | 无状态、可重复调用 | — |
 | 写入类（UC-04） | 幂等（同名覆盖）；v0 无并发版本控制；同 Key 并发上传同名 → 最后写者生效 | BR-14/BR-36 |
 | 内嵌探测并发 | 单文件 ffprobe ≤2s；列表层禁止全库强 ffprobe；**单次 tool 调用内 ffprobe ≤16** | BR-03/BR-31 |
 | MCP 层并发上限 | 并发 tool 调用 = 8（超出排队）；ffprobe/ffmpeg 子进程数 ≤ 并发数（同一信号量） | BR-21/BR-31 |
@@ -621,7 +648,7 @@ MCP HTTP 请求(n)
 | 字幕格式 | 外挂 `srt/ass/ssa/sub/vtt`；内嵌 `subrip/ass/ssa/webvtt/pgs/dvd_subtitle`；图像字幕 `sup/sub` copy 语义 |
 | 编码 | 读取兼容 UTF-8/UTF-16/GBK/Big5（chardet+转码，BR-06）；输出一律 UTF-8 |
 | 平台 | Win/Linux/macOS；ffmpeg/ffprobe 在 PATH（既有前提） |
-| Agent 运行时 | MCP Streamable HTTP；纯 JSON 工具契约（BR-20）；5 tool（4 业务 + `mcp_ping` 自测） |
+| Agent 运行时 | MCP Streamable HTTP；纯 JSON 工具契约（BR-20）；6 tool（5 业务 + `mcp_ping` 自测） |
 
 ### 6.3 安全与隐私
 
@@ -655,7 +682,7 @@ MCP HTTP 请求(n)
 | V-3 | 内嵌 ass 抽取路径 | 内嵌 ass 抽取返回正确文本与 format | 单测（需 ffmpeg，缺则 skip） |
 | V-4 | 上传命名与扫描识别闭环 | 上传 `zh-CN` 后 parser/刷新识别出 `languages=[zh-CN]` | 单测命名断言 + 刷新后 UC-02 断言 |
 | V-5 | 路径安全回归 | 穿越/卡外路径全拒 | 单测 + 对照 `f27a2c2` 回归集 |
-| V-6 | MCP tools/list + call 契约 | 5 tool（4 业务 + `mcp_ping`）schema 与 §4.1 一致；JSON-RPC 往返 | `app/internal/mcp` 单测 + MCP Inspector |
+| V-6 | MCP tools/list + call 契约 | 6 tool（5 业务 + `mcp_ping`）schema 与 §4.1 一致；JSON-RPC 往返 | `app/internal/mcp` 单测 + MCP Inspector |
 | V-7 | 并发与超时 | 8 并发 ffprobe 不崩；抽取超时不悬挂 | 压测（可选） |
 | V-8 | API Key 生命周期 | 创建一次性明文；库中仅哈希；禁用→401 `KEY_DISABLED`；再启用→恢复 | Go 单测 `TestMCPAPIKeyLifecycle`（创建/禁用/启用/过期模拟） |
 | V-9 | 调用记录 | 每次 tools/call 落库（含 input_meta 脱敏断言：不含 content/path）；查询过滤正确 | Go 单测 `TestMCPCallRecords` |
@@ -818,10 +845,11 @@ Dr. Watson::华生医生
 | 人/机通道 | v0.2：§4.1"JWT 可豁免 API Key"表述含糊 | 明确**双通道隔离**：MCP=仅 API Key（机器）；管理 REST/Web=仅 JWT（人）；互不通用（BR-18a/BR-19）；人调试用一次性 Key（§5.4/§5.6） | 以 §4.1 为准 |
 | 字幕状态口径 | v0.2 BR-01/BR-03：`has_subtitle` 布尔 + "冷缓存兜底"冲突 | 引入三态 `subtitle_status: full/partial/none`；`partial` 不参与 `has_subtitle=true` 判定、不产出 `missing_subtitles` | 以 BR-03 为准 |
 | 工具契约 | v0.2：4 tool | 新增工具 5 `mcp_ping`（自测，不落记录 BR-32）；业务审计 tool 仍为前 4 | 以 §4.1 为准 |
+| 工具契约(媒体范围) | v0.3：6 tool 中 4 业务不区分媒体卡可发现性 | 新增 `list_media_cards`(UC-09)；`media_card_id` 省略/0→全部卡、>0→指定卡（BR-37）；业务审计 tool 为前 5 | 以 §4.1 为准 |
 | 记录脱敏粒度 | v0.2 BR-26：仅"不含正文" | 逐 tool 精确化 `input_meta` 字段（去 path/content/base64），`result_bytes`=JSON 字节数 | 以 BR-26 为准 |
 | 记录写入 | v0.2：异步批量，无崩溃语义 | 有界缓冲 + 退出前 flush + 失败退化同步直写（BR-29） | 以 BR-29 为准 |
 | 上传去重 | v0.2：默认覆盖，去重由 Skill | 明确服务端不强制，附 `overwrite_existing` 标记（BR-33） | 以 BR-33 为准 |
-| 媒体范围 | `/api/v1/media` 现行为 | MCP 列表默认仅取 MediaCard `ArchivePath`（BR-02） | 以本 PRD 为准 |
+| 媒体范围 | v0.3：MCP 列表省略/0→默认卡（与 `默认卡` 绑定，Agent 无法切换） | **默认/0→全部卡**（与 Web `GET /media` 一致）；`>0` 指定卡；先 `list_media_cards` 枚举（BR-37） | 以本 PRD 为准 |
 | 剧集聚合 | `GET /media` 季目录聚合卡片 | MCP 沿用聚合 + 季级字幕口径（BR-01/BR-03） | 以本 PRD 为准 |
 | 语言命名 | 既有 parser 顺序 | 上传 tool 显式 `language`，命名由服务端计算（BR-10） | 命名交给服务端 |
 | 翻译规范 | v0.1/v0.2：S 规则 | 全量对齐 `subtitle-translator-zh`（§8.2，BR-28）不变 | §8.2 覆盖 |
@@ -837,7 +865,8 @@ Dr. Watson::华生医生
 .agents/skills/bujic-subtitle/SKILL.md
 ├── name / description（触发词：给某影视补中文字幕 / 下载字幕翻译上传）
 ├── 前置：MCP 服务地址、API Key 获取与配置（Authorization: Bearer）、媒体库状态检查
-├── MCP 工具清单（4 业务 tool + mcp_ping 自测：语义一句话、输入必填/可选、输出要点）
+├── MCP 工具清单（5 业务 tool + mcp_ping 自测：语义一句话、输入必填/可选、输出要点）
+├── 查询范围裁决：先 list_media_cards 枚举 → 向用户确认「全部媒体库 or 某张卡」→ 定 media_card_id
 ├── 全链路流程（UC-05 步骤 1~6，含"已存在 zh-CN 则跳过" BR-14；服务端不强制去重 BR-33）
 ├── 翻译子任务（整体遵循 subtitle-translator-zh，§8.2）：
 │     ├── 硬规则（S-01~S-11）/ 分批与稳定性（S-12~S-18）
@@ -859,3 +888,5 @@ Dr. Watson::华生医生
 | v0.1 | 2026-09-05 | 初稿：仅 MCP Server / 仅 Agent 自行翻译 / 项目级 Skill / 外挂+内嵌全口径；UC-01~05 | — |
 | v0.2 | 2026-09-05 | 新增 R-06~09：①MCP API Key 生命周期管理（UC-06~08，创建/启停/调用记录，新增 2 实体与 REST）；②MCP 鉴权由静态 token 改为 API Key（§4.1/§6.3）；③翻译规范全量对齐 subtitle-translator-zh（§8.2 扩展为 S-01~S-18 + ERR + 自检，BR-28）；BR 扩至 01~28 | — |
 | v0.3 | 2026-09-05 | prd-reviewer 四维审核回填：①修复 BR-19 鉴权双通道逻辑洞（MCP=仅 API Key，管理=仅 JWT）；②BR-03 引入 `subtitle_status` 三态口径，消除"未探测被误报为无字幕"；③新增 BR-29~36（记录写入 flush、缓存加锁、单次 ffprobe≤16、mcp_ping 自测、上传去重边界、180d 清理分批事务、在途禁用边界、同 Key 并发语义）；④BR-26 `input_meta` 逐 tool 脱敏精确化；⑤新增工具 5 `mcp_ping` 与 §5.5/§5.6 一键自测/配置复制；⑥新增 §4.4 线程模型 + 技术选型（mcp-go/chardet/ticker/semaphore）；⑦新增 §6.6 交付物与 `.gitignore` 处置；⑧更新 §6.5 V-11~15、§8.3 一致性表 | — |
+| v0.4 | 2026-09-06 | 媒体范围可发现性修复（对应 Agent 实操"只见默认卡/无法切换"）：①新增 UC-09 + 工具 `list_media_cards`（枚举卡，读 `media_cards` 元数据，落审计 BR-37）；②`query_media_list` 范围语义修正——**省略/0→全部卡**（与 Web `GET /media` 对齐），>0→指定卡；③BR-26/tool 契约同步为 5 业务 tool + `mcp_ping`（BR-20）；④Skill 增加"先枚举卡→询问用户范围"流程 | — |
+| v0.4.1 | 2026-09-06 | `languages` 口径修正：BR-01 由"只列外挂语言"改为"外挂 ∪ 内嵌归一化语言"——修复真实场景"内嵌 zho/chi 中文字幕的剧集在 Agent 显示 `full` 但 `languages` 空"（Web 显示中文、Agent 却不显示）；`subtitle_status` 保持三态口径不变 | — |

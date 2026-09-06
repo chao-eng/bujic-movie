@@ -14,13 +14,14 @@ import (
 
 const (
 	toolPing           = "mcp_ping"
+	toolListMediaCards = "list_media_cards"
 	toolQueryMediaList = "query_media_list"
 	toolQueryMediaSubs = "query_media_subtitles"
 	toolFetchSubtitle  = "fetch_subtitle"
 	toolUploadSubtitle = "upload_subtitle"
 )
 
-// registerTools defines the five tools and their handlers. Each handler:
+// registerTools defines the tools and their handlers. Each handler:
 // 1) parses+validates arguments, 2) builds a redacted input_meta, 3) acquires
 // the concurrency semaphore, 4) calls the service, 5) records an audit entry.
 func registerTools(
@@ -33,11 +34,21 @@ func registerTools(
 		mcp.WithDescription("连通性/鉴权自测：返回服务端时间与版本，不读业务数据、不落调用记录。"),
 	), pingHandler)
 
+	server.AddTool(mcp.NewTool(toolListMediaCards,
+		mcp.WithDescription("枚举全部媒体卡（MediaCard）：返回每张卡的 id/name/media_type/archive_path/download_path/is_default/watch_directory。用于确定媒体库范围（media_card_id）；agent 应据此决定后续查询/操作落到哪张卡。"),
+	), callHandler(sem, rec, toolListMediaCards, func(ctx context.Context, req mcp.CallToolRequest, meta *inputMeta) (any, error) {
+		res, err := svc.ListMediaCards(ctx)
+		if err != nil {
+			return nil, err
+		}
+		return map[string]any{"cards": res}, nil
+	}))
+
 	server.AddTool(mcp.NewTool(toolQueryMediaList,
-		mcp.WithDescription("查询媒体库列表（含字幕状态）。返回每项的 media_id/title/type/path/has_subtitle/subtitle_status/languages/missing_subtitles。"),
+		mcp.WithDescription("查询媒体库列表（含字幕状态）。返回每项的 media_id/title/type/path/has_subtitle/subtitle_status/languages/missing_subtitles。不传 media_card_id 时范围=全部媒体卡。"),
 		mcp.WithString("media_type", mcp.Description("movie 或 tv；缺省全部")),
 		mcp.WithString("query", mcp.Description("标题模糊关键词，≤100 字符")),
-		mcp.WithNumber("media_card_id", mcp.Description("媒体库范围；缺省默认卡，0 表示全部")),
+		mcp.WithNumber("media_card_id", mcp.Description("媒体库范围：省略或 0=全部卡，>0=指定卡（先用 list_media_cards 枚举）")),
 		mcp.WithNumber("page", mcp.Description("页码，从 1 起；缺省 1")),
 		mcp.WithNumber("limit", mcp.Description("每页条数 1~200；缺省 50")),
 	), callHandler(sem, rec, toolQueryMediaList, func(ctx context.Context, req mcp.CallToolRequest, meta *inputMeta) (any, error) {
@@ -74,10 +85,10 @@ func registerTools(
 	}))
 
 	server.AddTool(mcp.NewTool(toolQueryMediaSubs,
-		mcp.WithDescription("查询单个媒体/视频的全部字幕（外挂 + 内嵌）。media_id 或 path 二选一；传季目录 path 返回该季各集。"),
+		mcp.WithDescription("查询单个媒体/视频的全部字幕（外挂 + 内嵌）。media_id 或 path 二选一；传季目录 path 返回该季各集。media_card_id 省略或 0=任意卡；>0=限定该卡。"),
 		mcp.WithNumber("media_id", mcp.Description("媒体记录 ID（medias.id）")),
 		mcp.WithString("path", mcp.Description("视频文件或季目录绝对路径")),
-		mcp.WithNumber("media_card_id", mcp.Description("媒体库范围")),
+		mcp.WithNumber("media_card_id", mcp.Description("媒体库范围：省略或 0=任意卡，>0=指定卡")),
 		mcp.WithBoolean("include_internal", mcp.Description("是否探测内嵌轨道；缺省 true")),
 	), callHandler(sem, rec, toolQueryMediaSubs, func(ctx context.Context, req mcp.CallToolRequest, meta *inputMeta) (any, error) {
 		var p struct {
@@ -109,11 +120,11 @@ func registerTools(
 	}))
 
 	server.AddTool(mcp.NewTool(toolFetchSubtitle,
-		mcp.WithDescription("获取一条字幕的内容。外挂用 path；内嵌用 video_path+internal_index。图像字幕返回 content_base64 与 is_image=true。"),
+		mcp.WithDescription("获取一条字幕的内容。外挂用 path；内嵌用 video_path+internal_index。图像字幕返回 content_base64 与 is_image=true。media_card_id 省略或 0=任意卡；>0=限定该卡。"),
 		mcp.WithString("path", mcp.Description("外挂字幕文件绝对路径")),
 		mcp.WithString("video_path", mcp.Description("视频绝对路径（内嵌轨道时用）")),
 		mcp.WithNumber("internal_index", mcp.Description("内嵌轨道序号")),
-		mcp.WithNumber("media_card_id", mcp.Description("媒体库范围")),
+		mcp.WithNumber("media_card_id", mcp.Description("媒体库范围：省略或 0=任意卡，>0=指定卡")),
 	), callHandler(sem, rec, toolFetchSubtitle, func(ctx context.Context, req mcp.CallToolRequest, meta *inputMeta) (any, error) {
 		var p struct {
 			Path          string `json:"path"`

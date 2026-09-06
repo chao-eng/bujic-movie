@@ -2,10 +2,12 @@ package service
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/bujic-movie/bujic-movie/internal/model/entity"
 	"github.com/bujic-movie/bujic-movie/internal/repository"
@@ -17,13 +19,16 @@ import (
 type agentHarness struct {
 	svc       SubtitleAgentService
 	mediaRepo repository.MediaRepository
+	cardRepo  repository.MediaCardRepository
 	card      *entity.MediaCard
 	archive   string
 }
 
 func setupSubtitleAgentHarness(t *testing.T) *agentHarness {
 	t.Helper()
-	db, err := gorm.Open(sqlite.Open("file::memory:?cache=shared"), &gorm.Config{})
+	db, err := gorm.Open(sqlite.Open(
+		fmt.Sprintf("file:agent-%d?mode=memory&cache=shared", time.Now().UnixNano()),
+	), &gorm.Config{})
 	if err != nil {
 		t.Fatalf("open sqlite: %v", err)
 	}
@@ -55,7 +60,25 @@ func setupSubtitleAgentHarness(t *testing.T) *agentHarness {
 	}
 
 	svc := NewSubtitleAgentService(mediaRepo, cardRepo, stg)
-	return &agentHarness{svc: svc, mediaRepo: mediaRepo, card: card, archive: archive}
+	return &agentHarness{svc: svc, mediaRepo: mediaRepo, cardRepo: cardRepo, card: card, archive: archive}
+}
+
+// addCard persists an additional media card whose archive dir already exists.
+func addCard(t *testing.T, h *agentHarness, name string, archivePath string) *entity.MediaCard {
+	t.Helper()
+	if err := os.MkdirAll(archivePath, 0755); err != nil {
+		t.Fatalf("mkdir %s: %v", archivePath, err)
+	}
+	card := &entity.MediaCard{
+		Name:         name,
+		ArchivePath:  archivePath,
+		DownloadPath: filepath.Join(filepath.Dir(archivePath), "downloads-"+name),
+		MediaType:    "tv",
+	}
+	if err := h.cardRepo.Create(card); err != nil {
+		t.Fatalf("create card %s: %v", name, err)
+	}
+	return card
 }
 
 func writeFile(t *testing.T, path, content string) string {
@@ -200,5 +223,78 @@ func TestAgentSubtitleFlowConcurrent(t *testing.T) {
 	}
 	for i := 0; i < 8; i++ {
 		<-done
+	}
+}
+
+// TestListMediaCards enumerates every card regardless of default flag.
+func TestListMediaCards(t *testing.T) {
+	h := setupSubtitleAgentHarness(t)
+	ctx := context.Background()
+
+	tvRoot := filepath.Join(filepath.Dir(h.archive), "tv")
+	addCard(t, h, "tv-archive", tvRoot)
+
+	cards, err := h.svc.ListMediaCards(ctx)
+	if err != nil {
+		t.Fatalf("ListMediaCards: %v", err)
+	}
+	if len(cards) != 2 {
+		t.Fatalf("expected 2 cards, got %d: %+v", len(cards), cards)
+	}
+	byName := map[string]MediaCardItem{}
+	for _, c := range cards {
+		byName[c.Name] = c
+	}
+	movies, ok := byName["movies"]
+	if !ok {
+		t.Fatalf("expected card 'movies', got %+v", cards)
+	}
+	if !movies.IsDefault {
+		t.Errorf("expected 'movies' is_default=true, got %+v", movies)
+	}
+	if movies.ArchivePath != h.archive {
+		t.Errorf("archive_path mismatch: %s != %s", movies.ArchivePath, h.archive)
+	}
+	if tv, ok := byName["tv-archive"]; !ok || tv.IsDefault {
+		t.Errorf("expected non-default 'tv-archive' card, got %+v", cards)
+	}
+}
+
+// TestAgentMultiCardScope: with media rows under two cards, no media_card_id
+// (or explicit 0) scans all cards; a specific id scopes to that card only.
+func TestAgentMultiCardScope(t *testing.T) {
+	h := setupSubtitleAgentHarness(t)
+	ctx := context.Background()
+
+	tvRoot := filepath.Join(filepath.Dir(h.archive), "tv")
+	cardB := addCard(t, h, "tv-archive", tvRoot)
+
+	movieA := writeFile(t, filepath.Join(h.archive, "Alpha (2020) [1080p].mkv"), "video")
+	addMovieRow(h, "Alpha (2020)", 2020, movieA)
+	movieB := writeFile(t, filepath.Join(tvRoot, "Bravo (2021) [1080p].mkv"), "video")
+	addMovieRow(h, "Bravo (2021)", 2021, movieB)
+
+	listAll, err := h.svc.QueryMediaList(ctx, MediaListRequest{})
+	if err != nil {
+		t.Fatalf("QueryMediaList(all): %v", err)
+	}
+	if listAll.Total != 2 {
+		t.Fatalf("expected 2 medias across all cards, got %d: %+v", listAll.Total, listAll.Items)
+	}
+
+	listZero, err := h.svc.QueryMediaList(ctx, MediaListRequest{MediaCardID: 0})
+	if err != nil {
+		t.Fatalf("QueryMediaList(0): %v", err)
+	}
+	if listZero.Total != 2 {
+		t.Fatalf("expected media_card_id=0 to scan all cards, got %d", listZero.Total)
+	}
+
+	listCardB, err := h.svc.QueryMediaList(ctx, MediaListRequest{MediaCardID: cardB.ID})
+	if err != nil {
+		t.Fatalf("QueryMediaList(cardB): %v", err)
+	}
+	if listCardB.Total != 1 || len(listCardB.Items) != 1 || listCardB.Items[0].Path != movieB {
+		t.Fatalf("expected only Bravo on card B, got %+v", listCardB.Items)
 	}
 }

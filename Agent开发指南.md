@@ -181,9 +181,9 @@ Vue 3 + Vite + TypeScript + shadcn-vue + Tailwind CSS v4 + Pinia + vue-router。
 | 文件 | 职责 |
 |------|------|
 | `internal/mcp/server.go` | Gateway：API Key 鉴权（仅 API Key，不回落 JWT，BR-18a/19）+ 转发给 mcp-go Streamable HTTP |
-| `internal/mcp/tools.go` | 5 个工具注册与 handler、input_meta 脱敏、信号量并发上限(8) |
+| `internal/mcp/tools.go` | 6 个工具注册与 handler、input_meta 脱敏、信号量并发上限(8) |
 | `internal/mcp/records.go` / `input_meta.go` | 调用记录有界缓冲（BR-29）与脱敏 input_meta（BR-26） |
-| `internal/service/subtitle_agent_service.go` | 4 个业务工具实现（列表/明细/获取/上传） |
+| `internal/service/subtitle_agent_service.go` | 5 个业务工具实现（枚举卡/列表/明细/获取/上传） |
 | `internal/service/mcp_api_key_service.go` | API Key 生命周期（创建哈希存证/启停/校验/记录查询/180d 清理） |
 | `internal/controller/mcp_api_key_controller.go` | 管理 REST（人通道，JWT） |
 | `internal/repository/mcp_api_key_repo.go`、`mcp_call_record_repo.go` | 持久化 |
@@ -192,7 +192,7 @@ Vue 3 + Vite + TypeScript + shadcn-vue + Tailwind CSS v4 + Pinia + vue-router。
 ### 8.2 端点与工具
 
 - MCP 端点：`{SERVER_URL}/api/v1/mcp`（仅 API Key；`SERVER_URL`=scheme://host:port 整体变量）。
-- 工具：`mcp_ping`（自测，不落记录）+ `query_media_list` / `query_media_subtitles` / `fetch_subtitle` / `upload_subtitle`。
+- 工具：`mcp_ping`（自测，不落记录）+ `list_media_cards` / `query_media_list` / `query_media_subtitles` / `fetch_subtitle` / `upload_subtitle`。`query_media_list` 的 `media_card_id` 省略或 0=全部卡，>0=指定卡。
 - 管理 REST（JWT，人通道）：`POST/GET /api/v1/mcp/api-keys`、`GET /:id`、`PUT /:id/enable|disable`、`GET /:id/records`、`GET /call-records`。
 
 ### 8.3 安全红线

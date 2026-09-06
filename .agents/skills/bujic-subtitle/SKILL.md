@@ -34,7 +34,7 @@ description: >-
       "type": "http",
       "url": "${SERVER_URL}/api/v1/mcp",   // SERVER_URL = 服务完整地址（scheme://host:port 整体变量），如 http://192.168.1.10:8080
       "headers": { "Authorization": "Bearer <API_KEY>" },
-      "toolNames": ["query_media_list","query_media_subtitles","fetch_subtitle","upload_subtitle"]
+      "toolNames": ["list_media_cards","query_media_list","query_media_subtitles","fetch_subtitle","upload_subtitle"]
     }
   }
 }
@@ -68,18 +68,20 @@ description: >-
 
 ### 1.2 媒体库前提
 
-- 存在至少一张媒体卡（归档媒体库 `ArchivePath`）。若 `query_media_list` 返回 `warn:"no media card"`，请告知用户先配置媒体卡。
+- 存在至少一张媒体卡（归档媒体库 `ArchivePath`）。若 `query_media_list` 返回空结果且 `list_media_cards` 返回 `cards:[]`，请告知用户先配置媒体卡。
 
-## 2. MCP 工具清单（5 个）
+## 2. MCP 工具清单（6 个）
 
 | 工具 | 用途 | 必填 | 可选 | 关键输出 |
 |------|------|------|------|----------|
 | `mcp_ping` | 连通性/鉴权自测 | — | — | `{ok,server_time,version}`（不落记录） |
-| `query_media_list` | 查询媒体库列表（含字幕状态） | — | `media_type`(movie/tv)、`media_card_id`、`query`、`page`、`limit` | `items[]` 含 `has_subtitle`/`subtitle_status`/`languages`/`missing_subtitles`/`path` |
+| `list_media_cards` | 枚举媒体卡（确定 `media_card_id` 范围） | — | — | `cards[]` 含 `id`/`name`/`media_type`/`archive_path`/`download_path`/`is_default` |
+| `query_media_list` | 查询媒体库列表（含字幕状态） | — | `media_type`(movie/tv)、`media_card_id`、`query`、`page`、`limit` | `items[]` 含 `has_subtitle`/`subtitle_status`/`languages`（外挂+内嵌归一化）/`missing_subtitles`/`path` |
 | `query_media_subtitles` | 查询单个媒体/视频的字幕明细 | `media_id` **或** `path` | `media_card_id`、`include_internal`(缺省 true) | `{video_path, subtitles[]}`；季目录 → 多集数组 |
 | `fetch_subtitle` | 获取字幕内容 | `path` **或**（`video_path`+`internal_index`） | `media_card_id` | `{content/content_base64,is_image,format,encoding,byte_size,language,name}` |
 | `upload_subtitle` | 上传字幕文件 | `video_path` | `subtitle_content`/`subtitle_base64`、`format`、`language` | `{path,message,overwrite_existing}` |
 
+- `media_card_id` 语义：**省略或 0→全部媒体卡；>0→只查指定那张卡**。范围拿不准时**先 `list_media_cards` 枚举**，再决定传哪个值。
 - 语言标记使用 IETF 风格：`en`/`zh-CN`/`zh-TW`/`ja`…
 - 输入输出均为纯 JSON；字幕正文经 `content`（文本）或 `content_base64`（原始字节）传递。
 
@@ -87,11 +89,21 @@ description: >-
 
 > 目标模式：某影视缺 `zh-CN` → 取英文字幕 → 翻译 → 上传为 `<videoBase>.zh-CN.<ext>`。
 
+### 步骤 0 — 确认媒体库查询范围
+
+开始业务查询前（mcp_ping 通过后），先调用 `list_media_cards` 拿到卡片清单；若卡片不止一张，**向用户询问**本次要处理「全部媒体库」还是「某一张卡」：
+
+- **全部媒体库**：后续 `query_media_list` 不传 `media_card_id`（或传 `0`）。
+- **某一张卡**：用该卡 `id` 作为后续 `query_media_list`/`query_media_subtitles`/… 的 `media_card_id`。
+
+> 若只有一张卡，可直接进入步骤 1，无需打扰用户。
+
 ### 步骤 1 — 定位目标并检查缺字幕状态
 
 调用 `query_media_list`：
 
-- 按需传 `media_type`、`query`（标题关键词）、`media_card_id`。
+- 按步骤 0 已确认的范围传参：全部卡 → 省略 `media_card_id`；指定卡 → 传该卡 `id`。
+- 其余按需传 `media_type`、`query`（标题关键词）、`page`/`limit`。
 - **先读 `subtitle_status`**（三态）：
   - `full`：字幕状态可信，可依据 `missing_subtitles` 决策；
   - `partial`：部分内嵌未探测，**不要**把 `missing_subtitles` 当作"确无字幕"；如需精确判断，对该项走 `query_media_subtitles`；
@@ -213,7 +225,8 @@ Dr. Watson::华生医生
 | 场景 | 处理 |
 |------|------|
 | `mcp_ping` 失败 | 告知用户：检查 endpoint、Key 是否 active、`Authorization` 头；不继续业务调用。 |
-| `query_media_list` 返回 `warn:"no media card"` | 请用户先配置媒体卡（Web UI「设置 → 媒体卡」）。 |
+| `list_media_cards` 返回 `cards:[]` | 请用户先配置媒体卡（Web UI「媒体卡 / 目录管理」）。 |
+| 有多张媒体卡且用户未指定范围 | 主动询问「全部媒体库 or 某张卡」；不要默认只查某一张。 |
 | `subtitle_status=partial` | 不能据此断定"确无字幕"；精确判断走 `query_media_subtitles`。 |
 | 目标已有 `zh-CN`（`full` 且含 zh-CN） | 默认跳过；用户明确要求覆盖才重翻上传。 |
 | 英文源为图像字幕（`is_image=true`） | 文本翻译不可行；告知用户，或经用户同意另取文本源；不硬翻。 |
@@ -227,22 +240,23 @@ Dr. Watson::华生医生
 
 **你**：
 1. `mcp_ping` → ok。
-2. `query_media_list`（`media_type: movie, query: Inception`）→
+2. `list_media_cards` → 单卡（或用户已确认范围，直接省略 `media_card_id`）。
+3. `query_media_list`（`media_type: movie, query: Inception`）→
    `items:[{ media_id:3, title:"Inception (2010)", path:"/media/Inception (2010)/Inception (2010) [1080p].mkv",
     has_subtitle:true, subtitle_status:"full", languages:["en"], missing_subtitles:["zh-CN"] }]`
    → 结论：有英文字幕、缺中文，可补。
-3. `query_media_subtitles`（`media_id:3`）→ 选中外挂 `Inception (2010) [1080p].en.srt`。
-4. `fetch_subtitle`（`path:".../Inception (2010) [1080p].en.srt"`）→ `content`（srt，UTF-8）。
-5. 翻译子任务：逐行译为简体中文 srt，自检清单全过。
-6. `upload_subtitle`（`video_path:"...mkv", content:<翻译>, language:"zh-CN", format:"srt"`）→
+4. `query_media_subtitles`（`media_id:3`）→ 选中外挂 `Inception (2010) [1080p].en.srt`。
+5. `fetch_subtitle`（`path:".../Inception (2010) [1080p].en.srt"`）→ `content`（srt，UTF-8）。
+6. 翻译子任务：逐行译为简体中文 srt，自检清单全过。
+7. `upload_subtitle`（`video_path:"...mkv", content:<翻译>, language:"zh-CN", format:"srt"`）→
    `{ path:"/media/Inception (2010)/Inception (2010) [1080p].zh-CN.srt", message:"字幕上传成功", overwrite_existing:false }`。
-7. 复核 `query_media_subtitles`（`media_id:3`）→ 确认 `zh-CN` 外挂可见。告知用户完成。
+8. 复核 `query_media_subtitles`（`media_id:3`）→ 确认 `zh-CN` 外挂可见。告知用户完成。
 
 ## 7. 术语与字段说明
 
 | 术语 | 含义 |
 |------|------|
-| MediaCard | 媒体库配置（归档目录 ArchivePath）；`media_card_id` 可缺省（默认卡） |
+| MediaCard | 媒体库配置（归档目录 ArchivePath）；`list_media_cards` 枚举；`media_card_id` 省略/0=全部卡，>0=指定卡 |
 | 外挂字幕 | 视频同目录 `<videoBase>.<lang>.<ext>` 字幕文件 |
 | 内嵌字幕 | 容器内 mux 的轨道，经 ffprobe/ffmpeg 探测/抽取；用 `internal_index` 定位 |
 | 图像字幕 | pgs/dvd_subtitle 位图轨道，无法文本翻译 |

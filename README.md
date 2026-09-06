@@ -141,6 +141,7 @@ Bujic Movie 通过内置的 MCP (Model Context Protocol) **Streamable HTTP** 端
       // 例如 http://192.168.1.10:8080 或 http://localhost:8080；/api/v1/mcp 为固定路径
       "headers": { "Authorization": "Bearer <API_KEY>" },
       "toolNames": [
+        "list_media_cards",       // 枚举媒体卡（确定查询范围）
         "query_media_list",       // 查询媒体库列表（含字幕状态）
         "query_media_subtitles",  // 查询单个媒体/视频的字幕明细
         "fetch_subtitle",         // 获取字幕内容（外挂 / 内嵌）
@@ -153,8 +154,9 @@ Bujic Movie 通过内置的 MCP (Model Context Protocol) **Streamable HTTP** 端
 
 - MCP 端点**仅接受 API Key 鉴权**（不接受网页登录 JWT）；管理 REST 与 Web UI 仅接受 JWT，两者互不通用。
 - 端点内置 `mcp_ping` 工具，可用于连通性与鉴权自测（不读业务数据、不计入调用记录）。
+- `query_media_list` 的 `media_card_id`：省略或 0 查**全部媒体卡**；>0 查指定卡（先用 `list_media_cards` 枚举）。
 - 对接 Agent 使用的配套 Skill 见仓库 `.agents/skills/bujic-subtitle/SKILL.md`（含完整工具编排流程与字幕翻译规范）。
-- 详细设计见 `doc/影视字幕Agent能力PRD.md`（v0.3，BR 权威来源）。
+- 详细设计见 `doc/影视字幕Agent能力PRD.md`（v0.4，BR 权威来源）。
 
 ---
 

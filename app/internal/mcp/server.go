@@ -32,7 +32,7 @@ type Gateway struct {
 	recWriter *recordWriter
 }
 
-// NewGateway builds the MCP gateway wiring the five tools to the underlying
+// NewGateway builds the MCP gateway wiring the tools to the underlying
 // SubtitleAgentService and the API-key/call-Record services.
 func NewGateway(
 	subtitleSvc service.SubtitleAgentService,

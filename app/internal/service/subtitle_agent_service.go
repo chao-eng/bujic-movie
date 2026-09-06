@@ -32,11 +32,17 @@ const (
 
 // SubtitleStatus is a per-media aggregation result used by QueryMediaList.
 type SubtitleStatus struct {
-	HasSubtitle       bool
-	ExternalLanguages []string
-	MissingSubtitles  []string // only meaningful when Status == full
-	Status            string   // full / partial / none
-	Warns             []string
+	HasSubtitle bool
+	// Languages holds the deduplicated, sorted set of subtitle languages that
+	// are visible for this media: external files PLUS internal tracks whose
+	// language tag normalized successfully. PRD BR-01 originally listed
+	// external-only, which made "full but languages empty" (media that only
+	// have internal subs) ambiguous vs the missing_subtitles decision. Keeping
+	// internal langs here makes the Agent's zh-CN decision self-consistent.
+	Languages        []string
+	MissingSubtitles []string // only meaningful when Status == full
+	Status           string   // full / partial / none
+	Warns            []string
 }
 
 // MediaListItem is one aggregated item in a query_media_list result.
@@ -69,6 +75,17 @@ type MediaListResult struct {
 	Total int             `json:"total"`
 	Page  int             `json:"page"`
 	Limit int             `json:"limit"`
+}
+
+// MediaCardItem is one media card (directory config) in a list_media_cards result.
+type MediaCardItem struct {
+	ID             uint   `json:"id"`
+	Name           string `json:"name"`
+	MediaType      string `json:"media_type"`
+	ArchivePath    string `json:"archive_path"`
+	DownloadPath   string `json:"download_path"`
+	IsDefault      bool   `json:"is_default"`
+	WatchDirectory bool   `json:"watch_directory"`
 }
 
 // EpisodeSubtitle is the detail returned for a video file (UC-02).
@@ -132,8 +149,9 @@ type probeCacheEntry struct {
 	Subs    []mediautil.SubtitleInfo
 }
 
-// SubtitleAgentService implements the four MCP media/subtitle business tools.
+// SubtitleAgentService implements the MCP media/subtitle business tools.
 type SubtitleAgentService interface {
+	ListMediaCards(ctx context.Context) ([]MediaCardItem, error)
 	QueryMediaList(ctx context.Context, req MediaListRequest) (*MediaListResult, error)
 	QuerySubtitles(ctx context.Context, req QuerySubtitlesRequest) ([]VideoSubtitleDetail, error)
 	FetchSubtitle(ctx context.Context, req FetchSubtitleRequest) (*FetchSubtitleResult, error)
@@ -162,20 +180,16 @@ func NewSubtitleAgentService(
 	}
 }
 
-// resolveCard returns the card used as scope, or nil + "" for "all cards".
-// Defaults to the default card when the request has no explicit ID.
+// resolveCard resolves an explicit media card scope (cardID > 0). A zero or
+// absent ID means "all cards": scope is unbounded (no path prefix). The MCP
+// query tools default to all cards so an Agent always sees the whole library.
 func (s *subtitleAgentService) resolveCard(cardID uint) (*entity.MediaCard, string, error) {
-	if cardID != 0 {
-		card, err := s.mediaCardRepo.GetByID(cardID)
-		if err != nil {
-			return nil, "", fmt.Errorf("media_card_id not found: %d", cardID)
-		}
-		return card, card.ArchivePath, nil
-	}
-	card, err := s.mediaCardRepo.GetDefault()
-	if err != nil {
-		// No default card: fall back to scanning all cards (empty path prefix).
+	if cardID == 0 {
 		return nil, "", nil
+	}
+	card, err := s.mediaCardRepo.GetByID(cardID)
+	if err != nil {
+		return nil, "", fmt.Errorf("media_card_id not found: %d", cardID)
 	}
 	return card, card.ArchivePath, nil
 }
@@ -191,6 +205,29 @@ func (s *subtitleAgentService) pathAllowed(p string) bool {
 		return false
 	}
 	return mediautil.CardAllow(p, cards, false)
+}
+
+// ---- list_media_cards ----
+
+func (s *subtitleAgentService) ListMediaCards(ctx context.Context) ([]MediaCardItem, error) {
+	cards, err := s.mediaCardRepo.List()
+	if err != nil {
+		return nil, err
+	}
+	items := make([]MediaCardItem, 0, len(cards))
+	for i := range cards {
+		c := &cards[i]
+		items = append(items, MediaCardItem{
+			ID:             c.ID,
+			Name:           c.Name,
+			MediaType:      c.MediaType,
+			ArchivePath:    c.ArchivePath,
+			DownloadPath:   c.DownloadPath,
+			IsDefault:      c.IsDefault,
+			WatchDirectory: c.WatchDirectory,
+		})
+	}
+	return items, nil
 }
 
 // ---- query_media_list (UC-01) ----
@@ -267,7 +304,7 @@ func (s *subtitleAgentService) QueryMediaList(ctx context.Context, req MediaList
 			sub := s.scanVideoSubtitles(ctx, g.Path)
 			item.HasSubtitle = sub.HasSubtitle
 			item.SubtitleStatus = sub.Status
-			item.Languages = sub.ExternalLanguages
+			item.Languages = sub.Languages
 			item.MissingSubtitles = sub.MissingSubtitles
 			item.Warns = sub.Warns
 		} else {
@@ -275,7 +312,7 @@ func (s *subtitleAgentService) QueryMediaList(ctx context.Context, req MediaList
 			sub := s.scanDirSubtitles(ctx, g.Path)
 			item.HasSubtitle = sub.HasSubtitle
 			item.SubtitleStatus = sub.Status
-			item.Languages = sub.ExternalLanguages
+			item.Languages = sub.Languages
 			item.MissingSubtitles = sub.MissingSubtitles
 			item.Warns = sub.Warns
 		}
@@ -286,12 +323,14 @@ func (s *subtitleAgentService) QueryMediaList(ctx context.Context, req MediaList
 }
 
 // scanVideoSubtitles computes external langs (cheap) and optional internal
-// (probe via cache) for one video file.
+// (probe via cache) for one video file. Languages = union of external subtitle
+// file languages and normalized internal-track languages, so a media whose only
+// subtitles are internal (e.g. muxed chi/zh track) still surfaces languages.
 func (s *subtitleAgentService) scanVideoSubtitles(ctx context.Context, videoPath string) SubtitleStatus {
 	res := SubtitleStatus{Status: SubtitleStatusNone}
 	external := mediautil.ExternalSubtitlesForVideo(videoPath, s.storage)
-	langs := make(map[string]bool)      // external-only languages (IETF)
-	hasInternalZHCN := false            // normalized internal-track language contains zh-CN
+	langs := make(map[string]bool) // union of external + internal normalized languages (IETF)
+	hasInternalZHCN := false       // normalized internal-track language contains zh-CN
 
 	for _, sub := range external {
 		if sub.Language != "" && sub.Language != "unknown" {
@@ -304,7 +343,12 @@ func (s *subtitleAgentService) scanVideoSubtitles(ctx context.Context, videoPath
 	if ok && len(internal) > 0 {
 		res.HasSubtitle = true
 		for _, sub := range internal {
-			if mediautil.NormalizeSubtitleLang(sub.Language) == "zh-CN" {
+			lang := sub.Language
+			if lang == "" || lang == "unknown" {
+				continue
+			}
+			langs[lang] = true
+			if lang == "zh-CN" {
 				hasInternalZHCN = true
 			}
 		}
@@ -313,9 +357,9 @@ func (s *subtitleAgentService) scanVideoSubtitles(ctx context.Context, videoPath
 		res.HasSubtitle = true
 	}
 	for l := range langs {
-		res.ExternalLanguages = append(res.ExternalLanguages, l)
+		res.Languages = append(res.Languages, l)
 	}
-	sort.Strings(res.ExternalLanguages)
+	sort.Strings(res.Languages)
 
 	if !ok {
 		// could not confirm internal (cold/large) -> partial only if we relied on
@@ -342,14 +386,14 @@ func (s *subtitleAgentService) scanVideoSubtitles(ctx context.Context, videoPath
 }
 
 func (s *subtitleAgentService) scanDirSubtitles(ctx context.Context, dir string) SubtitleStatus {
-	// Aggregate external langs across all video files in the season dir.
+	// Aggregate external + internal langs across all video files in the season dir.
 	videos, err := fileutil.FindFiles(dir, fileutil.IsVideo)
 	if err != nil {
 		return SubtitleStatus{Status: SubtitleStatusNone, Warns: []string{"unable to list dir: " + err.Error()}}
 	}
 
 	res := SubtitleStatus{Status: SubtitleStatusNone}
-	extLangs := make(map[string]bool)
+	langs := make(map[string]bool)
 	anyInternal := false
 	anyExternal := false
 	hasInternalZHCN := false
@@ -359,7 +403,7 @@ func (s *subtitleAgentService) scanDirSubtitles(ctx context.Context, dir string)
 		for _, sub := range ext {
 			anyExternal = true
 			if sub.Language != "" && sub.Language != "unknown" {
-				extLangs[sub.Language] = true
+				langs[sub.Language] = true
 			}
 		}
 		if len(videos) <= 16 { // BR-31: bounded probing for season aggregate
@@ -367,7 +411,12 @@ func (s *subtitleAgentService) scanDirSubtitles(ctx context.Context, dir string)
 			if ok && len(internal) > 0 {
 				anyInternal = true
 				for _, sub := range internal {
-					if mediautil.NormalizeSubtitleLang(sub.Language) == "zh-CN" {
+					lang := sub.Language
+					if lang == "" || lang == "unknown" {
+						continue
+					}
+					langs[lang] = true
+					if lang == "zh-CN" {
 						hasInternalZHCN = true
 					}
 				}
@@ -376,13 +425,13 @@ func (s *subtitleAgentService) scanDirSubtitles(ctx context.Context, dir string)
 	}
 
 	res.HasSubtitle = anyExternal || anyInternal
-	for l := range extLangs {
-		res.ExternalLanguages = append(res.ExternalLanguages, l)
+	for l := range langs {
+		res.Languages = append(res.Languages, l)
 	}
-	sort.Strings(res.ExternalLanguages)
+	sort.Strings(res.Languages)
 	res.Status = SubtitleStatusFull
 
-	hasZHCN := extLangs["zh-CN"] || hasInternalZHCN
+	hasZHCN := langs["zh-CN"] || hasInternalZHCN
 	if res.Status == SubtitleStatusFull && !hasZHCN {
 		res.MissingSubtitles = append(res.MissingSubtitles, "zh-CN")
 	}

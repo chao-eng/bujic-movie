@@ -70,6 +70,9 @@ func TestAgentSubtitleFlowInternalZHCN(t *testing.T) {
 	if !item.HasSubtitle {
 		t.Errorf("expected has_subtitle=true for video with internal zh track")
 	}
+	if !containsStr(item.Languages, "zh-CN") {
+		t.Errorf("expected languages to include zh-CN from muxed internal track, got %v", item.Languages)
+	}
 	if containsStr(item.MissingSubtitles, "zh-CN") {
 		t.Errorf("expected NO missing zh-CN for internal Chinese track, got missing=%v", item.MissingSubtitles)
 	}
