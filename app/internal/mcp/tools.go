@@ -116,7 +116,7 @@ func registerTools(
 		if err != nil {
 			return nil, err
 		}
-		return res, nil
+		return map[string]any{"videos": res}, nil
 	}))
 
 	server.AddTool(mcp.NewTool(toolFetchSubtitle,

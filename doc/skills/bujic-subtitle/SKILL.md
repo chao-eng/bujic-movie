@@ -77,7 +77,7 @@ description: >-
 | `mcp_ping` | 连通性/鉴权自测 | — | — | `{ok,server_time,version}`（不落记录） |
 | `list_media_cards` | 枚举媒体卡（确定 `media_card_id` 范围） | — | — | `cards[]` 含 `id`/`name`/`media_type`/`archive_path`/`download_path`/`is_default` |
 | `query_media_list` | 查询媒体库列表（含字幕状态） | — | `media_type`(movie/tv)、`media_card_id`、`query`、`page`、`limit` | `items[]` 含 `has_subtitle`/`subtitle_status`/`languages`（外挂+内嵌归一化）/`missing_subtitles`/`path` |
-| `query_media_subtitles` | 查询单个媒体/视频的字幕明细 | `media_id` **或** `path` | `media_card_id`、`include_internal`(缺省 true) | `{video_path, subtitles[]}`；季目录 → 多集数组 |
+| `query_media_subtitles` | 查询单个媒体/视频的字幕明细 | `media_id` **或** `path` | `media_card_id`、`include_internal`(缺省 true) | `{videos:[{video_path, subtitles[]}]}`；季目录 → 多集 |
 | `fetch_subtitle` | 获取字幕内容 | `path` **或**（`video_path`+`internal_index`） | `media_card_id` | `{content/content_base64,is_image,format,encoding,byte_size,language,name}` |
 | `upload_subtitle` | 上传字幕文件 | `video_path` | `subtitle_content`/`subtitle_base64`、`format`、`language` | `{path,message,overwrite_existing}` |
 

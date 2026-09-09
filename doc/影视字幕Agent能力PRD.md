@@ -452,7 +452,7 @@ Agent(持 Key)               MCP 网关                                         
 |---|---|---|---|
 | `list_media_cards` | UC-09 | `{}` | `{cards:[{id,name,media_type,archive_path,download_path,is_default,watch_directory}]}` |
 | `query_media_list` | UC-01 | `media_type?`,`media_card_id?`,`query?`,`page?`,`limit?` | `{items,total,page,limit}` |
-| `query_media_subtitles` | UC-02 | **`media_id` 或 `path` 二选一**；`media_card_id?`,`include_internal?` | `{video_path,subtitles:[...]}`（季目录→多集） |
+| `query_media_subtitles` | UC-02 | **`media_id` 或 `path` 二选一**；`media_card_id?`,`include_internal?` | `{videos:[{video_path,subtitles:[...]}]}`（季目录→多集） |
 | `fetch_subtitle` | UC-03 | **`path` 或（`video_path`+`internal_index`）二选一**；`media_card_id?` | §3.3 出参 |
 | `upload_subtitle` | UC-04 | **`video_path`**；`subtitle_content?`/`subtitle_base64?`；`format?`,`language` | `{path,message}` |
 | `mcp_ping`（仅作连通性自测，管理员/配置校验用） | — | `{}` | `{ok:true,server_time,version}`（**不落调用记录**，BR-32） |
@@ -570,13 +570,14 @@ MCP HTTP 请求(n)
 
 工具 2：query_media_subtitles
 输入：{ "media_id": 3 }
-输出：{ "video_path": "/media/...mkv",
-  "subtitles": [
-    { "type": "external", "name": "Inception (2010) [1080p].en.srt",
-      "language": "en", "format": "srt",
-      "path": "/media/.../Inception (2010) [1080p].en.srt" },
-    { "type": "internal", "name": "subrip", "language": "eng",
-      "format": "srt", "index": 2 } ] }
+输出：{ "videos": [
+  { "video_path": "/media/...mkv",
+    "subtitles": [
+      { "type": "external", "name": "Inception (2010) [1080p].en.srt",
+        "language": "en", "format": "srt",
+        "path": "/media/.../Inception (2010) [1080p].en.srt" },
+      { "type": "internal", "name": "subrip", "language": "eng",
+        "format": "srt", "index": 2 } ] } ] }
 
 工具 3：fetch_subtitle
 输入：{ "path": "/media/.../Inception (2010) [1080p].en.srt" }
