@@ -37,7 +37,7 @@
 | `app/pkg/` | 可复用包：`tmdb`、`nfo`、`parser`、`fileutil`、`mediainfo`、`sat`、`logger`、`response`、`notify`、`mediaserver` |
 | `app/embed.go` | `//go:embed dist` 嵌入已构建的前端 |
 | `app/web/` | Vue 前端工程 |
-| `.agents/skills/` | Agent 技能（如 `bujic-subtitle`，见第 8 节） |
+| `skills/` | Agent 技能目录（唯一副本 `bujic-subtitle`，见第 8 节；本地私有技能不提交） |
 | `doc/` | 设计/PRD/任务文档（中文命名，见第 10 节） |
 
 ---
@@ -200,7 +200,7 @@ Vue 3 + Vite + TypeScript + shadcn-vue + Tailwind CSS v4 + Pinia + vue-router。
 - MCP 端点**绝不接受 JWT**；管理 REST/Web **绝不接受 API Key**（双通道隔离）。
 - Key 只存 `盐:哈希`，明文仅创建响应返回一次。
 - 调用记录 `input_meta` 必须脱敏（不含 content/base64/原始 path）。
-- Agent 交互 Skill：`.agents/skills/bujic-subtitle/SKILL.md`（工具编排 + 字幕翻译规范，对齐 `subtitle-translator-zh`）。
+- Agent 交互 Skill：`skills/bujic-subtitle/SKILL.md`（工具编排 + 字幕翻译规范，对齐 `subtitle-translator-zh`）。
 
 ---
 

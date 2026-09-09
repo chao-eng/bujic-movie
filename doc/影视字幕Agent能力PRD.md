@@ -12,7 +12,7 @@
 | **版本** | v0.3（prd-reviewer 四维审核回填版） |
 | **日期** | 2026-09-05 |
 | **状态** | Draft — v0.3（已回填四维审核结论；仍可在实施前再评审） |
-| **适用范围** | `app/`（Go 后端）、`app/cmd/mcp/`（独立 MCP 进程）、`.agents/skills/bujic-subtitle/`（Agent Skill） |
+| **适用范围** | `app/`（Go 后端）、`app/cmd/mcp/`（独立 MCP 进程）、`skills/bujic-subtitle/`（Agent Skill，唯一副本） |
 | **关联文档** | `doc/项目架构设计.md`、`doc/开发任务执行计划.md`、`AGENTS.md` |
 | **外部依赖 Skill** | `subtitle-translator-zh`（本 PRD 翻译规范的方法论来源，MIT 溯源见 §8.2） |
 
@@ -74,7 +74,7 @@
 | **MCP Server（新增）** | MCP Streamable HTTP 暴露 5 个业务 tool + `mcp_ping`；鉴权 + 调用记录落库 | `app/internal/mcp/`（内嵌 handler）；`app/cmd/mcp/main.go`（独立进程） |
 | **MCP API Key 管理（新增）** | 创建/启用/禁用 API Key、调用记录查询 | `service/mcp_api_key_service.go`、`repository/mcp_api_key_repo.go` + `mcp_call_record_repo.go`、`controller/mcp_api_key_controller.go` |
 | **数据实体（新增）** | `mcp_api_keys`、`mcp_call_records` 两表（AutoMigrate） | `app/internal/model/entity/` |
-| **Agent Skill（新增）** | 固化 MCP 编排 + 字幕翻译规范（对齐 `subtitle-translator-zh`） | `.agents/skills/bujic-subtitle/SKILL.md` |
+| **Agent Skill（新增）** | 固化 MCP 编排 + 字幕翻译规范（对齐 `subtitle-translator-zh`） | `skills/bujic-subtitle/SKILL.md` |
 | **Web UI** | 设置页新增 **MCP/API Key 管理**区块（§5.4） | `app/web/` |
 
 ---
@@ -622,7 +622,7 @@ MCP HTTP 请求(n)
 }
 ```
 
-- 「复制 Skill」按钮：给出本仓库 `.agents/skills/bujic-subtitle/` 路径与 opencode/Claude Code 引用说明（Skill 落盘与 `.gitignore` 处理见 §6.6 交付物）。
+- 「复制 Skill」按钮：给出本仓库 `skills/bujic-subtitle/` 路径与 opencode/Claude Code 引用说明（Skill 落盘与 `.gitignore` 处理见 §6.6 交付物）。
 
 ---
 
@@ -696,10 +696,8 @@ MCP HTTP 请求(n)
 
 ### 6.6 交付物与仓库约束（审核回填）
 
-- **Skill 落盘冲突**：仓库 `.gitignore` 含 `.agents/`（既有约定，`AGENTS.md` 亦如此）；本 PRD 声称"Skill 仓库内提交"与 git 忽略冲突。处置二选一（实施时锁定其一）：
-  1. **保留 `.agents/` 忽略**，Skill 作为文档化交付物提交到 `doc/` 引用 + 由部署脚本/README 安装到用户 `~/.agents/skills/bujic-subtitle`；
-  2. 若确需进仓库，新增 `.gitignore` 例外 `!.agents/skills/bujic-subtitle/`（副作用：其他 `.agents/` 内容仍忽略）。
-- 交付物清单：MCP 内嵌端点 + 管理 REST + `app/cmd/mcp/main.go` + Skill（`.agents/skills/bujic-subtitle/SKILL.md`）+ 迁移（`mcp_api_keys`、`mcp_call_records` AutoMigrate）。
+- **Skill 落盘（已锁定）**：Skill 唯一副本入库于仓库根级 `skills/bujic-subtitle/SKILL.md`（不在 `.agents/` 与 `doc/` 重复）。`.gitignore` 全文忽略 `.agents/` 与 `skills/*`，仅例外 `!skills/bujic-subtitle/`；其余本地私有技能（如 UI 美学 `frontend-ui-ux`）一律不提交。安装/引用以 `skills/bujic-subtitle/` 为唯一来源，防止多副本漂移。
+- 交付物清单：MCP 内嵌端点 + 管理 REST + `app/cmd/mcp/main.go` + Skill（`skills/bujic-subtitle/SKILL.md`）+ 迁移（`mcp_api_keys`、`mcp_call_records` AutoMigrate）。
 
 ---
 
@@ -766,7 +764,7 @@ MCP HTTP 请求(n)
 
 ### 8.2 字幕翻译规范（翻译子任务必须遵循；对齐 `subtitle-translator-zh`）
 
-> **方法论来源与许可**：本节是 `subtitle-translator-zh` Skill（其内核提炼自 machinewrapped/llm-subtrans 与 gnehs/subtitle-translator-electron，均为 MIT 许可，保留原作者署名）的落地要求。实际交付的 `.agents/skills/bujic-subtitle/SKILL.md` 中的翻译子任务须内嵌本规范（可整体唤起 `subtitle-translator-zh` 执行）。服务端不校验语义，是否符合本规范由交付自检（§8.2.6）保证。
+> **方法论来源与许可**：本节是 `subtitle-translator-zh` Skill（其内核提炼自 machinewrapped/llm-subtrans 与 gnehs/subtitle-translator-electron，均为 MIT 许可，保留原作者署名）的落地要求。实际交付的 `skills/bujic-subtitle/SKILL.md` 中的翻译子任务须内嵌本规范（可整体唤起 `subtitle-translator-zh` 执行）。服务端不校验语义，是否符合本规范由交付自检（§8.2.6）保证。
 
 #### 8.2.1 身份与硬规则（S 规则）
 
@@ -860,10 +858,10 @@ Dr. Watson::华生医生
 
 ## 附：Skill 文件（交付物）概要结构
 
-> 交付 `.agents/skills/bujic-subtitle/SKILL.md`。本 PRD 定义其结构与本 PRD 对接点。
+> 交付 `skills/bujic-subtitle/SKILL.md`。本 PRD 定义其结构与本 PRD 对接点。
 
 ```
-.agents/skills/bujic-subtitle/SKILL.md
+skills/bujic-subtitle/SKILL.md
 ├── name / description（触发词：给某影视补中文字幕 / 下载字幕翻译上传）
 ├── 前置：MCP 服务地址、API Key 获取与配置（Authorization: Bearer）、媒体库状态检查
 ├── MCP 工具清单（5 业务 tool + mcp_ping 自测：语义一句话、输入必填/可选、输出要点）

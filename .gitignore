@@ -13,11 +13,10 @@ Thumbs.db
 
 # 2. Project References & Agent directories
 reference/
-# .agents/ 下其他内容保持忽略，仅放行需入库的 bujic-subtitle Skill（见 doc/影视字幕Agent能力PRD.md v0.3 §6.6）
-.agents/*
-!.agents/skills/
-.agents/skills/*
-!.agents/skills/bujic-subtitle/
+.agents/
+# skills/ 为项目根级技能目录，仅放行需入库的 bujic-subtitle Skill（唯一副本，见 doc/影视字幕Agent能力PRD.md v0.3 §6.6）
+skills/*
+!skills/bujic-subtitle/
 
 # 3. Editor & IDE directories
 .vscode/
