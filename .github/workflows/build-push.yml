@@ -1,9 +1,20 @@
 name: Build and Push Docker Image to Aliyun ACR
 
+# 只支持手动触发：不再随 push 自动构建镜像。
+# 需要发布时到 Actions 页面选中本工作流，点「Run workflow」。
 on:
-  push:
-    branches:
-      - master
+  workflow_dispatch:
+    inputs:
+      platforms:
+        description: '构建的镜像架构（多架构用英文逗号分隔）'
+        required: false
+        default: 'linux/amd64,linux/arm64'
+        type: string
+      push_latest:
+        description: '是否同时打上 latest 标签'
+        required: false
+        default: true
+        type: boolean
 
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
@@ -25,11 +36,32 @@ jobs:
         uses: docker/setup-buildx-action@v3
 
       # 生成日期版本号（采用北京时区 Asia/Shanghai，防止 UTC 时差导致日期不准）
+      # 同时整理镜像标签：latest 是否发布由手动触发的开关决定。
       - name: Get Current Date Tag
         id: get-date
         run: |
           echo "tag=$(TZ=Asia/Shanghai date +'%Y%m%d-%H%M%S')" >> $GITHUB_OUTPUT
           echo "date_only=$(TZ=Asia/Shanghai date +'%Y%m%d')" >> $GITHUB_OUTPUT
+
+          # 空行会被 build-push-action 当成非法标签，所以标签列表在脚本里拼好。
+          IMAGE="${ALIYUN_REGISTRY}/${ALIYUN_NAMESPACE}/${ALIYUN_REPOSITORY}"
+          {
+            echo "${IMAGE}:$(TZ=Asia/Shanghai date +'%Y%m%d-%H%M%S')"
+            echo "${IMAGE}:$(TZ=Asia/Shanghai date +'%Y%m%d')"
+            if [ "${PUSH_LATEST}" = "true" ]; then
+              echo "${IMAGE}:latest"
+            fi
+          } > /tmp/image-tags.txt
+          {
+            echo "tags<<EOF"
+            cat /tmp/image-tags.txt
+            echo "EOF"
+          } >> $GITHUB_OUTPUT
+        env:
+          ALIYUN_REGISTRY: ${{ secrets.ALIYUN_REGISTRY }}
+          ALIYUN_NAMESPACE: ${{ secrets.ALIYUN_NAMESPACE }}
+          ALIYUN_REPOSITORY: ${{ secrets.ALIYUN_REPOSITORY }}
+          PUSH_LATEST: ${{ inputs.push_latest }}
 
       # 登录到阿里云容器镜像服务 (ACR)
       - name: Log in to Aliyun Container Registry
@@ -46,16 +78,23 @@ jobs:
           context: ./app
           file: ./app/deployments/Dockerfile
           push: true
-          # 显式指定构建多平台架构镜像，支持 AMD64 (x86_64) 和 ARM64 (Apple M系列/树莓派/ARM云服务器等)
-          platforms: linux/amd64,linux/arm64
-          # 同时发布三个标签：具体分秒时间戳、日期和最新版（latest）
-          tags: |
-            ${{ secrets.ALIYUN_REGISTRY }}/${{ secrets.ALIYUN_NAMESPACE }}/${{ secrets.ALIYUN_REPOSITORY }}:${{ steps.get-date.outputs.tag }}
-            ${{ secrets.ALIYUN_REGISTRY }}/${{ secrets.ALIYUN_NAMESPACE }}/${{ secrets.ALIYUN_REPOSITORY }}:${{ steps.get-date.outputs.date_only }}
-            ${{ secrets.ALIYUN_REGISTRY }}/${{ secrets.ALIYUN_NAMESPACE }}/${{ secrets.ALIYUN_REPOSITORY }}:latest
+          # 手动触发时可在「Run workflow」里改架构，默认与之前一致
+          platforms: ${{ inputs.platforms }}
+          # 标签由上一步拼好：分秒时间戳、日期，以及（可选）latest
+          tags: ${{ steps.get-date.outputs.tags }}
           # 启用 GitHub Actions 缓存，加速后续构建
           cache-from: type=gha
           cache-to: type=gha,mode=max
           # 阿里云 ACR 不支持 OCI 附加的 provenance/sbom 清单，需关闭避免推送被拒
           provenance: false
           sbom: false
+
+      # 在 Actions 运行页打印镜像地址，方便直接复制去部署
+      - name: Show Image Tags
+        run: |
+          echo "### 已推送镜像" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
+          cat /tmp/image-tags.txt >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
+          echo "架构：${{ inputs.platforms }}" >> $GITHUB_STEP_SUMMARY
