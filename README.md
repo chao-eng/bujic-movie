@@ -230,7 +230,7 @@ Bujic Movie 通过内置的 MCP (Model Context Protocol) **Streamable HTTP** 端
 | 文档 | 说明 |
 | :--- | :--- |
 | [`doc/文档索引.md`](doc/文档索引.md) | 全部需求 / 设计 / 测试文档的分类索引 |
-| [`Agent开发指南.md`](Agent开发指南.md) | 面向编码 Agent 的仓库导览、架构要点与改动约定 |
+| [`AGENTS.md`](AGENTS.md) | 面向编码 Agent 的仓库导览、架构要点、改动约定与发版经验 |
 | [`doc/搜索下载能力/01-需求文档.md`](doc/搜索下载能力/01-需求文档.md) | 搜索下载能力的 PRD（业务规则权威来源） |
 | [`doc/字幕Agent能力/需求文档.md`](doc/字幕Agent能力/需求文档.md) | MCP / 字幕能力 PRD |
 
