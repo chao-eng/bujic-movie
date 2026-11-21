@@ -3,16 +3,19 @@ package router
 import (
 	"io/fs"
 	"net/http"
+	"strings"
 
 	bujicmovie "github.com/bujic-movie/bujic-movie"
 	"github.com/bujic-movie/bujic-movie/internal/config"
 	"github.com/bujic-movie/bujic-movie/internal/controller"
+	internalcrypto "github.com/bujic-movie/bujic-movie/internal/crypto"
 	"github.com/bujic-movie/bujic-movie/internal/db"
 	"github.com/bujic-movie/bujic-movie/internal/mcp"
 	"github.com/bujic-movie/bujic-movie/internal/middleware"
 	"github.com/bujic-movie/bujic-movie/internal/model/entity"
 	"github.com/bujic-movie/bujic-movie/internal/repository"
 	"github.com/bujic-movie/bujic-movie/internal/service"
+	"github.com/bujic-movie/bujic-movie/internal/service/httpclient"
 	"github.com/bujic-movie/bujic-movie/internal/storage/local"
 	"github.com/bujic-movie/bujic-movie/pkg/logger"
 	"github.com/bujic-movie/bujic-movie/pkg/tmdb"
@@ -43,6 +46,7 @@ func SetupRouter(gormDB *gorm.DB, cfg *config.Config) *gin.Engine {
 	notifyChannelRepo := repository.NewNotifyChannelRepository(gormDB)
 	mcpAPIKeyRepo := repository.NewMCPAPIKeyRepository(gormDB)
 	mcpCallRecordRepo := repository.NewMCPCallRecordRepository(gormDB)
+	searchRepo := repository.NewSearchRepository(gormDB)
 
 	// 3. Services Instantiation
 	recognizeSvc := service.NewRecognizeService(tmdbClient)
@@ -61,6 +65,38 @@ func SetupRouter(gormDB *gorm.DB, cfg *config.Config) *gin.Engine {
 	subtitleAgentSvc := service.NewSubtitleAgentService(mediaRepo, mediaCardRepo, stg)
 	mcpAPIKeySvc := service.NewMCPAPIKeyService(mcpAPIKeyRepo, mcpCallRecordRepo)
 	mcpAPIKeySvc.StartRetentionLoop(0, 0) // default 180d retention, hourly tick
+
+	// Search/download module. It shares the HTTP executor so timeouts, retries
+	// and proxies behave the same for indexers and download clients.
+	searchHTTP, searchHTTPErr := httpclient.New(nil, nil, cfg.Search.Proxy)
+	if searchHTTPErr != nil {
+		logger.Warn("search: proxy config ignored: %v", searchHTTPErr)
+		searchHTTP, _ = httpclient.New(nil, nil, "")
+	}
+	// Re-read the proxy from the live config so a settings change applies
+	// without a restart.
+	searchHTTP.SetGlobalProxyResolver(func() string { return config.GlobalConfig.Search.Proxy })
+	searchBox, boxErr := internalcrypto.NewSecretBox(cfg.Server.SecretKey)
+	if boxErr != nil {
+		logger.Error("search: secret box unavailable, module disabled: %v", boxErr)
+	}
+	var (
+		definitionSvc     *service.DefinitionService
+		indexerSvc        *service.IndexerService
+		searchDownloadSvc *service.SearchService
+		downloadClientSvc *service.DownloadClientService
+		grabSvc           *service.GrabService
+		taskSvc           *service.TaskService
+	)
+	searchEnabled := cfg.Search.Enabled && searchBox != nil
+	if searchBox != nil {
+		definitionSvc = service.NewDefinitionService(searchRepo, cfg, searchHTTP)
+		indexerSvc = service.NewIndexerService(searchRepo, searchBox, definitionSvc, cfg, searchHTTP)
+		downloadClientSvc = service.NewDownloadClientService(searchRepo, searchBox, cfg, searchHTTP)
+		searchDownloadSvc = service.NewSearchService(searchRepo, indexerSvc, cfg)
+		grabSvc = service.NewGrabService(searchRepo, indexerSvc, downloadClientSvc, cfg, searchDownloadSvc.Metrics())
+		taskSvc = service.NewTaskService(searchRepo, downloadClientSvc)
+	}
 
 	// MCP gateway: 5 tools wired to the agent service; API-key auth happens in
 	// Gateway.ServeHTTP. Call records persist via the record repo (BR-26).
@@ -85,12 +121,19 @@ func SetupRouter(gormDB *gorm.DB, cfg *config.Config) *gin.Engine {
 	mediaCtrl := controller.NewMediaController(mediaRepo, mediaCardRepo, stg, notificationSvc)
 	settingCtrl := controller.NewSettingController(tmdbClient)
 	fileCtrl := controller.NewFileController(stg)
-	wsCtrl := controller.NewWSController()
+	logStreamCtrl := controller.NewLogStreamController()
 	dashboardCtrl := controller.NewDashboardController(mediaRepo, historyRepo, mediaCardRepo)
 	mediaCardCtrl := controller.NewMediaCardController(mediaCardSvc)
 	mediaLibraryCtrl := controller.NewMediaLibraryController(mediaLibrarySvc)
 	notifyChannelCtrl := controller.NewNotifyChannelController(msgNotifySvc)
 	mcpAPIKeyCtrl := controller.NewMCPAPIKeyController(mcpAPIKeySvc)
+	var searchCtrl *controller.SearchController
+	if searchEnabled {
+		searchCtrl = controller.NewSearchController(definitionSvc, indexerSvc, downloadClientSvc, searchDownloadSvc, grabSvc, taskSvc, true)
+	} else {
+		// Keep /status reachable so the UI can explain why the module is off.
+		searchCtrl = controller.NewSearchController(nil, nil, nil, nil, nil, nil, false)
+	}
 
 	// Public Routes
 	api := r.Group("/api/v1")
@@ -98,7 +141,6 @@ func SetupRouter(gormDB *gorm.DB, cfg *config.Config) *gin.Engine {
 		api.GET("/health", healthCtrl.Check)
 		api.GET("/auth/login-key", authCtrl.GetLoginKey)
 		api.POST("/auth/login", authCtrl.Login)
-		api.GET("/ws", wsCtrl.Handle) // WebSocket can be public for easy browser handshakes
 		// MCP Streamable HTTP endpoint — auth is API-Key only (BR-18a/BR-19),
 		// enforced inside the Gateway handler, so it is intentionally NOT in the
 		// JWT-protected group below.
@@ -109,6 +151,11 @@ func SetupRouter(gormDB *gorm.DB, cfg *config.Config) *gin.Engine {
 	protected := r.Group("/api/v1")
 	protected.Use(middleware.AuthRequired())
 	{
+		// 日志流里会出现服务器绝对路径、影片名、媒体库名等运行细节，
+		// 必须和其余管理接口一样要求登录态；前端用 fetch 自带 Authorization 头。
+		protected.GET("/logs/stream", logStreamCtrl.Stream)
+		protected.GET("/logs/recent", logStreamCtrl.Snapshot)
+
 		// Scrape
 		protected.POST("/scrape", scrapeCtrl.Scrape)
 
@@ -179,12 +226,73 @@ func SetupRouter(gormDB *gorm.DB, cfg *config.Config) *gin.Engine {
 		protected.GET("/mcp/api-keys/:id/records", mcpAPIKeyCtrl.Records)
 		protected.GET("/mcp/call-records", mcpAPIKeyCtrl.AllRecords)
 		protected.DELETE("/mcp/call-records", mcpAPIKeyCtrl.ClearRecords)
+
+		// Search & download (搜索下载). Every route is registered so a disabled
+		// module answers JSON 404 instead of falling through to the SPA handler
+		// (BR-40). /status stays available to explain the state.
+		search := protected.Group("/search")
+		search.GET("/status", searchCtrl.Status)
+		guarded := search.Group("", requireSearchEnabled(searchEnabled))
+		{
+			guarded.GET("/definitions", searchCtrl.ListDefinitions)
+			guarded.POST("/definitions/sync", searchCtrl.SyncDefinitions)
+			guarded.POST("/definitions/import", searchCtrl.ImportDefinition)
+			guarded.GET("/definitions/:id", searchCtrl.GetDefinition)
+			guarded.DELETE("/definitions/:id", searchCtrl.DeleteDefinition)
+
+			guarded.GET("/indexers", searchCtrl.ListIndexers)
+			guarded.POST("/indexers", searchCtrl.CreateIndexer)
+			guarded.GET("/indexers/:id", searchCtrl.GetIndexer)
+			guarded.PUT("/indexers/:id", searchCtrl.UpdateIndexer)
+			guarded.DELETE("/indexers/:id", searchCtrl.DeleteIndexer)
+			guarded.PUT("/indexers/:id/enabled", searchCtrl.SetIndexerEnabled)
+			guarded.POST("/indexers/:id/test", searchCtrl.TestIndexer)
+			guarded.POST("/indexers/test-all", searchCtrl.TestAllIndexers)
+			guarded.POST("/indexers/:id/captcha", searchCtrl.SubmitCaptcha)
+			guarded.POST("/indexers/:id/refresh-definition", searchCtrl.RefreshDefinition)
+			guarded.POST("/indexers/:id/clear-cooldown", searchCtrl.ClearCooldown)
+
+			guarded.GET("/download-clients", searchCtrl.ListClients)
+			guarded.POST("/download-clients", searchCtrl.CreateClient)
+			guarded.GET("/download-clients/:id", searchCtrl.GetClient)
+			guarded.PUT("/download-clients/:id", searchCtrl.UpdateClient)
+			guarded.DELETE("/download-clients/:id", searchCtrl.DeleteClient)
+			guarded.PUT("/download-clients/:id/enabled", searchCtrl.SetClientEnabled)
+			guarded.POST("/download-clients/:id/test", searchCtrl.TestClient)
+			guarded.GET("/download-clients/:id/categories", searchCtrl.ClientCategories)
+
+			guarded.POST("/query", searchCtrl.Query)
+			guarded.POST("/grab/preview", searchCtrl.GrabPreview)
+			guarded.POST("/grab", searchCtrl.Grab)
+			guarded.GET("/tasks", searchCtrl.Tasks)
+			guarded.POST("/tasks/:client_id/:hash/action", searchCtrl.TaskAction)
+			guarded.GET("/records", searchCtrl.Records)
+			guarded.GET("/history", searchCtrl.History)
+			guarded.DELETE("/history", searchCtrl.DeleteHistory)
+			guarded.GET("/health", searchCtrl.Health)
+			guarded.POST("/proxy-test", searchCtrl.TestProxy)
+			guarded.POST("/cookie-import", searchCtrl.ImportCookies)
+			guarded.POST("/events", searchCtrl.RecordEvent)
+			guarded.GET("/metrics", searchCtrl.Metrics)
+		}
 	}
 
 	// Serve Static Frontend Files
 	setupStaticFiles(r)
 
 	return r
+}
+
+// requireSearchEnabled rejects module routes when the feature switch is off.
+func requireSearchEnabled(enabled bool) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		if !enabled {
+			c.JSON(http.StatusNotFound, gin.H{"code": 40401, "msg": "搜索下载功能未启用"})
+			c.Abort()
+			return
+		}
+		c.Next()
+	}
 }
 
 func setupStaticFiles(r *gin.Engine) {
@@ -203,6 +311,13 @@ func setupStaticFiles(r *gin.Engine) {
 	}
 
 	r.NoRoute(func(c *gin.Context) {
+		// Unknown API paths must not fall through to the SPA: a typo or a
+		// disabled module should answer JSON, not index.html with status 200.
+		if strings.HasPrefix(c.Request.URL.Path, "/api/") {
+			c.JSON(http.StatusNotFound, gin.H{"code": 40401, "msg": "接口不存在"})
+			return
+		}
+
 		path := c.Request.URL.Path
 		filePath := path
 		if len(filePath) > 0 && filePath[0] == '/' {

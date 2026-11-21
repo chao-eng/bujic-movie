@@ -5,6 +5,7 @@ import (
 
 	"github.com/bujic-movie/bujic-movie/internal/config"
 	"github.com/bujic-movie/bujic-movie/internal/db"
+	"github.com/bujic-movie/bujic-movie/internal/service/httpclient"
 	"github.com/bujic-movie/bujic-movie/pkg/response"
 	"github.com/bujic-movie/bujic-movie/pkg/tmdb"
 	"github.com/gin-gonic/gin"
@@ -25,6 +26,11 @@ type SettingUpdateRequest struct {
 	AutoScrape   *bool  `json:"auto_scrape"`
 	ScrapePerson *bool  `json:"scrape_person"`
 	LockNFO      *bool  `json:"lock_nfo"`
+
+	SearchProxy             *string `json:"search_proxy"`
+	SearchDefinitionSource  string  `json:"search_definition_source"`
+	SearchDefinitionVersion string  `json:"search_definition_version"`
+	SearchAutoSync          *bool   `json:"search_auto_sync"`
 }
 
 func NewSettingController(tmdbClient *tmdb.Client) *SettingController {
@@ -35,17 +41,22 @@ func NewSettingController(tmdbClient *tmdb.Client) *SettingController {
 func (ctrl *SettingController) Get(c *gin.Context) {
 	cfg := config.GlobalConfig
 	response.Success(c, gin.H{
-		"tmdb_api_key":      cfg.TMDB.APIKey,
-		"tmdb_language":     cfg.TMDB.Language,
-		"movie_path":        cfg.Media.MoviePath,
-		"tv_path":           cfg.Media.TVPath,
-		"download_path":     cfg.Media.DownloadPath,
-		"transfer_mode":     cfg.Transfer.Mode,
-		"overwrite_mode":    cfg.Transfer.OverwriteMode,
-		"auto_scrape":       cfg.Transfer.AutoScrape,
-		"scrape_person":     cfg.Transfer.ScrapePerson,
-		"min_file_size_mb":  cfg.Transfer.MinFileSizeMB,
-		"lock_nfo":          cfg.Media.LockNFO,
+		"tmdb_api_key":     cfg.TMDB.APIKey,
+		"tmdb_language":    cfg.TMDB.Language,
+		"movie_path":       cfg.Media.MoviePath,
+		"tv_path":          cfg.Media.TVPath,
+		"download_path":    cfg.Media.DownloadPath,
+		"transfer_mode":    cfg.Transfer.Mode,
+		"overwrite_mode":   cfg.Transfer.OverwriteMode,
+		"auto_scrape":      cfg.Transfer.AutoScrape,
+		"scrape_person":    cfg.Transfer.ScrapePerson,
+		"min_file_size_mb": cfg.Transfer.MinFileSizeMB,
+		"lock_nfo":         cfg.Media.LockNFO,
+
+		"search_proxy":              cfg.Search.Proxy,
+		"search_definition_source":  cfg.Search.DefinitionSource,
+		"search_definition_version": cfg.Search.DefinitionVersion,
+		"search_auto_sync":          cfg.Search.AutoSync,
 	})
 }
 
@@ -58,7 +69,7 @@ func (ctrl *SettingController) Update(c *gin.Context) {
 	}
 
 	cfg := config.GlobalConfig
-	
+
 	// Update fields if provided
 	if req.TMDBAPIKey != "" {
 		cfg.TMDB.APIKey = req.TMDBAPIKey
@@ -112,6 +123,36 @@ func (ctrl *SettingController) Update(c *gin.Context) {
 			val = "true"
 		}
 		_ = db.SaveSetting("media.lock_nfo", val)
+	}
+	if req.SearchProxy != nil || c.Query("clear_search_proxy") == "1" {
+		proxy := ""
+		if req.SearchProxy != nil {
+			proxy = *req.SearchProxy
+		}
+		if proxy != "" {
+			if _, err := httpclient.ParseProxy(proxy); err != nil {
+				response.BadRequest(c, "代理地址无效："+err.Error())
+				return
+			}
+		}
+		cfg.Search.Proxy = proxy
+		_ = db.SaveSetting("search.proxy", proxy)
+	}
+	if req.SearchDefinitionSource != "" {
+		cfg.Search.DefinitionSource = req.SearchDefinitionSource
+		_ = db.SaveSetting("search.definition_source", req.SearchDefinitionSource)
+	}
+	if req.SearchDefinitionVersion != "" {
+		cfg.Search.DefinitionVersion = req.SearchDefinitionVersion
+		_ = db.SaveSetting("search.definition_version", req.SearchDefinitionVersion)
+	}
+	if req.SearchAutoSync != nil {
+		cfg.Search.AutoSync = *req.SearchAutoSync
+		val := "false"
+		if *req.SearchAutoSync {
+			val = "true"
+		}
+		_ = db.SaveSetting("search.auto_sync", val)
 	}
 
 	response.Success(c, gin.H{

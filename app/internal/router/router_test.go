@@ -138,10 +138,10 @@ func TestEncryptedLoginAndPasswordUpdate(t *testing.T) {
 	keyBytes, _ := hex.DecodeString(keyHex)
 	block, _ := aes.NewCipher(keyBytes)
 	aesGCM, _ := cipher.NewGCM(block)
-	
+
 	iv := make([]byte, 12)
 	rand.Read(iv)
-	
+
 	ciphertext := aesGCM.Seal(nil, iv, []byte("admin123"), nil)
 
 	// 5. Submit encrypted login request

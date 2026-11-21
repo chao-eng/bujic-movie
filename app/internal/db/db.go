@@ -76,6 +76,16 @@ func LoadSettingsFromDB(db *gorm.DB, cfg *config.Config) error {
 			cfg.Server.Username = setting.Value
 		case "server.password":
 			cfg.Server.Password = setting.Value
+		case "search.enabled":
+			cfg.Search.Enabled = setting.Value == "true"
+		case "search.proxy":
+			cfg.Search.Proxy = setting.Value
+		case "search.definition_source":
+			cfg.Search.DefinitionSource = setting.Value
+		case "search.definition_version":
+			cfg.Search.DefinitionVersion = setting.Value
+		case "search.auto_sync":
+			cfg.Search.AutoSync = setting.Value == "true"
 		}
 	}
 	return nil
