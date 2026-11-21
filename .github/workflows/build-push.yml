@@ -5,6 +5,26 @@ name: Build and Push Docker Image to Aliyun ACR
 on:
   workflow_dispatch:
     inputs:
+      release_notes:
+        description: '版本更新说明（单行；需要多行时改用 release_notes_file）'
+        required: false
+        default: ''
+        type: string
+      release_notes_file:
+        description: '仓库内更新说明文件路径（如 doc/release-notes.md），优先于上一项'
+        required: false
+        default: ''
+        type: string
+      version_tag:
+        description: '版本标签，留空则使用当天日期 vYYYY.MM.DD'
+        required: false
+        default: ''
+        type: string
+      create_release:
+        description: '构建成功后创建 tag 与 release'
+        required: false
+        default: true
+        type: boolean
       platforms:
         description: '构建的镜像架构（多架构用英文逗号分隔）'
         required: false
@@ -18,6 +38,10 @@ on:
 
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
+# 创建 tag 与 release 需要写仓库内容的权限
+permissions:
+  contents: write
 
 jobs:
   build-and-push:
@@ -42,6 +66,7 @@ jobs:
         run: |
           echo "tag=$(TZ=Asia/Shanghai date +'%Y%m%d-%H%M%S')" >> $GITHUB_OUTPUT
           echo "date_only=$(TZ=Asia/Shanghai date +'%Y%m%d')" >> $GITHUB_OUTPUT
+          echo "version_date=$(TZ=Asia/Shanghai date +'%Y.%m.%d')" >> $GITHUB_OUTPUT
 
           # 空行会被 build-push-action 当成非法标签，所以标签列表在脚本里拼好。
           IMAGE="${ALIYUN_REGISTRY}/${ALIYUN_NAMESPACE}/${ALIYUN_REPOSITORY}"
@@ -89,12 +114,87 @@ jobs:
           provenance: false
           sbom: false
 
+      # 构建成功后才建 tag 与 release：镜像推不上去就不该对外发布版本。
+      # gh release create 会同时创建指向该提交的 tag，避免自己打 tag 再推送。
+      - name: Create Tag and Release
+        id: release
+        if: ${{ inputs.create_release }}
+        run: |
+          set -euo pipefail
+
+          # 版本标签：优先用传入值，留空则取当天日期。统一加 v 前缀。
+          raw="${VERSION_TAG}"
+          if [ -z "$raw" ]; then
+            raw="v${VERSION_DATE}"
+          fi
+          case "$raw" in
+            v*) tag="$raw" ;;
+            *)  tag="v${raw}" ;;
+          esac
+          echo "tag=${tag}" >> "$GITHUB_OUTPUT"
+
+          # 同名 tag 已存在就停下：覆盖发布版本等于悄悄改变用户拿到的内容。
+          if git ls-remote --exit-code --tags origin "refs/tags/${tag}" >/dev/null 2>&1; then
+            echo "::error::标签 ${tag} 已存在。请换一个 version_tag，或先删除该标签与 release。"
+            exit 1
+          fi
+
+          # 说明优先取文件（可多行、可进版本库审阅），否则用单行输入。
+          notes=""
+          if [ -n "${NOTES_FILE}" ]; then
+            if [ ! -f "${NOTES_FILE}" ]; then
+              echo "::error::更新说明文件不存在：${NOTES_FILE}"
+              exit 1
+            fi
+            notes="$(cat "${NOTES_FILE}")"
+          elif [ -n "${RELEASE_NOTES}" ]; then
+            notes="${RELEASE_NOTES}"
+          fi
+          if [ -z "${notes}" ]; then
+            echo "::error::请填写 release_notes 或指定 release_notes_file。"
+            exit 1
+          fi
+
+          # 把本次推送的镜像也附在末尾，部署时直接复制。
+          {
+            printf '%s\n\n' "${notes}"
+            echo '---'
+            echo ''
+            echo '**镜像**'
+            echo ''
+            echo '```'
+            cat /tmp/image-tags.txt
+            echo '```'
+            echo ''
+            echo "架构：\`${PLATFORMS}\`"
+          } > /tmp/release-notes.md
+
+          # --target 用仓库默认分支：gh 的该参数要分支名，传 SHA 虽可用但未在
+          # 文档承诺；这里构建的就是该分支最新提交，tag 不会打偏。
+          gh release create "$tag" \
+            --target "${{ github.event.repository.default_branch }}" \
+            --title "$tag" \
+            --notes-file /tmp/release-notes.md
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION_TAG: ${{ inputs.version_tag }}
+          VERSION_DATE: ${{ steps.get-date.outputs.version_date }}
+          RELEASE_NOTES: ${{ inputs.release_notes }}
+          NOTES_FILE: ${{ inputs.release_notes_file }}
+          PLATFORMS: ${{ inputs.platforms }}
+
       # 在 Actions 运行页打印镜像地址，方便直接复制去部署
       - name: Show Image Tags
         run: |
-          echo "### 已推送镜像" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo '```' >> $GITHUB_STEP_SUMMARY
-          cat /tmp/image-tags.txt >> $GITHUB_STEP_SUMMARY
-          echo '```' >> $GITHUB_STEP_SUMMARY
-          echo "架构：${{ inputs.platforms }}" >> $GITHUB_STEP_SUMMARY
+          {
+            echo "### 已推送镜像"
+            echo ""
+            echo '```'
+            cat /tmp/image-tags.txt
+            echo '```'
+            echo "架构：${{ inputs.platforms }}"
+            if [ "${{ inputs.create_release }}" = "true" ]; then
+              echo ""
+              echo "已创建 Release：${{ steps.release.outputs.tag }}"
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"

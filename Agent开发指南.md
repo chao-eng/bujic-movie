@@ -291,9 +291,27 @@ Vue 3 + Vite + TypeScript + shadcn-vue + Tailwind CSS v4 + Pinia + vue-router。
 
 ## 9. CI / 部署
 
-`.github/workflows/build-push.yml`：**手动触发**（Actions 页面 → Run workflow），不随 push 自动构建。用 `./app` 上下文 + `app/deployments/Dockerfile` 构建多架构（默认 amd64/arm64）镜像推阿里云 ACR，可当场选择架构与是否打 `latest`。`make docker` 本地等价。
+`.github/workflows/build-push.yml`：**手动触发**（Actions 页面 → Run workflow），不随 push 自动构建。用 `./app` 上下文 + `app/deployments/Dockerfile` 构建多架构（默认 amd64/arm64）镜像推阿里云 ACR。`make docker` 本地等价。
 
-> 标签列表在脚本里拼好后传给构建步骤——直接写在 `tags:` 里时，`latest` 的可选逻辑会留下空行，`build-push-action` 遇到空标签会直接报错。
+手动触发时可填的参数：
+
+| 参数 | 必填 | 说明 |
+|------|------|------|
+| `release_notes` | 否 | 版本更新说明，单行；UI 不支持多行输入 |
+| `release_notes_file` | 否 | 仓库内说明文件路径（如 `doc/release-notes.md`），**优先于上一项**，适合多行 Markdown |
+| `version_tag` | 否 | 版本标签，留空用当天日期 `vYYYY.MM.DD`；不带 `v` 会自动补 |
+| `create_release` | 否 | 构建成功后是否创建 tag 与 release，默认是 |
+| `platforms` | 否 | 构建架构，默认 `linux/amd64,linux/arm64` |
+| `push_latest` | 否 | 是否同时打 `latest`，默认是 |
+
+`release_notes` 与 `release_notes_file` 必须至少填一个，否则脚本报错中止——`workflow_dispatch` 的 `string` 输入在 UI 上是单行框，多行说明请走文件。
+
+发布顺序是「先推镜像，成功后再建 tag/release」——镜像推送失败就不该对外发版本。`gh release create` 会顺带创建指向默认分支的 tag，不需要自己打 tag 再 push。
+
+两条容易踩的规则：
+
+- **标签列表在脚本里拼好后传给构建步骤**。直接写在 `tags:` 里时，`latest` 的可选逻辑会留下空行，`build-push-action` 遇到空标签会直接报错。
+- **同名 tag 已存在则中止**。覆盖发布版本等于悄悄改变用户拿到的内容，脚本会报错并提示换 `version_tag` 或先删旧标签。
 
 ---
 
