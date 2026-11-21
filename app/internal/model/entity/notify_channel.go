@@ -15,7 +15,7 @@ type NotifyChannel struct {
 	DeletedAt gorm.DeletedAt `gorm:"index" json:"-"`
 
 	Name    string `gorm:"column:name" json:"name"`
-	Type    string `gorm:"column:type" json:"type"`       // wecombot/dingtalk/feishu/serverchan/bark/pushplus/pushdeer/gotify/ntfy/webhook
+	Type    string `gorm:"column:type" json:"type"` // wecombot/dingtalk/feishu/serverchan/bark/pushplus/pushdeer/gotify/ntfy/webhook
 	Enabled bool   `gorm:"column:enabled;default:true" json:"enabled"`
 	Config  string `gorm:"column:config" json:"config"` // JSON 对象字符串：{"key":"value",...}
 }

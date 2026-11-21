@@ -29,14 +29,14 @@ type watcherService struct {
 	transferService TransferService
 	cardRepo        repository.MediaCardRepository
 
-	watchedCards    map[uint]string
-	watchedMu       sync.RWMutex
+	watchedCards map[uint]string
+	watchedMu    sync.RWMutex
 
-	debounces       map[string]*time.Timer
-	debounceMu      sync.Mutex
+	debounces  map[string]*time.Timer
+	debounceMu sync.Mutex
 
-	cancel          chan struct{}
-	wg              sync.WaitGroup
+	cancel chan struct{}
+	wg     sync.WaitGroup
 }
 
 func NewWatcherService(transferService TransferService, cardRepo repository.MediaCardRepository) WatcherService {

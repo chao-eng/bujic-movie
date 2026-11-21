@@ -76,11 +76,12 @@ func (s *scrapeService) fetchCast(ctx context.Context, mediaType string, tmdbID 
 
 // ScrapePath handles scraping metadata for a given path (file or directory)
 // Flow:
-//   A[外部手动刮削事件 / 整理完毕自动触发] --> B{判断输入类型}
-//   B -- 单个文件 --> C[1. 识别媒体信息]
-//   B -- 目录 --> D[1. 收集该目录下所有子目录并按深度排序]
-//   D --> E[2. 由浅入深先初始化各个子目录的元数据和海报]
-//   E --> F[3. 遍历并刮削目录下的具体视频文件]
+//
+//	A[外部手动刮削事件 / 整理完毕自动触发] --> B{判断输入类型}
+//	B -- 单个文件 --> C[1. 识别媒体信息]
+//	B -- 目录 --> D[1. 收集该目录下所有子目录并按深度排序]
+//	D --> E[2. 由浅入深先初始化各个子目录的元数据和海报]
+//	E --> F[3. 遍历并刮削目录下的具体视频文件]
 func (s *scrapeService) ScrapePath(ctx context.Context, path string, overwrite bool) error {
 	return s.ScrapePathWithType(ctx, path, overwrite, "")
 }

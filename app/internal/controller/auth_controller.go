@@ -19,7 +19,7 @@ type AuthController struct{}
 
 type LoginRequest struct {
 	Username          string `json:"username" binding:"required"`
-	Password          string `json:"password"`            // Plain-text fallback for backward compatibility
+	Password          string `json:"password"`           // Plain-text fallback for backward compatibility
 	EncryptedPassword string `json:"encrypted_password"` // Encrypted password in hex format
 	KeyID             string `json:"key_id"`             // Challenge key ID
 	IV                string `json:"iv"`                 // Hex encoded IV

@@ -61,7 +61,7 @@ func (s *namingService) GetTVPath(title string, year int, season int, episode in
 
 	var fileName string
 	epPart := fmt.Sprintf("S%02dE%02d", season, episode)
-	
+
 	if epTitle != "" {
 		if year > 0 {
 			fileName = fmt.Sprintf("%s (%d) - %s - %s%s", title, year, epPart, epTitle, ext)

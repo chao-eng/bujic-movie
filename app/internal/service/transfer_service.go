@@ -12,7 +12,6 @@ import (
 	"sync"
 	"time"
 
-
 	"github.com/bujic-movie/bujic-movie/internal/config"
 	"github.com/bujic-movie/bujic-movie/internal/model/entity"
 	"github.com/bujic-movie/bujic-movie/internal/repository"
@@ -60,12 +59,12 @@ type transferService struct {
 	notifier         NotificationService
 
 	// Queue and Worker Pool
-	taskChan  chan *TransferTask
-	queue     []*TransferTask
-	queueMu   sync.RWMutex
-	workerWg  sync.WaitGroup
-	ctx       context.Context
-	cancel    context.CancelFunc
+	taskChan chan *TransferTask
+	queue    []*TransferTask
+	queueMu  sync.RWMutex
+	workerWg sync.WaitGroup
+	ctx      context.Context
+	cancel   context.CancelFunc
 
 	// Debouncing scrape timers
 	debounceMu     sync.Mutex
@@ -133,7 +132,6 @@ func containsTVKeyword(path string) bool {
 	seasonRe := regexp.MustCompile(`(?i)(?:season\s*|s)(\d+)`)
 	return seasonRe.MatchString(path)
 }
-
 
 func NewTransferService(
 	historyRepo repository.TransferHistoryRepository,
@@ -262,7 +260,7 @@ func (s *transferService) updateTaskStatus(id string, status string, progress fl
 			t.Status = status
 			t.Progress = progress
 			t.Message = message
-			
+
 			// Remove from active queue slice if finished
 			if status == "success" || status == "failed" {
 				s.queue = append(s.queue[:i], s.queue[i+1:]...)
@@ -394,7 +392,6 @@ func (s *transferService) executeTransfer(task *TransferTask) error {
 			lastDestDir = filepath.Dir(destPath)
 			totalSize += info.Size()
 		}
-
 
 		// Transfer subtitles accompanying
 		logger.Info("[整理] 正在处理字幕文件...")
@@ -703,7 +700,7 @@ func (s *transferService) transferAccompanyingSubtitles(srcVideoPath, destVideoP
 		if strings.HasPrefix(name, srcBase) && fileutil.IsSubtitle(name) {
 			srcSubPath := filepath.Join(srcDir, name)
 			subInfo := parser.ParseSubtitle(srcSubPath)
-			
+
 			// Format: destBase.language.format
 			var destSubName string
 			if subInfo.Language != "unknown" {
@@ -732,7 +729,7 @@ func (s *transferService) transferSubtitlesForDir(srcDir, destDir string, meta *
 
 	for _, sf := range subFiles {
 		sfName := filepath.Base(sf)
-		
+
 		// Find matching target structure. In multi-file, we map them based on best match name.
 		destSubPath := filepath.Join(destDir, sfName)
 		_ = s.storage.Copy(sf, destSubPath)
