@@ -130,6 +130,38 @@ make docker
 
 ---
 
+## 4.9 搜索下载（索引器 + qBittorrent）
+
+Prowlarr 核心能力的产品级移植：定义库 → 站点 → 聚合搜索 → 推送到 qBittorrent。**与整理/刮削/字幕链路完全解耦**：不读媒体卡、不写下载目录、不触发 watcher。
+
+| 层 | 位置 | 说明 |
+|----|------|------|
+| 实体 | `internal/model/entity/search.go` | 8 张 `search_*` 表，全部新增，不改既有表 |
+| 仓储 | `internal/repository/search_repo.go` | 唯一 owner；构造器内 `AutoMigrate` 新表 |
+| 定义解析 | `internal/service/cardigann/` | YAML → 定义模型、三级错误定位、过滤器白名单、HTML/JSON/XML 提取 |
+| 连接器 | `internal/service/connector/` | `Connector` 接口 + Torznab + Cardigann 两实现；`GroupReleases` 跨站去重 |
+| HTTP | `internal/service/httpclient/` | 超时、GET 重试（1s/2s）、代理、主机白名单、20MB 响应上限、每站限流 |
+| 下载器 | `internal/service/qbittorrent/` | qB 4.6/5.x 登录、建分类、推送、任务、暂停/继续/删除 |
+| 服务 | `internal/service/{definition,indexer,search,download_client,grab}_service.go` | 定义库、站点健康、聚合搜索、分类映射、幂等推送、任务聚合 |
+| 加密 | `internal/crypto/secretbox.go` | AES-256-GCM，密钥由 `server.secret_key` 派生；接口只回掩码 |
+| 控制器/路由 | `internal/controller/search_controller.go`、`internal/router/router.go` | `/api/v1/search/*`，JWT；`search.enabled=false` 时除 `/status` 外 404 |
+| 前端 | `web/src/pages/SearchDownloadPage.vue`、`components/search/*` | 搜索/定义库/站点/下载器/任务/状态六个标签 |
+
+**人机验证（Cloudflare）**：不自动破解。站点返回 `cf-mitigated: challenge` 时分类为 `challenge`（错误码 42204）；用户在浏览器完成验证后，通过站点表单或 `tools/bujic-cookie-import/` 扩展导入 Cookie + User-Agent（`POST /api/v1/search/cookie-import`，按域名匹配）。`cf_clearance` 绑定出口 IP 与 UA，两边必须一致。
+
+关键约束（改代码前必读）：
+
+- **不传保存目录**：推送只带分类，落盘位置由 qBittorrent 的分类规则决定（PRD D-04）。
+- **凭据只写不读**：`api_key`/`password`/代理凭据/登录 Cookie 加密落库；更新时提交 `__unchanged__` 表示保留原值。
+- **定义是快照**：实例保存时的 YAML 不随定义库更新；用户点「刷新定义」才切换（BR-41）。
+- **并发预算**：全局搜索 ≤3、单次站点 ≤20、同站单在途、单站 8s、全量 15s；不要绕开 `SearchService` 直接扇出。
+- **搜索结果不落库**；只有推送动作写 `search_download_records`，记录里固化站点/下载器名称。
+- 定义覆盖自检：`go run ./cmd/defcheck <definitions-dir>`（对真实 Prowlarr 定义做解析率统计）。
+
+配置项在 `config.Search`（环境变量 `BUJIC_SEARCH_*`）：`enabled`、`definition_source/version`、`auto_sync`、`proxy`、并发与超时、`grab_window_ms`、记录保留天数。全局代理也可在「系统设置 → 搜索下载」修改，保存即生效（`httpclient.Executor.SetGlobalProxyResolver`）；站点级 `proxy_url` 优先于全局；qBittorrent 请求带 `BypassProxy`，始终直连。
+
+测试：`go test ./internal/service/ ./internal/service/cardigann ./internal/service/connector ./internal/service/httpclient ./internal/service/qbittorrent ./internal/router`。需求/设计/测试文档在 `doc/搜索下载能力/01-需求文档.md`、`doc/搜索下载能力/03-设计说明书.md`、`doc/搜索下载能力/04-测试计划.md`。
+
 ## 5. 字幕与媒体工具（REST + MCP 共享）
 
 字幕能力同时以 **REST**（供 Web UI）与 **MCP**（供 Agent）暴露。**公共逻辑放在 `internal/mediautil/`，不要在两处重复实现**：
@@ -174,7 +206,7 @@ Vue 3 + Vite + TypeScript + shadcn-vue + Tailwind CSS v4 + Pinia + vue-router。
 
 ## 8. MCP / Agent 能力（新增，改动频繁区）
 
-> 详规见 `doc/影视字幕Agent能力PRD.md`（v0.3，BR 编号权威来源）。**改 MCP 相关代码先读它**。
+> 详规见 `doc/字幕Agent能力/需求文档.md`（v0.3，BR 编号权威来源）。**改 MCP 相关代码先读它**。
 
 ### 8.1 组件
 
@@ -214,11 +246,11 @@ Vue 3 + Vite + TypeScript + shadcn-vue + Tailwind CSS v4 + Pinia + vue-router。
 
 | 文档 | 用途 | 信任度 |
 |------|------|--------|
-| `doc/项目架构设计.md` | 原始设计文档 | **已漂移**：无 `dto/`/`enum/` 目录，实际有 auth/dashboard/health/media_card 控制器与 watcher 服务等。**以代码为准** |
-| `doc/影视字幕Agent能力PRD.md` | MCP 能力 PRD（v0.3，BR 权威） | 实现参考（代码已落地） |
-| `doc/开发任务执行计划.md` | 阶段任务与里程碑 | 历史 |
-| `doc/媒体库刷新通知设计.md` | 媒体库刷新/通知设计 | 参考 |
-| `doc/MoviePilot刮削与整理分析.md` | 从 MoviePilot 移植逻辑分析 | 参考 |
+| `doc/项目文档/项目架构设计.md` | 原始设计文档 | **已漂移**：无 `dto/`/`enum/` 目录，实际有 auth/dashboard/health/media_card 控制器与 watcher 服务等。**以代码为准** |
+| `doc/字幕Agent能力/需求文档.md` | MCP 能力 PRD（v0.3，BR 权威） | 实现参考（代码已落地） |
+| `doc/项目文档/开发任务执行计划.md` | 阶段任务与里程碑 | 历史 |
+| `doc/项目文档/媒体库刷新通知设计.md` | 媒体库刷新/通知设计 | 参考 |
+| `doc/参考资料/MoviePilot刮削与整理功能解析.md` | 从 MoviePilot 移植逻辑分析 | 参考 |
 
 ---
 
@@ -228,6 +260,6 @@ Vue 3 + Vite + TypeScript + shadcn-vue + Tailwind CSS v4 + Pinia + vue-router。
 2. 复用优先：字幕/媒体逻辑用 `internal/mediautil`；文件操作用 `internal/storage` 接口；不要复制 controller/service 私有实现。
 3. 需要持久化 → 新实体放 `internal/model/entity/`，仓储构造器 `AutoMigrate`。
 4. 配置项走 默认值/`BUJIC_` env/DB 三层，别新增 config.yaml。
-5. 涉及 MCP → 守第 8.3 节安全红线，并向 `doc/影视字幕Agent能力PRD.md` 的 BR 回填对齐。
+5. 涉及 MCP → 守第 8.3 节安全红线，并向 `doc/字幕Agent能力/需求文档.md` 的 BR 回填对齐。
 6. 跑 `go build ./...`、`go test ./...`（需 `app/dist` 存在）；前端改完跑 `vue-tsc -b`。
 7. 提交信息用中文。

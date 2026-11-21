@@ -156,7 +156,8 @@ Bujic Movie 通过内置的 MCP (Model Context Protocol) **Streamable HTTP** 端
 - 端点内置 `mcp_ping` 工具，可用于连通性与鉴权自测（不读业务数据、不计入调用记录）。
 - `query_media_list` 的 `media_card_id`：省略或 0 查**全部媒体卡**；>0 查指定卡（先用 `list_media_cards` 枚举）。
 - 对接 Agent 使用的配套 Skill 见仓库 `skills/bujic-subtitle/SKILL.md`（含完整工具编排流程与字幕翻译规范）。
-- 详细设计见 `doc/影视字幕Agent能力PRD.md`（v0.4，BR 权威来源）。
+- 详细设计见 `doc/字幕Agent能力/需求文档.md`（v0.4，BR 权威来源）。
+- 全部需求/设计/测试文档的分类索引见 [`doc/文档索引.md`](doc/文档索引.md)。
 
 ---
 
