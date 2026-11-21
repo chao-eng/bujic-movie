@@ -1,0 +1,76 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>导入到 Bujic Movie</title>
+  <style>
+    :root { color-scheme: dark; }
+    body {
+      width: 320px; margin: 0; padding: 14px;
+      background: #0f172a; color: #e2e8f0;
+      font: 13px/1.5 -apple-system, "Segoe UI", sans-serif;
+    }
+    h1 { margin: 0 0 4px; font-size: 14px; color: #f59e0b; }
+    p.hint { margin: 0 0 10px; font-size: 11px; color: #94a3b8; }
+    button {
+      width: 100%; padding: 8px; margin-top: 4px; border: 0; border-radius: 6px;
+      background: #f59e0b; color: #1e293b; font-weight: 600; cursor: pointer;
+    }
+    button:disabled { opacity: .5; cursor: default; }
+    button.secondary { background: #1e293b; color: #e2e8f0; border: 1px solid #334155; }
+    #session {
+      margin-bottom: 8px; padding: 8px 10px; border: 1px solid #334155;
+      border-radius: 6px; background: #020617; font-size: 12px;
+    }
+    #session .server { color: #e2e8f0; font-weight: 600; }
+    #session .scope { color: #94a3b8; font-size: 11px; }
+    #status { margin-top: 10px; font-size: 12px; white-space: pre-wrap; }
+    .ok { color: #34d399; }
+    .err { color: #fb7185; }
+    .candidates { margin: 8px 0 0; padding: 0; list-style: none; }
+    .candidates li { margin-top: 4px; }
+    .candidates button { background: #1e293b; color: #e2e8f0; border: 1px solid #334155; }
+    [hidden] { display: none !important; }
+    .manual { margin-top: 12px; font-size: 11px; }
+    .manual summary { cursor: pointer; color: #94a3b8; }
+    .manual textarea {
+      width: 100%; box-sizing: border-box; margin-top: 6px; padding: 6px 8px;
+      border: 1px solid #334155; border-radius: 6px; resize: vertical;
+      background: #020617; color: #e2e8f0; font: 11px/1.5 ui-monospace, monospace;
+    }
+    .manual code { color: #f59e0b; }
+  </style>
+</head>
+<body>
+  <h1>导入到 Bujic Movie</h1>
+  <p class="hint">
+    先在浏览器里打开目标站点完成验证，再点「抓取并导入」。服务端需与浏览器使用同一出口 IP。
+  </p>
+
+  <div id="session" hidden>
+    <div class="server" id="session-server"></div>
+    <div class="scope" id="session-scope"></div>
+  </div>
+
+  <button id="login-btn">使用当前页面的登录状态</button>
+  <button id="import-btn" hidden>抓取当前站点并导入</button>
+  <button id="logout-btn" class="secondary" hidden>断开连接</button>
+
+  <div id="status"></div>
+  <ul id="candidates" class="candidates"></ul>
+
+  <!-- 兜底：浏览器完全不向扩展暴露该站点 Cookie 时，手动贴一次。 -->
+  <details id="manual" class="manual">
+    <summary>抓不到 Cookie？手动粘贴</summary>
+    <p class="hint">
+      在目标站点按 F12 → Console，执行 <code>document.cookie</code>，把输出贴进来
+      （HttpOnly 的拿不到，那部分需在开发者工具的 Application → Cookies 里找）。
+    </p>
+    <textarea id="manual-cookies" rows="3" placeholder="name=value; name2=value2"></textarea>
+    <button id="manual-import-btn" class="secondary">用这段 Cookie 导入</button>
+  </details>
+
+  <script src="popup.js"></script>
+</body>
+</html>
