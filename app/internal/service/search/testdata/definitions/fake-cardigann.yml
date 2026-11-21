@@ -1,0 +1,76 @@
+# TST-005 / TST-015 / TST-035 fixture：一个合法的 Cardigann 定义
+# 仅用于测试，不对应真实站点。
+id: fake-tracker
+name: 假站点
+description: 测试用索引器定义
+language: zh-CN
+type: public
+encoding: UTF-8
+requestdelay: 1
+links:
+  - https://fake-tracker.example/
+caps:
+  categorymappings:
+    - id: 1
+      cat: Movies
+      desc: 电影
+    - id: 2
+      cat: TV
+      desc: 剧集
+  modes:
+    search: [q]
+    tv-search: [q, season, ep]
+    movie-search: [q, imdbid]
+settings:
+  - name: username
+    type: text
+    label: 用户名
+  - name: password
+    type: password
+    label: 密码
+  - name: freeleech
+    type: checkbox
+    label: 仅免费
+    default: false
+  - name: sort
+    type: select
+    label: 排序
+    default: seeders
+    options:
+      seeders: 做种数
+      date: 发布时间
+login:
+  path: /login.php
+  method: form
+  inputs:
+    username: "{{ .Config.username }}"
+    password: "{{ .Config.password }}"
+  error:
+    - selector: div.error
+      message:
+        selector: div.error
+        text: ""
+search:
+  paths:
+    - path: /torrents.php
+  inputs:
+    search: "{{ .Keywords }}"
+    cat: "{{ .Categories }}"
+  rows:
+    selector: table.torrents > tbody > tr
+  fields:
+    title:
+      selector: a.title
+    download:
+      selector: a.download
+      attribute: href
+    size:
+      selector: td.size
+    seeders:
+      selector: td.seeders
+    category:
+      selector: td.cat
+      attribute: data-cat
+    infohash:
+      selector: a.download
+      attribute: data-hash

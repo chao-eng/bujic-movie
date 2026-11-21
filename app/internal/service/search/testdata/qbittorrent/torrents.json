@@ -1,0 +1,29 @@
+{
+  "_comment": "TST-036 / TST-038 / TST-062 fixture：qBittorrent tasks/info 响应",
+  "tasks": [
+    {
+      "hash": "0123456789abcdef0123456789abcdef01234567",
+      "name": "示例电影.2026.2160p.WEB-DL",
+      "size": 12884901888,
+      "progress": 0.42,
+      "dlspeed": 1048576,
+      "upspeed": 0,
+      "state": "downloading",
+      "eta": 900,
+      "category": "4k",
+      "save_path": "/downloads/movies"
+    },
+    {
+      "hash": "fedcba9876543210fedcba9876543210fedcba98",
+      "name": "示例剧集.S01E01.1080p.WEB-DL",
+      "size": 2147483648,
+      "progress": 1,
+      "dlspeed": 0,
+      "upspeed": 524288,
+      "state": "uploading",
+      "eta": 8640000,
+      "category": "tv",
+      "save_path": "/downloads/tv"
+    }
+  ]
+}

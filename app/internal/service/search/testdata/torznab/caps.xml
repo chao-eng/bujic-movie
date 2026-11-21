@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- TST-007 fixture：Torznab 能力文档（3 个分类） -->
+<caps>
+  <server version="1.0" title="Fake Torznab"/>
+  <limits max="100" default="50"/>
+  <searching>
+    <search available="yes"/>
+    <tv-search available="yes" supportedParams="q,season,ep"/>
+    <movie-search available="yes" supportedParams="q,imdbid"/>
+  </searching>
+  <categories>
+    <category id="2000" name="Movies">
+      <subcat id="2040" name="Movies/HD"/>
+      <subcat id="2045" name="Movies/UHD"/>
+    </category>
+    <category id="5000" name="TV"/>
+    <category id="5070" name="TV/Anime"/>
+  </categories>
+</caps>

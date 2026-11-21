@@ -1,0 +1,23 @@
+# TST-004 fixture：含未支持块，必须入库并标 partial
+id: fake-partial
+name: 部分兼容站点
+type: private
+links:
+  - https://partial.example/
+caps:
+  modes:
+    search: [q]
+  categories:
+    Movies: 2000
+flaresolverr:
+  enabled: true
+search:
+  path: /search
+  rows:
+    selector: li.result
+  fields:
+    title:
+      selector: a
+    download:
+      selector: a
+      attribute: href

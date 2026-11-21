@@ -1,0 +1,9 @@
+# TST-003 fixture：缺 search 块，必须被标为 invalid
+id: broken-no-search
+name: 缺搜索块
+type: public
+links:
+  - https://broken.example/
+caps:
+  modes:
+    search: [q]

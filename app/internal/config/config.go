@@ -12,6 +12,27 @@ type Config struct {
 	TMDB     TMDBConfig     `mapstructure:"tmdb"`
 	Media    MediaConfig    `mapstructure:"media"`
 	Transfer TransferConfig `mapstructure:"transfer"`
+	Search   SearchConfig   `mapstructure:"search"`
+}
+
+// SearchConfig controls the indexer/search/download module. Every field is
+// optional; defaults keep the module usable without a config file.
+type SearchConfig struct {
+	Enabled             bool   `mapstructure:"enabled"`
+	DefinitionSource    string `mapstructure:"definition_source"`
+	DefinitionVersion   string `mapstructure:"definition_version"`
+	AutoSync            bool   `mapstructure:"auto_sync"`
+	Proxy               string `mapstructure:"proxy"`
+	MaxDefinitions      int    `mapstructure:"max_definitions"`
+	MaxGlobalSearches   int    `mapstructure:"max_global_searches"`
+	MaxSiteWorkers      int    `mapstructure:"max_site_workers"`
+	SearchDeadlineMS    int    `mapstructure:"search_deadline_ms"`
+	SiteTimeoutMS       int    `mapstructure:"site_timeout_ms"`
+	DefaultIntervalMS   int    `mapstructure:"default_interval_ms"`
+	GrabTimeoutMS       int    `mapstructure:"grab_timeout_ms"`
+	GrabWindowMS        int    `mapstructure:"grab_window_ms"`
+	RecordRetentionDays int    `mapstructure:"record_retention_days"`
+	HistoryLimit        int    `mapstructure:"history_limit"`
 }
 
 type ServerConfig struct {
@@ -79,6 +100,20 @@ func LoadConfig(configPath string) (*Config, error) {
 	v.SetDefault("transfer.scrape_person", false)
 	v.SetDefault("transfer.min_file_size_mb", 50)
 	v.SetDefault("media.lock_nfo", false)
+	v.SetDefault("search.enabled", true)
+	v.SetDefault("search.definition_source", "https://indexers.prowlarr.com")
+	v.SetDefault("search.definition_version", "12")
+	v.SetDefault("search.auto_sync", true)
+	v.SetDefault("search.max_definitions", 1000)
+	v.SetDefault("search.max_global_searches", 3)
+	v.SetDefault("search.max_site_workers", 20)
+	v.SetDefault("search.search_deadline_ms", 15000)
+	v.SetDefault("search.site_timeout_ms", 8000)
+	v.SetDefault("search.default_interval_ms", 2000)
+	v.SetDefault("search.grab_timeout_ms", 15000)
+	v.SetDefault("search.grab_window_ms", 60000)
+	v.SetDefault("search.record_retention_days", 90)
+	v.SetDefault("search.history_limit", 20)
 
 	var config Config
 	if err := v.Unmarshal(&config); err != nil {

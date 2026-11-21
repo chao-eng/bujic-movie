@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- TST-030 fixture：Torznab 搜索结果（两条，供去重与排序） -->
+<rss version="2.0" xmlns:torznab="http://torznab.com/schemas/2015/feed">
+  <channel>
+    <title>Fake Torznab</title>
+    <item>
+      <title>示例电影.2026.2160p.WEB-DL</title>
+      <guid>https://fake-torznab.example/download/1</guid>
+      <link>https://fake-torznab.example/download/1</link>
+      <pubDate>Mon, 10 Nov 2026 00:00:00 +0000</pubDate>
+      <size>12884901888</size>
+      <enclosure url="https://fake-torznab.example/download/1.torrent" length="12884901888" type="application/x-bittorrent"/>
+      <torznab:attr name="seeders" value="42"/>
+      <torznab:attr name="peers" value="3"/>
+      <torznab:attr name="category" value="2045"/>
+      <torznab:attr name="infohash" value="0123456789abcdef0123456789abcdef01234567"/>
+    </item>
+    <item>
+      <title>示例剧集.S01E01.1080p.WEB-DL</title>
+      <guid>https://fake-torznab.example/download/2</guid>
+      <link>https://fake-torznab.example/download/2</link>
+      <pubDate>Sun, 09 Nov 2026 00:00:00 +0000</pubDate>
+      <size>2147483648</size>
+      <enclosure url="https://fake-torznab.example/download/2.torrent" length="2147483648" type="application/x-bittorrent"/>
+      <torznab:attr name="seeders" value="7"/>
+      <torznab:attr name="category" value="5000"/>
+      <torznab:attr name="infohash" value="fedcba9876543210fedcba9876543210fedcba98"/>
+    </item>
+  </channel>
+</rss>
