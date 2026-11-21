@@ -313,6 +313,8 @@ Vue 3 + Vite + TypeScript + shadcn-vue + Tailwind CSS v4 + Pinia + vue-router。
 - **标签列表在脚本里拼好后传给构建步骤**。直接写在 `tags:` 里时，`latest` 的可选逻辑会留下空行，`build-push-action` 遇到空标签会直接报错。
 - **同名 tag 已存在则中止**。覆盖发布版本等于悄悄改变用户拿到的内容，脚本会报错并提示换 `version_tag` 或先删旧标签。
 
+> 📌 **发版实操踩坑**（锁文件、多平台原生绑定、本地复现 CI、`gh release edit` 覆盖等）见仓库根 `AGENTS.md` 的「发版经验」章节——首次发版前建议先读一遍。
+
 ---
 
 ## 10. 文档索引（doc/，按能力分目录、中文命名）
