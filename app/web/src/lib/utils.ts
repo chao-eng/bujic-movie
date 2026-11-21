@@ -11,7 +11,9 @@ export function cn(...inputs: ClassValue[]) {
  * 的保留值，传进去会直接抛错。但很多下拉里「不指定 / 自动识别 / 全部」本身就是
  * 一个有意义的选项，所以统一用这个哨兵值表示「空」。
  */
-export const EMPTY_SELECT_VALUE = '__empty__'
+// 显式标注为 string：不加会被推断成字面量类型 '__empty__'，在模板里与
+// `number | ''` 之类的值比较时 TS 会判定两者不可能相等而报错。
+export const EMPTY_SELECT_VALUE: string = '__empty__'
 
 /** 下拉回填：把哨兵值还原成空字符串。 */
 export function fromSelectValue(value: unknown): string {

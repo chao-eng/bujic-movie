@@ -1,9 +1,12 @@
 # ===== Phase 1: Frontend Build =====
 FROM --platform=$BUILDPLATFORM node:20-alpine AS frontend-builder
 WORKDIR /app/web
-COPY web/package.json ./
+# 连锁文件一起复制，用 npm ci 装出与开发环境一致的依赖版本。
+# 只复制 package.json 会让 npm 浮动安装：类型检查工具版本一旦不同，
+# 本地能通过、CI 里却报出一堆类型错误。
+COPY web/package.json web/package-lock.json ./
 RUN --mount=type=cache,target=/root/.npm \
-    npm install
+    npm ci
 COPY web/ .
 RUN npm run build
 
