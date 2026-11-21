@@ -29,32 +29,25 @@ export async function encryptAESGCM(plaintext: string, keyHex: string): Promise<
   const keyBytes = hexToBytes(keyHex)
   const plaintextBytes = new TextEncoder().encode(plaintext)
   
-  // Generate a random 12-byte IV
-  const ivBytes = new Uint8Array(12)
-  if (typeof window !== 'undefined' && window.crypto) {
-    window.crypto.getRandomValues(ivBytes)
-  } else {
-    // Fallback if crypto.getRandomValues is not available
-    for (let i = 0; i < 12; i++) {
-      ivBytes[i] = Math.floor(Math.random() * 256)
-    }
-  }
+  // GCM 的 IV 必须是密码学随机的：IV 复用会让攻击者直接还原明文。
+  // 不使用 Math.random() 兜底——它在这个位置不安全，宁可直接报错。
+  const ivBytes = crypto.getRandomValues(new Uint8Array(12))
 
-  const isSecure = typeof window !== 'undefined' && window.isSecureContext && window.crypto && window.crypto.subtle
+  const isSecure = typeof window !== 'undefined' && window.isSecureContext && Boolean(crypto?.subtle)
 
   let encryptedBytes: Uint8Array
 
   if (isSecure) {
     try {
       console.log('[Crypto] Using native Web Crypto API')
-      const cryptoKey = await window.crypto.subtle.importKey(
+      const cryptoKey = await crypto.subtle.importKey(
         'raw',
         keyBytes as any,
         { name: 'AES-GCM' },
         false,
         ['encrypt']
       )
-      const encryptedBuffer = await window.crypto.subtle.encrypt(
+      const encryptedBuffer = await crypto.subtle.encrypt(
         {
           name: 'AES-GCM',
           iv: ivBytes as any,

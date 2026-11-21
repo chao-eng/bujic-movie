@@ -1,10 +1,18 @@
 <script setup lang="ts">
-import { ref, onMounted } from 'vue'
+import { onMounted, ref } from 'vue'
+import { CheckCircle2Icon, FilmIcon, SparklesIcon, TvIcon } from 'lucide-vue-next'
 import client from '@/api/client'
-import { Card, CardHeader, CardTitle, CardDescription, CardContent } from '@/components/ui/card'
-import { Input } from '@/components/ui/input'
+import { EMPTY_SELECT_VALUE, fromSelectValue, toSelectValue } from '@/lib/utils'
+import FileBrowserCard from '@/components/common/FileBrowserCard.vue'
+import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
+import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
-import { Folder, File, ArrowLeft, Loader2, Sparkles, CheckCircle2, Film, Tv, RefreshCw } from 'lucide-vue-next'
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
+import { Field, FieldDescription, FieldGroup, FieldLabel } from '@/components/ui/field'
+import { Input } from '@/components/ui/input'
+import { Select, SelectContent, SelectGroup, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
+import { Spinner } from '@/components/ui/spinner'
+import { Switch } from '@/components/ui/switch'
 
 const selectedPath = ref('')
 const overwrite = ref(false)
@@ -28,7 +36,7 @@ const fetchFiles = async (path: string) => {
       currentDir.value = path
     }
   } catch (err) {
-    console.error('Failed to load directories', err)
+    console.error('读取目录失败', err)
   } finally {
     isLoadingFiles.value = false
   }
@@ -75,7 +83,7 @@ const triggerScrape = async () => {
       }, 5000)
     }
   } catch (err) {
-    console.error('Failed to trigger scrape', err)
+    console.error('提交刮削失败', err)
   } finally {
     isScraping.value = false
   }
@@ -88,7 +96,7 @@ const fetchCards = async () => {
       cards.value = res.data || []
     }
   } catch (err) {
-    console.error('Failed to load cards', err)
+    console.error('读取卡片失败', err)
   }
 }
 
@@ -108,14 +116,14 @@ onMounted(async () => {
     mediaType.value = defaultCard.media_type || ''
     initialPath = defaultCard.archive_path || '/'
   } else {
-    // Fallback to old settings
+    // 兼容旧设置
     try {
       const res: any = await client.get('/api/v1/settings')
       if (res.code === 0 && res.data && res.data.download_path) {
         initialPath = res.data.download_path
       }
     } catch (err) {
-      console.error('Failed to get download_path from settings', err)
+      console.error('读取下载目录失败', err)
     }
   }
   if (initialPath && initialPath !== '/') {
@@ -125,148 +133,87 @@ onMounted(async () => {
 </script>
 
 <template>
-  <div class="space-y-6">
+  <div class="flex flex-col gap-6">
     <div>
-      <h1 class="text-3xl font-extrabold tracking-tight text-slate-100">智能刮削</h1>
-      <p class="text-slate-400 mt-1">手动选择服务器上的视频文件或目录，从 TMDB 刮削元数据及海报墙。</p>
+      <h1 class="text-2xl font-bold tracking-tight">智能刮削</h1>
+      <p class="text-muted-foreground mt-1 text-sm">手动选择服务器上的视频文件或目录，从 TMDB 刮削元数据及海报墙。</p>
     </div>
 
-    <!-- Success Notification -->
-    <div v-if="successMsg" class="bg-green-500/10 border border-green-500/20 text-green-400 text-sm px-4 py-3 rounded-lg flex items-center gap-2">
-      <CheckCircle2 class="h-5 w-5" />
-      <span>{{ successMsg }}</span>
-    </div>
+    <Alert v-if="successMsg" class="text-success">
+      <CheckCircle2Icon />
+      <AlertTitle>刮削任务提交成功</AlertTitle>
+      <AlertDescription>可在控制台或 WebSocket 中查看详细进度。</AlertDescription>
+    </Alert>
 
-    <!-- Card Selector -->
-    <div v-if="cards.length > 0" class="flex gap-3 overflow-x-auto pb-2">
-      <button
+    <div v-if="cards.length > 0" class="flex gap-2 overflow-x-auto pb-2">
+      <Button
         v-for="card in cards"
         :key="card.id"
+        :variant="selectedCardId === card.id ? 'default' : 'outline'"
+        class="shrink-0"
         @click="selectCard(card)"
-        :class="[
-          'flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-all whitespace-nowrap',
-          selectedCardId === card.id
-            ? 'bg-amber-500 text-slate-950'
-            : 'bg-slate-800 text-slate-300 hover:bg-slate-700'
-        ]"
       >
-        <Film v-if="card.media_type === 'movie'" class="h-4 w-4" />
-        <Tv v-else class="h-4 w-4" />
+        <FilmIcon v-if="card.media_type === 'movie'" data-icon="inline-start" />
+        <TvIcon v-else data-icon="inline-start" />
         {{ card.name }}
-        <span v-if="card.is_default" class="text-[10px] opacity-70">[默认]</span>
-      </button>
+        <Badge v-if="card.is_default" variant="secondary" class="ml-1">默认</Badge>
+      </Button>
     </div>
 
-    <div class="grid gap-6 md:grid-cols-3">
-      <!-- File Selector Tree -->
-      <Card class="bg-slate-900 border-slate-800 text-slate-100 md:col-span-2">
-        <CardHeader class="pb-3 flex flex-row items-center justify-between border-b border-slate-800">
-          <div>
-            <CardTitle class="text-amber-500">文件浏览器</CardTitle>
-            <CardDescription class="text-slate-400">选择待刮削的目标路径</CardDescription>
-          </div>
-          <div class="flex items-center gap-2">
-            <Button
-              @click="fetchFiles(currentDir)"
-              variant="outline"
-              class="border-slate-800 text-slate-300 hover:bg-slate-800 flex items-center gap-2 h-9 px-3"
-              title="刷新当前目录"
-            >
-              <RefreshCw class="h-4 w-4" />
-            </Button>
-            <Button
-              @click="navigateUp"
-              :disabled="currentDir === '/' || currentDir === ''"
-              variant="outline"
-              class="border-slate-800 text-slate-300 hover:bg-slate-800 flex items-center gap-2 h-9"
-            >
-              <ArrowLeft class="h-4 w-4" /> 返回上级
-            </Button>
-          </div>
-        </CardHeader>
-        <CardContent class="p-0">
-          <!-- Current Directory Path -->
-          <div class="bg-slate-950/50 px-4 py-2 border-b border-slate-800 text-xs font-mono text-slate-400 truncate">
-            当前路径: {{ currentDir }}
-          </div>
+    <div class="grid gap-6 md:grid-cols-5">
+      <FileBrowserCard
+        class="md:col-span-3"
+        title="文件浏览器"
+        description="选择待刮削的目标路径"
+        empty-title="当前目录下无子文件夹或文件"
+        :current-dir="currentDir"
+        :items="fileItems"
+        :loading="isLoadingFiles"
+        :selected-path="selectedPath"
+        @select="handleItemClick"
+        @open="handleItemDoubleClick"
+        @refresh="fetchFiles(currentDir)"
+        @up="navigateUp"
+      />
 
-          <div v-if="isLoadingFiles" class="flex items-center justify-center py-20">
-            <Loader2 class="h-8 w-8 text-amber-500 animate-spin" />
-          </div>
-
-          <!-- Files List -->
-          <div v-else class="max-h-96 overflow-y-auto divide-y divide-slate-800">
-            <div
-              v-for="item in fileItems"
-              :key="item.path"
-              @click="handleItemClick(item)"
-              @dblclick="handleItemDoubleClick(item)"
-              :class="[
-                'flex items-center justify-between px-4 py-3 cursor-pointer transition-colors text-sm',
-                selectedPath === item.path ? 'bg-amber-500/10 text-amber-500' : 'hover:bg-slate-800/30'
-              ]"
-            >
-              <div class="flex items-center gap-3 truncate">
-                <Folder v-if="item.is_dir" class="h-5 w-5 text-amber-500 shrink-0" />
-                <File v-else class="h-5 w-5 text-slate-400 shrink-0" />
-                <span class="truncate">{{ item.name }}</span>
-              </div>
-              <span class="text-xs text-slate-500">{{ item.is_dir ? '文件夹' : (item.size / 1024 / 1024).toFixed(1) + ' MB' }}</span>
-            </div>
-
-            <!-- Empty Directory -->
-            <div v-if="fileItems.length === 0" class="text-center py-20 text-slate-500 text-sm">
-              当前目录下无子文件夹或文件
-            </div>
-          </div>
-        </CardContent>
-      </Card>
-
-      <!-- Scraping Control Panel -->
-      <Card class="bg-slate-900 border-slate-800 text-slate-100">
+      <Card>
         <CardHeader>
-          <CardTitle class="text-amber-500">刮削设置</CardTitle>
-          <CardDescription class="text-slate-400">配置刮削行为参数</CardDescription>
+          <CardTitle>刮削设置</CardTitle>
+          <CardDescription>配置刮削行为参数</CardDescription>
         </CardHeader>
-        <CardContent class="space-y-6">
-          <!-- Path Input -->
-          <div class="space-y-1.5">
-            <label class="text-xs font-semibold text-slate-400">选中的目标路径</label>
-            <Input
-              v-model="selectedPath"
-              placeholder="在左侧浏览器选择或在此处填入路径"
-              class="bg-slate-950 border-slate-800 text-slate-100"
-            />
-          </div>
+        <CardContent>
+          <FieldGroup class="gap-5">
+            <Field>
+              <FieldLabel for="scrape-path">选中的目标路径</FieldLabel>
+              <Input id="scrape-path" v-model="selectedPath" placeholder="在左侧浏览器选择或在此处填入路径" />
+            </Field>
 
-          <!-- Options -->
-          <div class="space-y-4">
-            <div class="space-y-1.5">
-              <label class="text-xs font-semibold text-slate-400">媒体类型</label>
-              <select v-model="mediaType" class="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-sm focus:outline-none text-slate-100 focus:border-amber-500">
-                <option value="">自动识别</option>
-                <option value="movie">电影 (Movie)</option>
-                <option value="tv">电视剧 (TV)</option>
-              </select>
-              <p class="text-[10px] text-slate-500">手动指定可避免自动识别错误</p>
-            </div>
-            <label class="relative inline-flex items-center cursor-pointer">
-              <input type="checkbox" v-model="overwrite" class="sr-only peer" />
-              <div class="w-11 h-6 bg-slate-800 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-slate-400 after:border-slate-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-amber-500 peer-checked:after:bg-slate-950"></div>
-              <span class="ml-3 text-sm font-medium text-slate-300">覆盖已存在的元数据</span>
-            </label>
-          </div>
+            <Field>
+              <FieldLabel for="scrape-media-type">媒体类型</FieldLabel>
+              <Select :model-value="toSelectValue(mediaType)" @update:model-value="mediaType = fromSelectValue($event)">
+                <SelectTrigger id="scrape-media-type" class="w-full"><SelectValue placeholder="自动识别" /></SelectTrigger>
+                <SelectContent>
+                  <SelectGroup>
+                    <SelectItem :value="EMPTY_SELECT_VALUE">自动识别</SelectItem>
+                    <SelectItem value="movie">电影 (Movie)</SelectItem>
+                    <SelectItem value="tv">电视剧 (TV)</SelectItem>
+                  </SelectGroup>
+                </SelectContent>
+              </Select>
+              <FieldDescription>手动指定可避免自动识别错误。</FieldDescription>
+            </Field>
 
-          <!-- Submit Action -->
-          <Button
-            @click="triggerScrape"
-            :disabled="isScraping || !selectedPath"
-            class="w-full bg-amber-500 hover:bg-amber-600 text-slate-950 font-bold py-2.5 flex items-center justify-center gap-2 transition-all"
-          >
-            <Loader2 v-if="isScraping" class="h-4 w-4 animate-spin" />
-            <Sparkles v-else class="h-4 w-4" />
-            <span>{{ isScraping ? '提交中...' : '提交刮削任务' }}</span>
-          </Button>
+            <Field orientation="horizontal">
+              <Switch id="scrape-overwrite" v-model="overwrite" />
+              <FieldLabel for="scrape-overwrite">覆盖已存在的元数据</FieldLabel>
+            </Field>
+
+            <Button class="w-full" :disabled="isScraping || !selectedPath" @click="triggerScrape">
+              <Spinner v-if="isScraping" data-icon="inline-start" />
+              <SparklesIcon v-else data-icon="inline-start" />
+              {{ isScraping ? '提交中…' : '提交刮削任务' }}
+            </Button>
+          </FieldGroup>
         </CardContent>
       </Card>
     </div>

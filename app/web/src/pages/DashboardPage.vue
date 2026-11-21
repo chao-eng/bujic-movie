@@ -1,35 +1,30 @@
 <script setup lang="ts">
-import { ref, onMounted, watch, nextTick } from 'vue'
-import client from '@/api/client'
-import { Card, CardHeader, CardTitle, CardDescription, CardContent } from '@/components/ui/card'
-import { Button } from '@/components/ui/button'
+import { computed, nextTick, onMounted, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import {
-  Film,
-  Sparkles,
-  ArrowLeftRight,
-  Database,
-  Play,
-  Terminal,
-  CheckCircle2,
-  XCircle
+  ArrowLeftRightIcon,
+  DatabaseIcon,
+  FilmIcon,
+  PlayIcon,
+  RefreshCwIcon,
+  SparklesIcon,
+  TerminalIcon,
 } from 'lucide-vue-next'
+import client from '@/api/client'
+import { Badge } from '@/components/ui/badge'
+import { Button } from '@/components/ui/button'
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
+import { Empty, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from '@/components/ui/empty'
 import { useLogStore } from '@/stores/logStore'
 
 const router = useRouter()
 const logStore = useLogStore()
 
-// Stats
-const movieCount = ref<string | number>('...')
-const tvCount = ref<string | number>('...')
-const pendingCount = ref<string | number>('...')
-const successRate = ref<string>('...')
+const movieCount = ref<string | number>('…')
+const tvCount = ref<string | number>('…')
+const pendingCount = ref<string | number>('…')
+const successRate = ref<string>('…')
 
-// Settings and status
-const successMsg = ref('')
-const errMsg = ref('')
-
-// Logs console
 const logContainer = ref<HTMLElement | null>(null)
 
 const scrollToBottom = () => {
@@ -38,12 +33,10 @@ const scrollToBottom = () => {
   }
 }
 
-// Watch logs array length and scroll to bottom
 watch(() => logStore.logs.length, () => {
   nextTick(scrollToBottom)
 })
 
-// Fetch stats and configuration
 const fetchStats = async () => {
   try {
     const res: any = await client.get('/api/v1/dashboard/stats')
@@ -54,119 +47,117 @@ const fetchStats = async () => {
       successRate.value = res.data.success_rate.toFixed(1) + '%'
     }
   } catch (err) {
-    console.error('Failed to fetch stats', err)
+    console.error('读取统计失败', err)
   }
 }
 
-// Actions
-const navigateToTransfer = () => {
-  router.push('/transfer')
+const stats = [
+  { label: '电影总数', icon: FilmIcon, tone: 'text-primary', value: movieCount },
+  { label: '电视剧集', icon: DatabaseIcon, tone: 'text-info', value: tvCount },
+  { label: '待整理文件', icon: ArrowLeftRightIcon, tone: 'text-warning', value: pendingCount },
+  { label: '整理成功率', icon: SparklesIcon, tone: 'text-success', value: successRate },
+]
+
+/** 日志级别用 Badge 语气表达，级别文字始终可见。 */
+const levelTone = (level: string) => {
+  if (level === 'ERROR') return 'destructive' as const
+  if (level === 'WARN') return 'secondary' as const
+  return 'outline' as const
 }
+
+/** 通道状态也走 Badge，文案自己说明，不只靠颜色。 */
+const channelState = computed(() => {
+  switch (logStore.state) {
+    case 'open':
+      return { label: '已连接', variant: 'secondary' as const, tone: 'text-success' }
+    case 'connecting':
+      return { label: '连接中', variant: 'outline' as const, tone: 'text-warning' }
+    case 'reconnecting':
+      return { label: `重连中${logStore.reconnectAttempt > 1 ? `（第 ${logStore.reconnectAttempt} 次）` : ''}`, variant: 'outline' as const, tone: 'text-warning' }
+    case 'closed':
+      return { label: '已断开', variant: 'destructive' as const, tone: '' }
+    default:
+      return { label: '未连接', variant: 'outline' as const, tone: '' }
+  }
+})
 
 onMounted(() => {
   fetchStats()
-  // Ensure we scroll to the bottom when entering the page if logs already exist
   nextTick(scrollToBottom)
 })
 </script>
 
 <template>
-  <div class="space-y-6">
-    <!-- Welcome Header -->
-    <div class="flex items-center justify-between">
+  <div class="flex flex-col gap-6">
+    <div class="flex flex-wrap items-start justify-between gap-3">
       <div>
-        <h1 class="text-3xl font-extrabold tracking-tight text-slate-100">控制面板</h1>
-        <p class="text-slate-400 mt-1">欢迎使用 Bujic Movie 媒体管家，轻松完成电影电视剧的自动归档与元数据刮削。</p>
+        <h1 class="text-2xl font-bold tracking-tight">控制面板</h1>
+        <p class="text-muted-foreground mt-1 text-sm">
+          欢迎使用 Bujic Movie 媒体管家，轻松完成电影电视剧的自动归档与元数据刮削。
+        </p>
       </div>
-      <Button
-        @click="navigateToTransfer"
-        class="bg-amber-500 hover:bg-amber-600 text-slate-950 font-bold flex items-center gap-2"
-      >
-        <Play class="h-4 w-4" /> 快速开始整理
+      <Button class="gap-2" @click="router.push('/transfer')">
+        <PlayIcon data-icon="inline-start" />
+        快速开始整理
       </Button>
     </div>
 
-    <!-- Success Notification -->
-    <div v-if="successMsg" class="bg-green-500/10 border border-green-500/20 text-green-400 text-sm px-4 py-3 rounded-lg flex items-center gap-2 animate-fade-in">
-      <CheckCircle2 class="h-5 w-5 shrink-0" />
-      <span>{{ successMsg }}</span>
-    </div>
-
-    <!-- Error Notification -->
-    <div v-if="errMsg" class="bg-rose-500/10 border border-rose-500/20 text-rose-400 text-sm px-4 py-3 rounded-lg flex items-center gap-2 animate-fade-in">
-      <XCircle class="h-5 w-5 shrink-0" />
-      <span>{{ errMsg }}</span>
-    </div>
-
-    <!-- Stats Grid -->
     <div class="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
-      <Card class="bg-slate-900 border-slate-800 text-slate-100">
-        <CardHeader class="flex flex-row items-center justify-between pb-2">
-          <CardTitle class="text-sm font-medium text-slate-400">电影总数</CardTitle>
-          <Film class="h-5 w-5 text-amber-500" />
+      <Card v-for="stat in stats" :key="stat.label">
+        <CardHeader class="flex flex-row items-center justify-between">
+          <CardTitle class="text-muted-foreground text-sm font-medium">{{ stat.label }}</CardTitle>
+          <component :is="stat.icon" :class="['size-5', stat.tone]" />
         </CardHeader>
         <CardContent>
-          <div class="text-2xl font-bold">{{ movieCount }}</div>
-        </CardContent>
-      </Card>
-      <Card class="bg-slate-900 border-slate-800 text-slate-100">
-        <CardHeader class="flex flex-row items-center justify-between pb-2">
-          <CardTitle class="text-sm font-medium text-slate-400">电视剧集</CardTitle>
-          <Database class="h-5 w-5 text-blue-500" />
-        </CardHeader>
-        <CardContent>
-          <div class="text-2xl font-bold">{{ tvCount }}</div>
-        </CardContent>
-      </Card>
-      <Card class="bg-slate-900 border-slate-800 text-slate-100">
-        <CardHeader class="flex flex-row items-center justify-between pb-2">
-          <CardTitle class="text-sm font-medium text-slate-400">待整理文件</CardTitle>
-          <ArrowLeftRight class="h-5 w-5 text-rose-500" />
-        </CardHeader>
-        <CardContent>
-          <div class="text-2xl font-bold">{{ pendingCount }}</div>
-        </CardContent>
-      </Card>
-      <Card class="bg-slate-900 border-slate-800 text-slate-100">
-        <CardHeader class="flex flex-row items-center justify-between pb-2">
-          <CardTitle class="text-sm font-medium text-slate-400">整理成功率</CardTitle>
-          <Sparkles class="h-5 w-5 text-green-500" />
-        </CardHeader>
-        <CardContent>
-          <div class="text-2xl font-bold">{{ successRate }}</div>
+          <p class="text-2xl font-bold">{{ stat.value }}</p>
         </CardContent>
       </Card>
     </div>
 
-    <!-- Log Panel -->
-    <Card class="bg-slate-900 border-slate-800 text-slate-100 w-full">
-      <CardHeader class="flex flex-row items-center justify-between pb-3">
-        <div>
-          <CardTitle class="text-slate-100 flex items-center gap-2">
-            <Terminal class="h-5 w-5 text-amber-500" />
-            <span>后台运行日志</span>
-          </CardTitle>
-          <CardDescription class="text-slate-400">实时日志通道概览</CardDescription>
+    <Card>
+      <CardHeader>
+        <div class="flex flex-wrap items-center justify-between gap-2">
+          <div>
+            <CardTitle class="flex items-center gap-2">
+              <TerminalIcon class="text-primary size-5" />
+              后台运行日志
+            </CardTitle>
+            <CardDescription>实时日志通道概览</CardDescription>
+          </div>
+          <div class="flex items-center gap-2">
+            <Badge :variant="channelState.variant" :class="channelState.tone">{{ channelState.label }}</Badge>
+            <Button
+              variant="outline"
+              size="sm"
+              :disabled="logStore.state === 'open' || logStore.state === 'connecting'"
+              @click="logStore.reconnect()"
+            >
+              <RefreshCwIcon data-icon="inline-start" />
+              重连
+            </Button>
+          </div>
         </div>
       </CardHeader>
       <CardContent>
         <div
           ref="logContainer"
-          class="bg-slate-950 p-4 rounded-lg font-mono text-xs text-slate-300 h-96 overflow-y-auto space-y-1.5 border border-slate-800"
+          class="bg-background border-border flex h-96 flex-col gap-1.5 overflow-y-auto rounded-lg border p-4 font-mono text-xs"
         >
-          <div v-for="(log, idx) in logStore.logs" :key="idx" class="flex items-start gap-2 select-text leading-relaxed">
-            <span class="text-slate-600 shrink-0">{{ log.timestamp }}</span>
-            <span :class="[
-              'shrink-0 px-1.5 py-0.5 text-[9px] font-bold rounded scale-90 origin-left uppercase',
-              log.level === 'INFO' && 'bg-blue-500/10 text-blue-400',
-              log.level === 'WARN' && 'bg-amber-500/10 text-amber-400',
-              log.level === 'ERROR' && 'bg-rose-500/10 text-rose-400'
-            ]">{{ log.level }}</span>
-            <span class="break-all whitespace-pre-wrap flex-1">{{ log.message }}</span>
+          <div v-for="(log, idx) in logStore.logs" :key="idx" class="flex items-start gap-2 leading-relaxed select-text">
+            <span class="text-muted-foreground shrink-0">{{ log.timestamp }}</span>
+            <Badge :variant="levelTone(log.level)" class="shrink-0 text-[9px]">{{ log.level }}</Badge>
+            <span class="flex-1 whitespace-pre-wrap break-all">{{ log.message }}</span>
           </div>
-          <div v-if="logStore.logs.length === 0" class="text-slate-600 text-center py-20 text-sm">
-            正在开启日志通道...
-          </div>
+
+          <Empty v-if="!logStore.logs.length" class="border-0 py-20">
+            <EmptyHeader>
+              <EmptyMedia variant="icon">
+                <TerminalIcon />
+              </EmptyMedia>
+              <EmptyTitle>正在开启日志通道…</EmptyTitle>
+              <EmptyDescription>后台有新日志时会自动出现在这里。</EmptyDescription>
+            </EmptyHeader>
+          </Empty>
         </div>
       </CardContent>
     </Card>

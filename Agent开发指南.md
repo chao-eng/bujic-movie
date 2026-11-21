@@ -188,11 +188,6 @@ Prowlarr 核心能力的产品级移植：定义库 → 站点 → 聚合搜索 
 
 Vue 3 + Vite + TypeScript + shadcn-vue + Tailwind CSS v4 + Pinia + vue-router。`@` 别名 → `app/web/src`。`vite build` 输出到 `../dist`（即 `app/dist`，供 `embed.go`）。
 
-- 页面：`src/pages/`（Dashboard/MediaLibrary/Scrape/Transfer/Setting/Login）。
-- 设置页 `SettingPage.vue` 含「MCP / API Key」区块（tab 键 `mcp`）。
-- API 封装：`src/api/client.ts`（axios，JWT 拦截）。
-- 新增 UI 遵循 `.agents/skills/frontend-ui-ux/SKILL.md` 的暗色 cinematic 美学（琥珀强调色、深蓝灰底）——该 skill 被 gitignore，本地开发时存在。
-
 ---
 
 ## 7. 约定

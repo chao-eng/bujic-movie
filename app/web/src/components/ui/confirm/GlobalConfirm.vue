@@ -13,18 +13,18 @@ import { confirmState } from '@/composables/useConfirm'
 
 <template>
   <AlertDialog :open="!!confirmState?.open" @update:open="(val) => { if (!val) confirmState?.resolve(false) }">
-    <AlertDialogContent v-if="confirmState" class="bg-slate-900 border-slate-800">
+    <AlertDialogContent v-if="confirmState">
       <AlertDialogHeader>
-        <AlertDialogTitle class="text-slate-100">{{ confirmState.title }}</AlertDialogTitle>
-        <AlertDialogDescription class="text-slate-400">
+        <AlertDialogTitle>{{ confirmState.title }}</AlertDialogTitle>
+        <AlertDialogDescription>
           {{ confirmState.message }}
         </AlertDialogDescription>
       </AlertDialogHeader>
       <AlertDialogFooter>
-        <Button @click="confirmState.resolve(false)" variant="outline" class="border-slate-800 text-slate-300 hover:bg-slate-800">
+        <Button variant="outline" @click="confirmState.resolve(false)">
           {{ confirmState.cancelText }}
         </Button>
-        <Button @click="confirmState.resolve(true)" class="bg-amber-500 hover:bg-amber-600 text-slate-950 font-bold">
+        <Button @click="confirmState.resolve(true)">
           {{ confirmState.confirmText }}
         </Button>
       </AlertDialogFooter>

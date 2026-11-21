@@ -6,6 +6,7 @@ import MediaLibraryPage from '@/pages/MediaLibraryPage.vue'
 import ScrapePage from '@/pages/ScrapePage.vue'
 import TransferPage from '@/pages/TransferPage.vue'
 import SettingPage from '@/pages/SettingPage.vue'
+import SearchDownloadPage from '@/pages/SearchDownloadPage.vue'
 
 const router = createRouter({
   history: createWebHistory(),
@@ -34,6 +35,10 @@ const router = createRouter({
         {
           path: 'transfer',
           component: TransferPage,
+        },
+        {
+          path: 'search',
+          component: SearchDownloadPage,
         },
         {
           path: 'settings',

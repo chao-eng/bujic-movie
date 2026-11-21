@@ -1,11 +1,36 @@
 <script setup lang="ts">
-import { ref, onMounted, computed } from 'vue'
-import client from '@/api/client'
-import { Card, CardContent } from '@/components/ui/card'
-import { Input } from '@/components/ui/input'
-import { Button } from '@/components/ui/button'
-import { Search, Film, Database, Loader2, RefreshCw, Folder, Upload, Download, X, ArrowLeft, Check, AlertCircle, Trash2, ChevronDown, ChevronUp } from 'lucide-vue-next'
+import { computed, onMounted, ref } from 'vue'
 import { toast } from 'vue-sonner'
+import {
+  ArrowLeftIcon,
+  CheckIcon,
+  ChevronDownIcon,
+  ChevronUpIcon,
+  DatabaseIcon,
+  DownloadIcon,
+  FilmIcon,
+  FolderIcon,
+  InfoIcon,
+  RefreshCwIcon,
+  SearchIcon,
+  Trash2Icon,
+  UploadIcon,
+  XIcon,
+} from 'lucide-vue-next'
+import client from '@/api/client'
+import { useConfirm } from '@/composables/useConfirm'
+import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
+import { Badge } from '@/components/ui/badge'
+import { Button } from '@/components/ui/button'
+import { Card, CardContent } from '@/components/ui/card'
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog'
+import { Empty, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from '@/components/ui/empty'
+import { Input } from '@/components/ui/input'
+import { Progress } from '@/components/ui/progress'
+import { Select, SelectContent, SelectGroup, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
+import { Spinner } from '@/components/ui/spinner'
+
+const { confirm } = useConfirm()
 
 const cards = ref<any[]>([])
 const selectedCardId = ref<number | 'all'>('all')
@@ -31,17 +56,72 @@ const batchFiles = ref<{ file: File; episodeId: number | null }[]>([])
 const isBatchUploading = ref(false)
 const batchProgress = ref({ current: 0, total: 0, currentName: '' })
 
+/**
+ * 海报地址。
+ *
+ * 能直接给 <img src> 的只有两种：占位图和外链（TMDB 的 /xxx.jpg）。
+ * 服务器本地图片不能这样给——<img> 无法携带 Authorization 头，过去只能把 JWT
+ * 拼进 URL query，于是令牌会漏进访问日志、Referer 和浏览器历史。
+ * 本地图片改为带鉴权头取回后转成 data URL，见 loadLocalPosters()。
+ */
+const NO_POSTER = 'https://placehold.co/342x513/1e293b/e2e8f0?text=No+Poster'
+
+const isLocalPoster = (path: string) =>
+  Boolean(path) && !/^https?:/i.test(path) && !(path.startsWith('/') && !path.includes('/', 1))
+
 const getPosterURL = (path: string) => {
-  if (!path) return 'https://placehold.co/342x513/1e293b/e2e8f0?text=No+Poster'
-  if (path.startsWith('http://') || path.startsWith('https://')) {
-    return path
-  }
-  const isTmdPath = path.startsWith('/') && !path.includes('/', 1)
-  if (isTmdPath) {
+  if (!path) return NO_POSTER
+  if (/^https?:/i.test(path)) return path
+  // TMDB 的相对路径（形如 /abc123.jpg）直接走图床。
+  if (path.startsWith('/') && !path.includes('/', 1)) {
     return `https://image.tmdb.org/t/p/w342${path}`
   }
-  const token = localStorage.getItem('token') || ''
-  return `/api/v1/media/image?path=${encodeURIComponent(path)}&token=${encodeURIComponent(token)}`
+  // 本地文件由 loadLocalPosters 填进 posterCache，这里先给占位图。
+  return posterCache.value[path] ?? NO_POSTER
+}
+
+const posterCache = ref<Record<string, string>>({})
+/** 正在取海报，避免重复请求同一张图。 */
+const posterPending = new Set<string>()
+
+/**
+ * 带鉴权头取回本地海报并缓存为 data URL。
+ *
+ * 用并发上限避免一次打开几十张图把连接打满；失败就保持占位图，不让一张坏图
+ * 影响整个页面。
+ */
+async function loadLocalPosters(items: any[]) {
+  const targets = items.map((item) => item.poster_path).filter(isLocalPoster)
+  const queue = [...new Set(targets)].filter((p) => !posterCache.value[p] && !posterPending.has(p))
+  if (!queue.length) return
+
+  const LIMIT = 6
+  let cursor = 0
+  const worker = async () => {
+    while (cursor < queue.length) {
+      const path = queue[cursor++]
+      posterPending.add(path)
+      try {
+        const resp = await client.get('/api/v1/media/image', { params: { path }, responseType: 'blob' })
+        const blob = new Blob([resp as any])
+        posterCache.value[path] = await blobToDataURL(blob)
+      } catch {
+        // 单张失败保持占位图即可。
+      } finally {
+        posterPending.delete(path)
+      }
+    }
+  }
+  await Promise.all(Array.from({ length: Math.min(LIMIT, queue.length) }, worker))
+}
+
+function blobToDataURL(blob: Blob): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader()
+    reader.onload = () => resolve(String(reader.result))
+    reader.onerror = () => reject(reader.error)
+    reader.readAsDataURL(blob)
+  })
 }
 
 const getShortPath = (path: string) => {
@@ -78,6 +158,8 @@ const fetchMedias = async () => {
     const res: any = await client.get(url, { params })
     if (res.code === 0) {
       medias.value = res.data || []
+      // 列表上屏后再补海报，不阻塞首屏。
+      void loadLocalPosters(medias.value)
     }
   } catch (err) {
     console.error('Failed to fetch media list', err)
@@ -101,6 +183,7 @@ const handleSearch = async () => {
     const res: any = await client.get(url)
     if (res.code === 0) {
       medias.value = res.data || []
+      void loadLocalPosters(medias.value)
     }
   } catch (err) {
     console.error('Search failed', err)
@@ -168,28 +251,9 @@ const fetchMovieSubtitles = async (path: string) => {
   }
 }
 
-const isConfirmOpen = ref(false)
-const confirmTitle = ref('')
-const confirmMessage = ref('')
-let confirmResolver: ((value: boolean) => void) | null = null
-
-const showConfirmDialog = (title: string, message: string): Promise<boolean> => {
-  confirmTitle.value = title
-  confirmMessage.value = message
-  isConfirmOpen.value = true
-  return new Promise<boolean>((resolve) => {
-    confirmResolver = resolve
-  })
-}
-
-const handleConfirmYes = () => {
-  isConfirmOpen.value = false
-  if (confirmResolver) confirmResolver(true)
-}
-
-const handleConfirmNo = () => {
-  isConfirmOpen.value = false
-  if (confirmResolver) confirmResolver(false)
+/** 页面内一次性确认：直接用全局 AlertDialog，不必自己画弹层。 */
+const showConfirmDialog = async (title: string, message: string): Promise<boolean> => {
+  return confirm({ title, message, confirmText: '删除' })
 }
 
 const handleDeleteSubtitle = async (subPath: string, isMovie: boolean) => {
@@ -752,255 +816,228 @@ onMounted(async () => {
 </script>
 
 <template>
-  <div class="space-y-6">
-    <div class="flex flex-col lg:flex-row lg:items-center justify-between gap-6">
+  <div class="flex flex-col gap-6">
+    <div class="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
       <div>
-        <h1 class="text-3xl font-extrabold tracking-tight text-slate-100">媒体库</h1>
-        <p class="text-slate-400 mt-1">浏览及管理归档目录中的所有影视资源。</p>
+        <h1 class="text-2xl font-bold tracking-tight">媒体库</h1>
+        <p class="text-muted-foreground mt-1 text-sm">浏览及管理归档目录中的所有影视资源。</p>
       </div>
 
-      <!-- Search Bar -->
-      <div class="flex items-center gap-2 max-w-md w-full">
+      <div class="flex w-full max-w-md items-center gap-2">
         <div class="relative flex-1">
-          <Search class="absolute left-3 h-4 w-4 text-slate-500 top-1/2 -translate-y-1/2" />
-          <Input
-            v-model="searchQuery"
-            @keyup.enter="handleSearch"
-            placeholder="搜索影片名称..."
-            class="bg-slate-900 border-slate-800 text-slate-100 pl-10"
-          />
+          <SearchIcon class="text-muted-foreground pointer-events-none absolute top-1/2 left-3 size-4 -translate-y-1/2" />
+          <Input v-model="searchQuery" placeholder="搜索影片名称…" class="pl-9" @keyup.enter="handleSearch" />
         </div>
-        <Button @click="handleSearch" class="bg-amber-500 hover:bg-amber-600 text-slate-950 font-bold">
-          搜索
-        </Button>
+        <Button @click="handleSearch">搜索</Button>
       </div>
     </div>
 
-    <!-- Media Card Filter Tabs & Refresh Button -->
-    <div class="flex flex-col sm:flex-row sm:items-center justify-between border-b border-slate-800/80 pb-3 gap-4">
-      <!-- Tabs Selector -->
+    <div class="border-border flex flex-col justify-between gap-4 border-b pb-3 sm:flex-row sm:items-center">
       <div class="flex flex-wrap gap-2">
-        <button
+        <Button
+          :variant="selectedCardId === 'all' ? 'secondary' : 'outline'"
+          size="sm"
+          :class="selectedCardId === 'all' ? 'text-primary' : ''"
           @click="selectTab('all')"
-          :class="[
-            'px-4 py-2 rounded-lg text-sm font-medium transition-all duration-200 border',
-            selectedCardId === 'all'
-              ? 'bg-amber-500/10 text-amber-500 border-amber-500/30'
-              : 'border-slate-800 bg-slate-900/55 text-slate-400 hover:text-slate-200 hover:border-slate-700'
-          ]"
         >
           全部卡片
-        </button>
+        </Button>
 
-        <button
+        <Button
           v-for="card in cards"
           :key="card.id"
+          :variant="selectedCardId === card.id ? 'secondary' : 'outline'"
+          size="sm"
+          :class="selectedCardId === card.id ? 'text-primary' : ''"
           @click="selectTab(card.id)"
-          :class="[
-            'px-4 py-2 rounded-lg text-sm font-medium transition-all duration-200 border flex items-center gap-2',
-            selectedCardId === card.id
-              ? 'bg-amber-500/10 text-amber-500 border-amber-500/30 font-bold'
-              : 'border-slate-800 bg-slate-900/55 text-slate-400 hover:text-slate-200 hover:border-slate-700'
-          ]"
         >
-          <Folder class="h-4 w-4 shrink-0 text-slate-400" />
-          <span>{{ card.name }}</span>
-          <span class="text-[10px] bg-slate-950/50 border border-slate-800 px-1.5 py-0.5 rounded text-slate-500 font-normal">
-            {{ card.media_type === 'movie' ? '电影' : '电视剧' }}
-          </span>
-        </button>
+          <FolderIcon data-icon="inline-start" />
+          {{ card.name }}
+          <Badge variant="outline" class="ml-1">{{ card.media_type === 'movie' ? '电影' : '电视剧' }}</Badge>
+        </Button>
       </div>
 
-      <!-- Sync Refresh Button -->
-      <Button
-        v-if="selectedCardId !== 'all'"
-        @click="handleRefresh"
-        :disabled="isRefreshing"
-        class="bg-slate-900 hover:bg-slate-800 text-slate-200 border border-slate-800 font-medium text-xs py-2 px-4 rounded-lg flex items-center gap-2 cursor-pointer transition-colors duration-200"
-      >
-        <RefreshCw :class="['h-3.5 w-3.5 text-amber-500', isRefreshing ? 'animate-spin' : '']" />
-        <span>{{ isRefreshing ? '正在同步...' : '扫描刷新目录' }}</span>
+      <Button v-if="selectedCardId !== 'all'" variant="outline" size="sm" :disabled="isRefreshing" @click="handleRefresh">
+        <Spinner v-if="isRefreshing" data-icon="inline-start" />
+        <RefreshCwIcon v-else data-icon="inline-start" />
+        {{ isRefreshing ? '正在同步…' : '扫描刷新目录' }}
       </Button>
     </div>
 
-    <!-- Media Grid Loading state -->
     <div v-if="isLoading" class="flex items-center justify-center py-24">
-      <Loader2 class="h-8 w-8 text-amber-500 animate-spin" />
+      <Spinner class="text-primary" />
     </div>
 
-    <!-- Media Poster Grid -->
-    <div v-else-if="medias.length > 0" class="grid grid-cols-2 sm:grid-cols-[repeat(auto-fill,minmax(160px,1fr))] gap-6">
+    <div
+      v-else-if="medias.length > 0"
+      class="grid gap-6 sm:grid-cols-[repeat(auto-fill,minmax(200px,1fr))]"
+    >
       <Card
         v-for="item in medias"
         :key="item.id"
-        class="bg-slate-900 border-slate-800 text-slate-100 overflow-hidden group hover:border-amber-500/50 transition-all duration-300 flex flex-col justify-between"
+        class="group flex flex-col justify-between overflow-hidden transition-all duration-300 hover:border-primary/50"
       >
-        <div class="relative aspect-[2/3] overflow-hidden bg-slate-950">
+        <div class="bg-muted relative aspect-[2/3] overflow-hidden">
           <img
             :src="getPosterURL(item.poster_path)"
             :alt="item.title"
-            class="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
+            class="size-full object-cover transition-transform duration-300 group-hover:scale-105"
             loading="lazy"
           />
-          <!-- Media Type Badge -->
-          <div class="absolute top-2 right-2 bg-slate-950/80 border border-slate-800 px-2 py-0.5 rounded text-[10px] font-bold tracking-wide flex items-center gap-1">
-            <Film v-if="item.type === 'movie'" class="h-3 w-3 text-amber-500" />
-            <Database v-else class="h-3 w-3 text-blue-500" />
-            <span>{{ item.type === 'movie' ? '电影' : '剧集' }}</span>
-          </div>
+          <Badge variant="secondary" class="absolute top-2 right-2 gap-1">
+            <FilmIcon v-if="item.type === 'movie'" data-icon="inline-start" />
+            <DatabaseIcon v-else data-icon="inline-start" />
+            {{ item.type === 'movie' ? '电影' : '剧集' }}
+          </Badge>
         </div>
 
-        <CardContent class="p-3 space-y-1 flex-1 flex flex-col justify-between">
+        <CardContent class="flex flex-1 flex-col justify-between gap-2 p-3">
           <div>
-            <h3 class="font-bold text-sm text-slate-100 truncate" :title="item.title">{{ item.title }}</h3>
-            <span class="text-xs text-slate-400">{{ item.year || '未知年份' }}</span>
+            <h3 class="truncate text-sm font-bold" :title="item.title">{{ item.title }}</h3>
+            <span class="text-muted-foreground text-xs">{{ item.year || '未知年份' }}</span>
           </div>
-          <div class="pt-3 border-t border-slate-800/50 mt-2 space-y-2">
-            <div class="flex items-center gap-1 text-slate-500" :title="item.path">
-              <Folder class="h-3.5 w-3.5 shrink-0" />
-              <span class="text-[10px] truncate">{{ getShortPath(item.path) }}</span>
+          <div class="border-border/50 mt-1 flex flex-col gap-2 border-t pt-3">
+            <div class="text-muted-foreground flex items-center gap-1" :title="item.path">
+              <FolderIcon class="size-3.5 shrink-0" />
+              <span class="truncate text-[10px]">{{ getShortPath(item.path) }}</span>
             </div>
-            <Button
-              @click="openManageDialog(item)"
-              class="w-full bg-amber-500 hover:bg-amber-600 text-slate-950 font-bold text-xs py-1.5 px-2 rounded flex items-center justify-center gap-1 cursor-pointer"
-            >
-              <Upload class="h-3 w-3" />
-              <span>字幕管理</span>
+            <Button size="sm" class="w-full" @click="openManageDialog(item)">
+              <UploadIcon data-icon="inline-start" />
+              字幕管理
             </Button>
           </div>
         </CardContent>
       </Card>
     </div>
 
-    <!-- Empty State -->
-    <div v-else class="border border-dashed border-slate-800 rounded-lg h-96 flex flex-col items-center justify-center text-slate-500">
-      <Film class="h-12 w-12 text-slate-600 mb-3" />
-      <span class="text-lg font-semibold mb-2">暂无媒体记录</span>
-      <span v-if="selectedCardId === 'all'">数据库中没有媒体记录。</span>
-      <div v-else class="text-center flex flex-col items-center gap-2">
-        <span>当前目录卡片中没有任何导入的媒体。</span>
-        <Button @click="handleRefresh" :disabled="isRefreshing" class="mt-2 bg-amber-500 hover:bg-amber-600 text-slate-950 font-bold flex items-center gap-2 py-1 px-3 text-xs">
-          <RefreshCw :class="['h-3.5 w-3.5', isRefreshing ? 'animate-spin' : '']" />
-          立即扫描文件夹目录
-        </Button>
-      </div>
-    </div>
+    <Empty v-else class="h-96">
+      <EmptyHeader>
+        <EmptyMedia variant="icon">
+          <FilmIcon />
+        </EmptyMedia>
+        <EmptyTitle>暂无媒体记录</EmptyTitle>
+        <EmptyDescription v-if="selectedCardId === 'all'">数据库中没有媒体记录。</EmptyDescription>
+        <EmptyDescription v-else>当前目录卡片中没有任何导入的媒体。</EmptyDescription>
+      </EmptyHeader>
+      <Button v-if="selectedCardId !== 'all'" size="sm" :disabled="isRefreshing" @click="handleRefresh">
+        <RefreshCwIcon data-icon="inline-start" />
+        立即扫描文件夹目录
+      </Button>
+    </Empty>
 
-    <!-- Subtitle Upload & Management Dialog -->
-    <div
-      v-if="isDialogOpen"
-      class="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/75 backdrop-blur-sm p-4 overflow-y-auto animate-in fade-in duration-200"
-    >
-      <div
-        class="bg-slate-900 border border-slate-800 rounded-2xl w-full max-w-4xl shadow-2xl overflow-hidden flex flex-col max-h-[85vh]"
-      >
-        <!-- Dialog Header -->
-        <div class="p-6 border-b border-slate-800 flex items-center justify-between">
+    <!-- 字幕上传与管理 -->
+    <Dialog :open="isDialogOpen" @update:open="(value) => { if (!value) closeDialog() }">
+      <DialogContent class="flex max-h-[85vh] flex-col gap-0 overflow-hidden p-0 sm:max-w-4xl">
+        <DialogHeader v-if="activeMedia" class="border-border flex-row items-start justify-between gap-3 border-b p-6">
           <div class="flex items-center gap-3">
-            <Film v-if="activeMedia.type === 'movie'" class="h-6 w-6 text-amber-500" />
-            <Database v-else class="h-6 w-6 text-blue-500" />
+            <FilmIcon v-if="activeMedia.type === 'movie'" class="text-primary size-6" />
+            <DatabaseIcon v-else class="text-info size-6" />
             <div>
-              <h2 class="text-xl font-bold text-slate-100">{{ activeMedia.title }}</h2>
-              <p class="text-xs text-slate-400 truncate max-w-[500px] mt-0.5">{{ activeMedia.path }}</p>
+              <DialogTitle class="text-xl font-bold">{{ activeMedia.title }}</DialogTitle>
+              <DialogDescription class="mt-0.5 max-w-[500px] truncate">{{ activeMedia.path }}</DialogDescription>
             </div>
           </div>
-          <button
-            @click="closeDialog"
-            class="text-slate-400 hover:text-slate-100 hover:bg-slate-800 p-1.5 rounded-lg transition-colors cursor-pointer"
-            :disabled="isUploading || isBatchUploading"
-          >
-            <X class="h-5 w-5" />
-          </button>
-        </div>
+        </DialogHeader>
 
-        <!-- Dialog Content -->
-        <div class="flex-1 overflow-y-auto p-6">
-          <!-- 1. MOVIE MODE -->
-          <div v-if="activeMedia.type === 'movie'" class="space-y-6">
-            <div class="bg-slate-950/40 border border-slate-800 rounded-xl p-4 flex items-start gap-3">
-              <AlertCircle class="h-5 w-5 text-amber-500 shrink-0 mt-0.5" />
-              <div class="text-xs text-slate-400 space-y-1">
-                <p class="font-semibold text-slate-300">手动上传指南：</p>
+        <div v-if="activeMedia" class="flex-1 overflow-y-auto p-6">
+          <!-- 1. 电影 -->
+          <div v-if="activeMedia.type === 'movie'" class="flex flex-col gap-6">
+            <Alert>
+              <InfoIcon />
+              <AlertTitle>手动上传指南</AlertTitle>
+              <AlertDescription>
                 <p>1. 支持的字幕类型：.srt, .ass, .ssa, .sbv, .webvtt</p>
-                <p>2. 系统会自动提取字幕文件名中的语言标记（如中英、简、繁、Eng等），并重命名为 `电影名.语言.后缀` 进行同级放置。</p>
-              </div>
-            </div>
+                <p>
+                  2. 系统会自动提取字幕文件名中的语言标记（如中英、简、繁、Eng等），并重命名为
+                  <code>电影名.语言.后缀</code> 进行同级放置。
+                </p>
+              </AlertDescription>
+            </Alert>
 
-            <!-- Existing Subtitles Section -->
-            <div class="space-y-3">
-              <h3 class="text-sm font-semibold text-slate-200 flex items-center gap-2">
-                <Database class="h-4 w-4 text-amber-500" />
-                <span>已有字幕列表</span>
+            <div class="flex flex-col gap-3">
+              <h3 class="flex items-center gap-2 text-sm font-semibold">
+                <DatabaseIcon class="text-primary size-4" />
+                已有字幕列表
               </h3>
-              
+
               <div v-if="isLoadingMovieSubtitles" class="flex justify-center py-4">
-                <Loader2 class="h-5 w-5 text-amber-500 animate-spin" />
+                <Spinner class="text-primary" />
               </div>
-              <div v-else-if="movieSubtitles.length > 0" class="grid grid-cols-1 sm:grid-cols-2 gap-3 max-h-48 overflow-y-auto pr-1">
+
+              <div
+                v-else-if="movieSubtitles.length > 0"
+                class="grid max-h-48 grid-cols-1 gap-3 overflow-y-auto pr-1 sm:grid-cols-2"
+              >
                 <div
                   v-for="sub in movieSubtitles"
                   :key="sub.path || sub.name"
-                  class="bg-slate-950/40 border border-slate-800 rounded-xl p-3 flex items-center justify-between gap-3 hover:border-slate-700/60 transition-colors"
+                  class="bg-muted/40 flex items-center justify-between gap-3 rounded-lg border p-3 transition-colors hover:border-input"
                 >
-                  <div class="flex items-center gap-2 min-w-0">
-                    <span
-                      :class="[
-                        'text-[10px] font-bold px-1.5 py-0.5 rounded shrink-0 border',
-                        sub.type === 'external' ? 'bg-amber-500/10 text-amber-500 border-amber-500/20' : 'bg-blue-500/10 text-blue-500 border-blue-500/20'
-                      ]"
+                  <div class="flex min-w-0 items-center gap-2">
+                    <Badge
+                      :variant="sub.type === 'external' ? 'secondary' : 'outline'"
+                      :class="sub.type === 'external' ? 'text-primary' : 'text-info'"
+                      class="shrink-0"
                     >
                       {{ sub.type === 'external' ? '外挂' : '内嵌' }}
-                    </span>
+                    </Badge>
                     <div class="truncate">
-                      <p class="text-xs font-semibold text-slate-200 truncate" :title="sub.name">{{ sub.name }}</p>
-                      <p class="text-[10px] text-slate-400 mt-0.5">语言: <span class="text-slate-300">{{ formatLang(sub) }}</span> | 格式: {{ sub.format }}</p>
+                      <p class="truncate text-xs font-semibold" :title="sub.name">{{ sub.name }}</p>
+                      <p class="text-muted-foreground mt-0.5 text-[10px]">
+                        语言: <span class="text-foreground">{{ formatLang(sub) }}</span> | 格式: {{ sub.format }}
+                      </p>
                     </div>
                   </div>
-                  <div class="flex items-center gap-1.5 shrink-0">
-                    <button
-                      @click="handleDownloadSubtitle(sub, activeMedia.path)"
+                  <div class="flex shrink-0 items-center gap-1.5">
+                    <Button
+                      variant="outline"
+                      size="xs"
                       :disabled="isSubDownloading(getSubtitleKey(sub, activeMedia.path))"
-                      class="text-xs bg-blue-500/10 text-blue-400 hover:bg-blue-500/20 border border-blue-500/20 px-2 py-1 rounded transition-colors cursor-pointer flex items-center gap-1 shrink-0"
                       title="下载字幕文件"
+                      @click="handleDownloadSubtitle(sub, activeMedia.path)"
                     >
-                      <Download v-if="!isSubDownloading(getSubtitleKey(sub, activeMedia.path))" class="h-3.5 w-3.5" />
-                      <Loader2 v-else class="h-3.5 w-3.5 animate-spin" />
-                      <span>下载</span>
-                    </button>
-                    <button
+                      <Spinner v-if="isSubDownloading(getSubtitleKey(sub, activeMedia.path))" data-icon="inline-start" />
+                      <DownloadIcon v-else data-icon="inline-start" />
+                      下载
+                    </Button>
+                    <Button
                       v-if="formatLang(sub) === '繁体中文'"
-                      @click="handleConvertSubtitle(sub, true, activeMedia.path)"
+                      variant="secondary"
+                      size="xs"
+                      class="text-warning"
                       :disabled="isConverting"
-                      class="text-xs bg-amber-500/10 text-amber-500 hover:bg-amber-500/20 border border-amber-500/20 px-2 py-1 rounded transition-colors cursor-pointer"
                       title="转换为简体字幕"
+                      @click="handleConvertSubtitle(sub, true, activeMedia.path)"
                     >
                       繁转简
-                    </button>
-                    <button
+                    </Button>
+                    <Button
                       v-if="sub.type === 'external'"
-                      @click="handleDeleteSubtitle(sub.path, true)"
-                      class="text-slate-500 hover:text-rose-500 p-1.5 rounded-lg hover:bg-rose-500/10 transition-all cursor-pointer shrink-0"
+                      variant="ghost"
+                      size="icon-xs"
+                      class="text-muted-foreground hover:text-destructive"
                       title="删除外挂字幕"
+                      @click="handleDeleteSubtitle(sub.path, true)"
                     >
-                      <Trash2 class="h-4 w-4" />
-                    </button>
+                      <Trash2Icon />
+                    </Button>
                   </div>
                 </div>
               </div>
-              <div v-else class="text-xs text-slate-500 bg-slate-950/20 border border-slate-800/60 rounded-xl p-4 text-center">
+
+              <p v-else class="bg-muted/30 text-muted-foreground rounded-lg border p-4 text-center text-xs">
                 暂无已有字幕。请在下方上传。
-              </div>
+              </p>
             </div>
 
-            <!-- Drag & Drop Zone -->
             <div
+              class="hover:border-primary/50 bg-muted/20 flex h-48 flex-col items-center justify-center rounded-lg border-2 border-dashed p-6 transition-colors"
               @dragover="handleDragOver"
               @drop="(e) => handleDrop(e, 'single', activeMedia.path)"
-              class="border-2 border-dashed border-slate-800 rounded-xl h-48 flex flex-col items-center justify-center p-6 bg-slate-950/20 hover:border-amber-500/50 transition-colors"
             >
-              <Upload class="h-10 w-10 text-slate-500 mb-3" />
-              <p class="text-slate-300 font-semibold mb-1 text-sm">拖拽字幕文件到此处上传</p>
-              <p class="text-slate-500 text-xs mb-2">或</p>
+              <UploadIcon class="text-muted-foreground mb-3 size-10" />
+              <p class="mb-1 text-sm font-semibold">拖拽字幕文件到此处上传</p>
+              <p class="text-muted-foreground mb-2 text-xs">或</p>
               <input
                 id="singleSubInput"
                 type="file"
@@ -1008,93 +1045,77 @@ onMounted(async () => {
                 accept=".srt,.ass,.ssa,.sbv,.webvtt"
                 @change="(e) => handleSingleFileChange(e, activeMedia.path)"
               />
-              <Button
-                @click="triggerSingleFileSelect('singleSubInput')"
-                :disabled="isUploading"
-                class="bg-amber-500 hover:bg-amber-600 text-slate-950 font-bold text-xs py-1 px-3"
-              >
+              <Button size="sm" :disabled="isUploading" @click="triggerSingleFileSelect('singleSubInput')">
                 选择本地字幕
               </Button>
             </div>
 
-            <div v-if="isUploading" class="flex items-center justify-center gap-3 py-4 text-amber-500">
-              <Loader2 class="h-5 w-5 animate-spin" />
-              <span class="text-sm font-semibold">正在上传处理中，请稍候...</span>
+            <div v-if="isUploading" class="text-warning flex items-center justify-center gap-3 py-4">
+              <Spinner />
+              <span class="text-sm font-semibold">正在上传处理中，请稍候…</span>
             </div>
           </div>
 
-          <!-- 2. TV SHOW SEASON MODE -->
+          <!-- 2. 电视剧整季 -->
           <div v-else-if="activeMedia.type === 'tv'">
-            <!-- Loading state -->
-            <div v-if="isLoadingEpisodes" class="flex flex-col items-center justify-center py-20 gap-3">
-              <Loader2 class="h-8 w-8 text-amber-500 animate-spin" />
-              <span class="text-sm text-slate-500">正在加载剧集列表...</span>
+            <div v-if="isLoadingEpisodes" class="flex flex-col items-center justify-center gap-3 py-20">
+              <Spinner class="text-primary" />
+              <span class="text-muted-foreground text-sm">正在加载剧集列表…</span>
             </div>
 
-            <!-- Standard List Mode -->
-            <div v-else-if="!isBatchMode" class="space-y-4">
-              <!-- Header action bar -->
-              <div class="flex items-center justify-between bg-slate-950/40 p-4 border border-slate-800 rounded-xl">
+            <div v-else-if="!isBatchMode" class="flex flex-col gap-4">
+              <div class="bg-muted/40 flex items-center justify-between rounded-lg border p-4">
                 <div>
-                  <h3 class="text-sm font-semibold text-slate-200">电视剧整季字幕整理</h3>
-                  <p class="text-xs text-slate-500 mt-0.5">共有 {{ episodes.length }} 集</p>
+                  <h3 class="text-sm font-semibold">电视剧整季字幕整理</h3>
+                  <p class="text-muted-foreground mt-0.5 text-xs">共有 {{ episodes.length }} 集</p>
                 </div>
                 <div class="flex items-center gap-2">
                   <Button
                     v-if="hasTraditionalSubs"
-                    @click="handleBatchConvertSubtitles"
+                    variant="secondary"
+                    size="sm"
+                    class="text-warning"
                     :disabled="isConvertingBatch"
-                    class="bg-yellow-600 hover:bg-yellow-700 text-slate-950 font-bold flex items-center gap-2"
+                    @click="handleBatchConvertSubtitles"
                   >
-                    <RefreshCw :class="['h-4 w-4', isConvertingBatch ? 'animate-spin' : '']" />
-                    <span>一键整季繁转简</span>
+                    <Spinner v-if="isConvertingBatch" data-icon="inline-start" />
+                    <RefreshCwIcon v-else data-icon="inline-start" />
+                    一键整季繁转简
                   </Button>
-                  <Button
-                    @click="isBatchMode = true"
-                    class="bg-amber-500 hover:bg-amber-600 text-slate-950 font-bold flex items-center gap-2"
-                  >
-                    <Upload class="h-4 w-4" />
-                    <span>批量上传整季字幕</span>
+                  <Button size="sm" @click="isBatchMode = true">
+                    <UploadIcon data-icon="inline-start" />
+                    批量上传整季字幕
                   </Button>
                 </div>
               </div>
 
-              <!-- Episode rows -->
-              <div class="border border-slate-800 rounded-xl overflow-hidden divide-y divide-slate-800">
-                <div
-                  v-for="(ep, index) in episodes"
-                  :key="ep.id"
-                  class="flex flex-col hover:bg-slate-950/5 transition-colors"
-                >
-                  <!-- Episode Header Row -->
-                  <div class="p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+              <div class="divide-border overflow-hidden rounded-lg border">
+                <div v-for="(ep, index) in episodes" :key="ep.id" class="hover:bg-muted/30 flex flex-col transition-colors">
+                  <div class="flex flex-col justify-between gap-4 p-4 sm:flex-row sm:items-center">
                     <div class="min-w-0 flex-1">
-                      <div class="flex items-center flex-wrap gap-2">
-                        <span class="text-xs bg-slate-800 text-slate-300 font-bold px-2 py-0.5 rounded">第 {{ index + 1 }} 集</span>
-                        <span class="text-sm font-semibold text-slate-200 truncate">{{ ep.title || '单集' }}</span>
+                      <div class="flex flex-wrap items-center gap-2">
+                        <Badge variant="secondary">第 {{ index + 1 }} 集</Badge>
+                        <span class="truncate text-sm font-semibold">{{ ep.title || '单集' }}</span>
                       </div>
-                      
-                      <!-- Subtitle Badges -->
-                      <div class="flex flex-wrap gap-1 mt-2">
-                        <span
+
+                      <div class="mt-2 flex flex-wrap gap-1">
+                        <Badge
                           v-for="sub in ep.subtitles"
                           :key="sub.path || sub.name"
-                          :class="[
-                            'text-[10px] px-1.5 py-0.5 rounded font-medium cursor-pointer transition-colors border',
-                            sub.type === 'external' ? 'bg-amber-500/10 text-amber-500 border-amber-500/20 hover:bg-amber-500/20' : 'bg-blue-500/10 text-blue-500 border-blue-500/20 hover:bg-blue-500/20'
-                          ]"
+                          :variant="sub.type === 'external' ? 'secondary' : 'outline'"
+                          :class="['cursor-pointer', sub.type === 'external' ? 'text-primary' : 'text-info']"
                           @click="toggleExpandEpisode(ep.id)"
                         >
                           {{ sub.type === 'external' ? '外挂' : '内嵌' }}·{{ formatLang(sub) }}
-                        </span>
-                        <span v-if="!ep.subtitles || ep.subtitles.length === 0" class="text-[10px] text-slate-500 italic">
+                        </Badge>
+                        <span v-if="!ep.subtitles || ep.subtitles.length === 0" class="text-muted-foreground text-[10px] italic">
                           暂无已有字幕
                         </span>
                       </div>
-                      <p class="text-[10px] text-slate-500 mt-1 truncate max-w-[450px]" :title="ep.path">{{ ep.path }}</p>
+                      <p class="text-muted-foreground mt-1 max-w-[450px] truncate text-[10px]" :title="ep.path">{{ ep.path }}</p>
                     </div>
-                    
-                    <div class="flex items-center gap-2 shrink-0">
+
+                    <div class="flex shrink-0 items-center gap-2">
                       <input
                         :id="'subInput_' + ep.id"
                         type="file"
@@ -1103,115 +1124,115 @@ onMounted(async () => {
                         @change="(e) => handleSingleFileChange(e, ep.path, false)"
                       />
                       <Button
-                        @click="triggerSingleFileSelect('subInput_' + ep.id)"
+                        variant="outline"
+                        size="sm"
                         :disabled="isUploading"
-                        class="bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 text-xs py-1.5 px-3 rounded flex items-center gap-1.5 cursor-pointer"
+                        @click="triggerSingleFileSelect('subInput_' + ep.id)"
                       >
-                        <Upload class="h-3.5 w-3.5 text-amber-500" />
-                        <span>上传字幕</span>
+                        <UploadIcon data-icon="inline-start" class="text-primary" />
+                        上传字幕
                       </Button>
-                      
                       <Button
-                        @click="toggleExpandEpisode(ep.id)"
-                        class="bg-slate-900 hover:bg-slate-800 text-slate-400 border border-slate-800 text-xs py-1.5 px-2 rounded flex items-center gap-1 cursor-pointer"
+                        variant="ghost"
+                        size="icon-sm"
                         title="查看/管理字幕"
+                        @click="toggleExpandEpisode(ep.id)"
                       >
-                        <ChevronDown v-if="expandedEpisodeId !== ep.id" class="h-3.5 w-3.5" />
-                        <ChevronUp v-else class="h-3.5 w-3.5" />
+                        <ChevronUpIcon v-if="expandedEpisodeId === ep.id" />
+                        <ChevronDownIcon v-else />
                       </Button>
                     </div>
                   </div>
 
-                  <!-- Expanded Subtitle Management for Episode -->
                   <div
                     v-if="expandedEpisodeId === ep.id"
-                    class="px-4 pb-4 pt-2 bg-slate-950/20 border-t border-slate-800/50 space-y-2.5"
+                    class="bg-muted/20 border-border/50 flex flex-col gap-2.5 border-t px-4 pt-2 pb-4"
                   >
-                    <div class="text-xs font-semibold text-slate-400">本集字幕详情</div>
-                    
-                    <div v-if="ep.subtitles && ep.subtitles.length > 0" class="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+                    <div class="text-muted-foreground text-xs font-semibold">本集字幕详情</div>
+
+                    <div v-if="ep.subtitles && ep.subtitles.length > 0" class="grid grid-cols-1 gap-2.5 sm:grid-cols-2">
                       <div
                         v-for="sub in ep.subtitles"
                         :key="sub.path || sub.name"
-                        class="bg-slate-950/60 border border-slate-800/80 rounded-lg p-2.5 flex items-center justify-between gap-3 hover:border-slate-700/60 transition-colors"
+                        class="bg-muted/40 flex items-center justify-between gap-3 rounded-lg border p-2.5 transition-colors hover:border-input"
                       >
-                        <div class="flex items-center gap-2 min-w-0">
-                          <span
-                            :class="[
-                              'text-[9px] font-bold px-1.5 py-0.5 rounded shrink-0 border',
-                              sub.type === 'external' ? 'bg-amber-500/10 text-amber-500 border-amber-500/20' : 'bg-blue-500/10 text-blue-500 border-blue-500/20'
-                            ]"
+                        <div class="flex min-w-0 items-center gap-2">
+                          <Badge
+                            :variant="sub.type === 'external' ? 'secondary' : 'outline'"
+                            :class="sub.type === 'external' ? 'text-primary' : 'text-info'"
+                            class="shrink-0"
                           >
                             {{ sub.type === 'external' ? '外挂' : '内嵌' }}
-                          </span>
+                          </Badge>
                           <div class="truncate">
-                            <p class="text-xs font-semibold text-slate-300 truncate" :title="sub.name">{{ sub.name }}</p>
-                            <p class="text-[9px] text-slate-500 mt-0.5">语言: {{ formatLang(sub) }} | 格式: {{ sub.format }}</p>
+                            <p class="truncate text-xs font-semibold" :title="sub.name">{{ sub.name }}</p>
+                            <p class="text-muted-foreground mt-0.5 text-[9px]">
+                              语言: {{ formatLang(sub) }} | 格式: {{ sub.format }}
+                            </p>
                           </div>
                         </div>
-                        <div class="flex items-center gap-1.5 shrink-0">
-                          <button
-                            @click="handleDownloadSubtitle(sub, ep.path)"
+                        <div class="flex shrink-0 items-center gap-1.5">
+                          <Button
+                            variant="outline"
+                            size="xs"
                             :disabled="isSubDownloading(getSubtitleKey(sub, ep.path))"
-                            class="text-[10px] bg-blue-500/10 text-blue-400 hover:bg-blue-500/20 border border-blue-500/20 px-1.5 py-0.5 rounded transition-colors cursor-pointer flex items-center gap-1 shrink-0"
                             title="下载字幕文件"
+                            @click="handleDownloadSubtitle(sub, ep.path)"
                           >
-                            <Download v-if="!isSubDownloading(getSubtitleKey(sub, ep.path))" class="h-3 w-3" />
-                            <Loader2 v-else class="h-3 w-3 animate-spin" />
-                            <span>下载</span>
-                          </button>
-                          <button
+                            <Spinner v-if="isSubDownloading(getSubtitleKey(sub, ep.path))" data-icon="inline-start" />
+                            <DownloadIcon v-else data-icon="inline-start" />
+                            下载
+                          </Button>
+                          <Button
                             v-if="formatLang(sub) === '繁体中文'"
-                            @click="handleConvertSubtitle(sub, false, ep.path)"
+                            variant="secondary"
+                            size="xs"
+                            class="text-warning"
                             :disabled="isConverting"
-                            class="text-[10px] bg-amber-500/10 text-amber-500 hover:bg-amber-500/20 border border-amber-500/20 px-1.5 py-0.5 rounded transition-colors cursor-pointer"
                             title="转换为简体字幕"
+                            @click="handleConvertSubtitle(sub, false, ep.path)"
                           >
                             繁转简
-                          </button>
-                          <button
+                          </Button>
+                          <Button
                             v-if="sub.type === 'external'"
-                            @click="handleDeleteSubtitle(sub.path, false)"
-                            class="text-slate-500 hover:text-rose-500 p-1.5 rounded-lg hover:bg-rose-500/10 transition-all cursor-pointer shrink-0"
+                            variant="ghost"
+                            size="icon-xs"
+                            class="text-muted-foreground hover:text-destructive"
                             title="删除外挂字幕"
+                            @click="handleDeleteSubtitle(sub.path, false)"
                           >
-                            <Trash2 class="h-3.5 w-3.5" />
-                          </button>
+                            <Trash2Icon />
+                          </Button>
                         </div>
                       </div>
                     </div>
-                    <div v-else class="text-xs text-slate-500 italic p-2 text-center bg-slate-950/10 rounded">
-                      暂无字幕，请在右侧点击“上传字幕”添加。
-                    </div>
+                    <p v-else class="bg-muted/20 text-muted-foreground rounded-lg p-2 text-center text-xs italic">
+                      暂无字幕，请在右侧点击「上传字幕」添加。
+                    </p>
                   </div>
                 </div>
               </div>
             </div>
 
-            <!-- Batch Mode Interface -->
-            <div v-else class="space-y-6">
-              <div class="flex items-center gap-3 pb-3 border-b border-slate-800">
-                <button
-                  @click="isBatchMode = false"
-                  class="text-slate-400 hover:text-slate-100 flex items-center gap-1.5 text-sm cursor-pointer"
-                  :disabled="isBatchUploading"
-                >
-                  <ArrowLeft class="h-4 w-4" />
-                  <span>返回剧集列表</span>
-                </button>
-                <span class="text-slate-500">|</span>
-                <span class="text-sm font-bold text-slate-200">批量上传整季字幕</span>
+            <!-- 批量模式 -->
+            <div v-else class="flex flex-col gap-6">
+              <div class="border-border flex items-center gap-3 border-b pb-3">
+                <Button variant="ghost" size="sm" :disabled="isBatchUploading" @click="isBatchMode = false">
+                  <ArrowLeftIcon data-icon="inline-start" />
+                  返回剧集列表
+                </Button>
+                <span class="text-sm font-bold">批量上传整季字幕</span>
               </div>
 
-              <!-- Batch Drag & Drop Zone -->
               <div
+                class="hover:border-primary/50 bg-muted/20 flex flex-col items-center justify-center rounded-lg border-2 border-dashed p-6 transition-colors"
                 @dragover="handleDragOver"
                 @drop="(e) => handleDrop(e, 'batch')"
-                class="border-2 border-dashed border-slate-800 rounded-xl p-6 flex flex-col items-center justify-center bg-slate-950/20 hover:border-amber-500/50 transition-colors"
               >
-                <Upload class="h-10 w-10 text-slate-500 mb-3" />
-                <p class="text-sm text-slate-300 font-semibold mb-1">拖拽本季多个字幕文件到此处</p>
-                <p class="text-xs text-slate-500 mb-3">支持文件名含类似 E01、S01E02、03 等集数编号进行自动识别匹配</p>
+                <UploadIcon class="text-muted-foreground mb-3 size-10" />
+                <p class="mb-1 text-sm font-semibold">拖拽本季多个字幕文件到此处</p>
+                <p class="text-muted-foreground mb-3 text-xs">支持文件名含类似 E01、S01E02、03 等集数编号进行自动识别匹配</p>
                 <input
                   id="batchFileInput"
                   type="file"
@@ -1220,85 +1241,65 @@ onMounted(async () => {
                   accept=".srt,.ass,.ssa,.sbv,.webvtt"
                   @change="handleBatchFilesChange"
                 />
-                <Button
-                  @click="triggerBatchFilesSelect"
-                  :disabled="isBatchUploading"
-                  class="bg-amber-500 hover:bg-amber-600 text-slate-950 font-semibold text-xs py-1.5 px-4"
-                >
+                <Button size="sm" :disabled="isBatchUploading" @click="triggerBatchFilesSelect">
                   多选本地字幕
                 </Button>
               </div>
 
-              <!-- Batch Files List & Matching -->
-              <div v-if="batchFiles.length > 0" class="space-y-4">
+              <div v-if="batchFiles.length > 0" class="flex flex-col gap-4">
                 <div class="flex items-center justify-between">
-                  <h4 class="text-xs font-bold text-slate-400">已选字幕与剧集匹配表</h4>
-                  <span class="text-[10px] text-slate-500">未指定匹配集的字幕文件不会上传</span>
+                  <h4 class="text-muted-foreground text-xs font-bold">已选字幕与剧集匹配表</h4>
+                  <span class="text-muted-foreground text-[10px]">未指定匹配集的字幕文件不会上传</span>
                 </div>
 
-                <div class="border border-slate-800 rounded-xl overflow-hidden divide-y divide-slate-800 max-h-80 overflow-y-auto">
+                <div class="divide-border max-h-80 overflow-y-auto rounded-lg border">
                   <div
                     v-for="(item, index) in batchFiles"
                     :key="index"
-                    class="p-3 flex items-center justify-between gap-4 hover:bg-slate-950/10 transition-colors"
+                    class="hover:bg-muted/30 flex items-center justify-between gap-4 p-3 transition-colors"
                   >
-                    <span class="text-xs text-slate-300 truncate max-w-[350px] font-mono" :title="item.file.name">
+                    <span class="max-w-[350px] truncate font-mono text-xs" :title="item.file.name">
                       {{ item.file.name }}
                     </span>
                     <div class="flex items-center gap-3">
-                      <!-- Episode Dropdown Selector -->
-                      <select
-                        v-model="item.episodeId"
-                        class="bg-slate-950 border border-slate-800 text-slate-300 rounded px-2.5 py-1 text-xs focus:outline-none focus:border-amber-500"
+                      <Select v-model="item.episodeId" :disabled="isBatchUploading">
+                        <SelectTrigger size="sm" class="w-56">
+                          <SelectValue placeholder="-- 选择对应集 --" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectGroup>
+                            <SelectItem v-for="(ep, epIdx) in episodes" :key="ep.id" :value="ep.id">第 {{ epIdx + 1 }} 集 - {{ ep.title || '单集' }}</SelectItem>
+                          </SelectGroup>
+                        </SelectContent>
+                      </Select>
+                      <Button
+                        variant="ghost"
+                        size="icon-xs"
+                        class="text-muted-foreground hover:text-destructive"
                         :disabled="isBatchUploading"
-                      >
-                        <option :value="null">-- 选择对应集 --</option>
-                        <option v-for="(ep, epIdx) in episodes" :key="ep.id" :value="ep.id">
-                          第 {{ epIdx + 1 }} 集 - {{ ep.title || '单集' }}
-                        </option>
-                      </select>
-                      <button
+                        aria-label="移除该文件"
                         @click="removeFileFromBatch(index)"
-                        class="text-slate-500 hover:text-rose-500 p-1 cursor-pointer"
-                        :disabled="isBatchUploading"
                       >
-                        <X class="h-4 w-4" />
-                      </button>
+                        <XIcon />
+                      </Button>
                     </div>
                   </div>
                 </div>
 
-                <!-- Progress bar -->
-                <div v-if="isBatchUploading" class="bg-slate-950 border border-slate-800 rounded-xl p-4 space-y-2.5">
-                  <div class="flex justify-between text-xs font-bold text-amber-500">
-                    <span>正在批量上传 ({{ batchProgress.current }} / {{ batchProgress.total }})...</span>
+                <div v-if="isBatchUploading" class="flex flex-col gap-2.5 rounded-lg border p-4">
+                  <div class="text-warning flex justify-between text-xs font-bold">
+                    <span>正在批量上传 ({{ batchProgress.current }} / {{ batchProgress.total }})…</span>
                     <span>{{ Math.round((batchProgress.current / batchProgress.total) * 100) }}%</span>
                   </div>
-                  <div class="w-full bg-slate-800 h-2 rounded-full overflow-hidden">
-                    <div
-                      class="bg-amber-500 h-full transition-all duration-300"
-                      :style="{ width: (batchProgress.current / batchProgress.total) * 100 + '%' }"
-                    ></div>
-                  </div>
-                  <p class="text-[10px] text-slate-500 truncate">当前文件: {{ batchProgress.currentName }}</p>
+                  <Progress :model-value="(batchProgress.current / batchProgress.total) * 100" />
+                  <p class="text-muted-foreground truncate text-[10px]">当前文件: {{ batchProgress.currentName }}</p>
                 </div>
 
-                <!-- Actions -->
                 <div class="flex justify-end gap-2.5 pt-3">
-                  <Button
-                    @click="isBatchMode = false"
-                    :disabled="isBatchUploading"
-                    class="bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 font-semibold"
-                  >
-                    取消
-                  </Button>
-                  <Button
-                    @click="startBatchUpload"
-                    :disabled="isBatchUploading"
-                    class="bg-amber-500 hover:bg-amber-600 text-slate-950 font-bold flex items-center gap-1.5"
-                  >
-                    <Check class="h-4 w-4" />
-                    <span>确认开始上传</span>
+                  <Button variant="outline" :disabled="isBatchUploading" @click="isBatchMode = false">取消</Button>
+                  <Button :disabled="isBatchUploading" @click="startBatchUpload">
+                    <CheckIcon data-icon="inline-start" />
+                    确认开始上传
                   </Button>
                 </div>
               </div>
@@ -1306,41 +1307,10 @@ onMounted(async () => {
           </div>
         </div>
 
-        <!-- Dialog Footer -->
-        <div class="p-6 border-t border-slate-800 flex justify-end gap-3 bg-slate-950/20">
-          <Button
-            @click="closeDialog"
-            :disabled="isUploading || isBatchUploading"
-            class="bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 font-semibold"
-          >
-            关闭面板
-          </Button>
+        <div class="border-border bg-muted/20 flex justify-end gap-3 border-t p-6">
+          <Button variant="outline" :disabled="isUploading || isBatchUploading" @click="closeDialog">关闭面板</Button>
         </div>
-      </div>
-    </div>
-    <!-- Custom Confirmation Dialog -->
-    <div
-      v-if="isConfirmOpen"
-      class="fixed inset-0 z-[100] flex items-center justify-center bg-slate-950/80 backdrop-blur-sm p-4 animate-in fade-in duration-200"
-    >
-      <div class="bg-slate-900 border border-slate-800 rounded-2xl w-full max-w-md shadow-2xl p-6 space-y-4">
-        <h3 class="text-lg font-bold text-slate-100">{{ confirmTitle }}</h3>
-        <p class="text-sm text-slate-400 leading-relaxed">{{ confirmMessage }}</p>
-        <div class="flex justify-end gap-3 pt-2">
-          <Button
-            @click="handleConfirmNo"
-            class="bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 text-xs py-1.5 px-4 rounded font-semibold cursor-pointer"
-          >
-            取消
-          </Button>
-          <Button
-            @click="handleConfirmYes"
-            class="bg-amber-500 hover:bg-amber-600 text-slate-950 font-bold text-xs py-1.5 px-4 rounded cursor-pointer"
-          >
-            确认
-          </Button>
-        </div>
-      </div>
-    </div>
+      </DialogContent>
+    </Dialog>
   </div>
 </template>

@@ -1,14 +1,17 @@
 <script setup lang="ts">
 import { ref } from 'vue'
-import { useRouter, useRoute } from 'vue-router'
+import { useRoute, useRouter } from 'vue-router'
 import {
-  LayoutDashboard,
-  Film,
-  Sparkles,
   ArrowLeftRight,
+  Film,
+  LayoutDashboard,
+  Menu,
+  Search,
   Settings,
-  Menu
+  Sparkles,
 } from 'lucide-vue-next'
+import { Button } from '@/components/ui/button'
+import { cn } from '@/lib/utils'
 
 const router = useRouter()
 const route = useRoute()
@@ -18,64 +21,62 @@ const menuItems = [
   { name: '媒体库', path: '/library', icon: Film },
   { name: '智能刮削', path: '/scrape', icon: Sparkles },
   { name: '文件整理', path: '/transfer', icon: ArrowLeftRight },
+  { name: '搜索下载', path: '/search', icon: Search },
   { name: '系统设置', path: '/settings', icon: Settings },
 ]
 
 const isCollapsed = ref(false)
 
-const navigate = (path: string) => {
-  router.push(path)
-}
-
-const toggleSidebar = () => {
-  isCollapsed.value = !isCollapsed.value
-}
+const isActive = (path: string) => route.path.startsWith(path)
 </script>
 
 <template>
   <aside
-    :class="[
-      'h-screen bg-slate-900 border-r border-slate-800 text-slate-100 flex flex-col transition-all duration-300',
-      isCollapsed ? 'w-16' : 'w-64'
-    ]"
+    :class="
+      cn(
+        'bg-sidebar text-sidebar-foreground border-sidebar-border flex h-screen flex-col border-r transition-all duration-300',
+        isCollapsed ? 'w-16' : 'w-64',
+      )
+    "
   >
-    <!-- Logo area -->
-    <div class="h-16 flex items-center justify-between px-4 border-b border-slate-800">
+    <div class="border-sidebar-border flex h-16 items-center justify-between border-b px-4">
       <div v-if="!isCollapsed" class="flex items-center gap-2">
-        <Film class="h-6 w-6 text-amber-500" />
-        <span class="font-bold text-lg tracking-wider text-amber-500">BUJIC MOVIE</span>
+        <Film class="text-primary size-6" />
+        <span class="text-primary text-lg font-bold tracking-wider">BUJIC MOVIE</span>
       </div>
       <div v-else class="mx-auto">
-        <Film class="h-6 w-6 text-amber-500" />
+        <Film class="text-primary size-6" />
       </div>
-      <button
-        @click="toggleSidebar"
-        class="text-slate-400 hover:text-slate-200 transition-colors p-1 rounded hover:bg-slate-800"
+      <Button
+        variant="ghost"
+        size="icon-sm"
+        :aria-label="isCollapsed ? '展开侧栏' : '收起侧栏'"
+        @click="isCollapsed = !isCollapsed"
       >
-        <Menu class="h-5 w-5" />
-      </button>
+        <Menu data-icon="inline-start" />
+      </Button>
     </div>
 
-    <!-- Navigation items -->
-    <nav class="flex-1 py-4 space-y-1 px-2">
-      <button
+    <nav class="flex flex-1 flex-col gap-1 px-2 py-4">
+      <Button
         v-for="item in menuItems"
         :key="item.path"
-        @click="navigate(item.path)"
-        :class="[
-          'w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-all duration-200 group',
-          route.path.startsWith(item.path)
-            ? 'bg-amber-500/10 text-amber-500 border-l-2 border-amber-500'
-            : 'text-slate-400 hover:bg-slate-800/50 hover:text-slate-100'
-        ]"
+        :variant="isActive(item.path) ? 'secondary' : 'ghost'"
+        :class="
+          cn(
+            'h-auto w-full justify-start gap-3 px-3 py-2.5 font-medium',
+            isActive(item.path) && 'text-primary',
+          )
+        "
+        :aria-current="isActive(item.path) ? 'page' : undefined"
+        @click="router.push(item.path)"
       >
-        <component :is="item.icon" class="h-5 w-5 shrink-0" />
-        <span v-if="!isCollapsed" class="transition-opacity duration-200">{{ item.name }}</span>
-      </button>
+        <component :is="item.icon" data-icon="inline-start" class="size-5 shrink-0" />
+        <span v-if="!isCollapsed">{{ item.name }}</span>
+      </Button>
     </nav>
 
-    <!-- Footer / Version -->
-    <div class="p-4 border-t border-slate-800 text-xs text-slate-500 text-center">
+    <div class="border-sidebar-border text-muted-foreground border-t p-4 text-center text-xs">
       <span v-if="!isCollapsed">Bujic Movie v1.0.0</span>
       <span v-else>v1.0</span>
     </div>

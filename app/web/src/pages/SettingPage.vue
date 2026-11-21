@@ -1,27 +1,65 @@
 <script setup lang="ts">
-import { ref, computed, onMounted, onUnmounted, watch } from 'vue'
-import client from '@/api/client'
-import { Card, CardHeader, CardTitle, CardDescription, CardContent } from '@/components/ui/card'
-import { Input } from '@/components/ui/input'
-import { Button } from '@/components/ui/button'
-import { Switch } from '@/components/ui/switch'
-import { Save, Loader2, CheckCircle2, Plus, Trash2, Star, Film, Tv, KeyRound, Server, Plug, RefreshCw, SlidersHorizontal, FolderTree, ShieldCheck, Clapperboard, Bell, Send, Bot, Copy, History } from 'lucide-vue-next'
-import { useConfirm } from '@/composables/useConfirm'
+import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import { toast } from 'vue-sonner'
+import {
+  BellIcon,
+  BotIcon,
+  CheckCircle2Icon,
+  CircleAlertIcon,
+  ClapperboardIcon,
+  CopyIcon,
+  FilmIcon,
+  FolderTreeIcon,
+  HardDriveIcon,
+  HistoryIcon,
+  KeyRoundIcon,
+  PencilIcon,
+  PlugIcon,
+  PlusIcon,
+  RefreshCwIcon,
+  SaveIcon,
+  SendIcon,
+  ServerIcon,
+  ShieldCheckIcon,
+  SlidersHorizontalIcon,
+  StarIcon,
+  Trash2Icon,
+  TvIcon,
+} from 'lucide-vue-next'
+import PageSection from '@/components/common/PageSection.vue'
+import DownloadClientPanel from '@/components/search/DownloadClientPanel.vue'
+import client from '@/api/client'
+import { useConfirm } from '@/composables/useConfirm'
+import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
+import { Badge } from '@/components/ui/badge'
+import { Button } from '@/components/ui/button'
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
+import { Checkbox } from '@/components/ui/checkbox'
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog'
+import { Empty, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from '@/components/ui/empty'
+import { Field, FieldContent, FieldDescription, FieldGroup, FieldLabel } from '@/components/ui/field'
+import { Input } from '@/components/ui/input'
+import { Select, SelectContent, SelectGroup, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
+import { Spinner } from '@/components/ui/spinner'
+import { Switch } from '@/components/ui/switch'
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
+import { Textarea } from '@/components/ui/textarea'
 import { encryptAESGCM } from '@/lib/crypto'
-import { copyText } from '@/lib/utils'
+import { copyText, EMPTY_SELECT_VALUE, fromSelectValue, toSelectValue } from '@/lib/utils'
 
 const { confirm } = useConfirm()
 
-type TabKey = 'general' | 'directories' | 'servers' | 'notify' | 'security' | 'mcp'
+type TabKey = 'general' | 'directories' | 'servers' | 'clients' | 'notify' | 'security' | 'mcp' | 'search'
 const activeTab = ref<TabKey>('general')
 const tabs: { key: TabKey; label: string; icon: any }[] = [
-  { key: 'general', label: '常规', icon: SlidersHorizontal },
-  { key: 'directories', label: '目录管理', icon: FolderTree },
-  { key: 'servers', label: '媒体服务器', icon: Server },
-  { key: 'notify', label: '通知配置', icon: Bell },
-  { key: 'security', label: '安全', icon: ShieldCheck },
-  { key: 'mcp', label: 'MCP / API Key', icon: Bot },
+  { key: 'general', label: '常规', icon: SlidersHorizontalIcon },
+  { key: 'directories', label: '目录管理', icon: FolderTreeIcon },
+  { key: 'servers', label: '媒体服务器', icon: ServerIcon },
+  { key: 'clients', label: '下载器', icon: HardDriveIcon },
+  { key: 'notify', label: '通知配置', icon: BellIcon },
+  { key: 'security', label: '安全', icon: ShieldCheckIcon },
+  { key: 'mcp', label: 'MCP / API Key', icon: BotIcon },
+  { key: 'search', label: '搜索下载', icon: PlugIcon },
 ]
 
 const settings = ref({
@@ -32,6 +70,10 @@ const settings = ref({
   auto_scrape: true,
   scrape_person: false,
   lock_nfo: false,
+  search_proxy: '',
+  search_definition_source: '',
+  search_definition_version: '',
+  search_auto_sync: true,
 })
 
 const cards = ref<any[]>([])
@@ -92,6 +134,34 @@ const fetchCards = async () => {
   } catch (err) {
     console.error('Failed to load cards', err)
   }
+}
+
+const searchProxyMsg = ref('')
+const searchProxyMsgOk = ref(true)
+const isTestingProxy = ref(false)
+
+const testProxy = async () => {
+  searchProxyMsg.value = ''
+  isTestingProxy.value = true
+  try {
+    const res: any = await client.put('/api/v1/settings', settings.value)
+    if (res.code !== 0) throw new Error(res.msg || '保存失败')
+    const res2: any = await client.post('/api/v1/search/proxy-test', {}, { timeout: 20000 })
+    const data = res2.data ?? {}
+    if (!data.ok) throw new Error(data.message || '代理不可用')
+    searchProxyMsgOk.value = true
+    searchProxyMsg.value = `${data.message}，耗时 ${data.elapsed_ms}ms`
+  } catch (err: any) {
+    searchProxyMsgOk.value = false
+    searchProxyMsg.value = err?.msg || String(err?.message || err)
+  } finally {
+    isTestingProxy.value = false
+  }
+}
+
+const clearProxy = async () => {
+  settings.value.search_proxy = ''
+  await saveSettings()
 }
 
 const saveSettings = async () => {
@@ -712,10 +782,8 @@ const openRecords = async () => {
   await fetchMCPRecords()
 }
 
-const keyStatusBadge = (s: string) =>
-  s === 'active'
-    ? 'bg-emerald-500/15 text-emerald-400 border-emerald-500/30'
-    : 'bg-rose-500/15 text-rose-400 border-rose-500/30'
+/** Key 状态用 Badge 表达。 */
+const keyStatusTone = (s: string) => (s === 'active' ? { variant: 'secondary' as const, tone: 'text-success' } : { variant: 'destructive' as const, tone: '' })
 
 onMounted(() => {
   fetchSettings()
@@ -741,844 +809,914 @@ onUnmounted(() => {
 </script>
 
 <template>
-  <div class="space-y-6">
-    <!-- Page header -->
+  <div class="flex flex-col gap-6">
     <div>
-      <h1 class="text-3xl font-extrabold tracking-tight text-slate-100">系统设置</h1>
-      <p class="text-slate-400 mt-1">配置刮削与文件整理参数，并持久化存储在服务器。</p>
+      <h1 class="text-2xl font-bold tracking-tight">系统设置</h1>
+      <p class="text-muted-foreground mt-1 text-sm">配置刮削与文件整理参数，并持久化存储在服务器。</p>
     </div>
 
     <div v-if="isLoading" class="flex items-center justify-center py-20">
-      <Loader2 class="h-8 w-8 text-amber-500 animate-spin" />
+      <Spinner class="text-primary" />
     </div>
 
-    <template v-else>
-      <!-- Tab navigation -->
-      <nav class="inline-flex gap-1 p-1 rounded-xl bg-slate-900/70 border border-slate-800 overflow-x-auto max-w-full">
-        <button
-          v-for="t in tabs"
-          :key="t.key"
-          type="button"
-          @click="activeTab = t.key"
-          :class="[
-            'flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-semibold whitespace-nowrap transition-all duration-200',
-            activeTab === t.key
-              ? 'bg-amber-500 text-slate-950 shadow-lg shadow-amber-500/20'
-              : 'text-slate-400 hover:text-slate-100 hover:bg-slate-800/60',
-          ]"
-        >
-          <component :is="t.icon" class="h-4 w-4" />
+    <Tabs v-else v-model="activeTab" class="flex flex-col gap-6">
+      <TabsList variant="line" class="max-w-full flex-wrap">
+        <TabsTrigger v-for="t in tabs" :key="t.key" :value="t.key" class="flex-none">
+          <component :is="t.icon" data-icon="inline-start" />
           {{ t.label }}
-        </button>
-      </nav>
+        </TabsTrigger>
+      </TabsList>
 
-      <!-- Tab panels -->
-      <Transition name="panel" mode="out-in">
-        <div :key="activeTab" class="space-y-6 stagger">
-          <!-- ===================== 常规 ===================== -->
-          <template v-if="activeTab === 'general'">
-            <div class="flex items-center justify-between gap-4 mb-2">
-              <div class="min-w-0">
-                <h2 class="text-xl font-bold text-slate-100">常规</h2>
-                <p class="text-slate-400 text-sm truncate">TMDB 配置与整理、刮削规则</p>
+      <!-- ===================== 常规 ===================== -->
+      <TabsContent value="general" class="flex flex-col gap-4">
+        <PageSection title="常规" description="TMDB 配置与整理、刮削规则">
+          <Button :disabled="isSaving" @click="saveSettings">
+            <Spinner v-if="isSaving" data-icon="inline-start" />
+            <SaveIcon v-else data-icon="inline-start" />
+            保存设置
+          </Button>
+        </PageSection>
+
+        <Alert v-if="successMsg" class="text-success">
+          <CheckCircle2Icon />
+          <AlertTitle>配置保存成功</AlertTitle>
+        </Alert>
+
+        <Card>
+          <CardHeader>
+            <CardTitle class="flex items-center gap-2">
+              <ClapperboardIcon class="text-primary size-5" />
+              TMDB API 配置
+            </CardTitle>
+            <CardDescription>
+              刮削媒体墙海报及 NFO 文件必须配置此项。
+              <a
+                href="https://www.themoviedb.org/settings/api"
+                target="_blank"
+                rel="noopener noreferrer"
+                class="text-primary hover:underline"
+              >点此获取 API 密钥</a>
+            </CardDescription>
+          </CardHeader>
+          <CardContent>
+            <FieldGroup class="gap-4 md:grid md:grid-cols-2">
+              <Field>
+                <FieldLabel for="tmdb-key">TMDB API Key</FieldLabel>
+                <Input id="tmdb-key" v-model="settings.tmdb_api_key" type="password" placeholder="填入您的 TMDB API Key" />
+              </Field>
+              <Field>
+                <FieldLabel for="tmdb-lang">刮削首选语言</FieldLabel>
+                <Select v-model="settings.tmdb_language">
+                  <SelectTrigger id="tmdb-lang" class="w-full"><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    <SelectGroup>
+                      <SelectItem value="zh-CN">简体中文 (zh-CN)</SelectItem>
+                      <SelectItem value="zh-TW">繁体中文 (zh-TW)</SelectItem>
+                      <SelectItem value="en-US">英文 (en-US)</SelectItem>
+                    </SelectGroup>
+                  </SelectContent>
+                </Select>
+              </Field>
+            </FieldGroup>
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardHeader>
+            <CardTitle class="flex items-center gap-2">
+              <SlidersHorizontalIcon class="text-primary size-5" />
+              整理与刮削规则
+            </CardTitle>
+            <CardDescription>调整文件转移策略与覆盖机制</CardDescription>
+          </CardHeader>
+          <CardContent>
+            <FieldGroup class="gap-4 md:grid md:grid-cols-3">
+              <Field>
+                <FieldLabel for="transfer-mode-setting">转移模式</FieldLabel>
+                <Select v-model="settings.transfer_mode">
+                  <SelectTrigger id="transfer-mode-setting" class="w-full"><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    <SelectGroup>
+                      <SelectItem value="copy">复制 (Copy) — 占双倍硬盘空间</SelectItem>
+                      <SelectItem value="move">移动 (Move) — 源文件将被清除</SelectItem>
+                      <SelectItem value="link">硬链接 (Link) — 推荐，不占空间可双向删除</SelectItem>
+                      <SelectItem value="softlink">软链接 (Softlink) — 快捷方式</SelectItem>
+                    </SelectGroup>
+                  </SelectContent>
+                </Select>
+              </Field>
+              <Field>
+                <FieldLabel for="overwrite-mode-setting">覆盖冲突模式</FieldLabel>
+                <Select v-model="settings.overwrite_mode">
+                  <SelectTrigger id="overwrite-mode-setting" class="w-full"><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    <SelectGroup>
+                      <SelectItem value="never">从不覆盖 (Never)</SelectItem>
+                      <SelectItem value="always">总是覆盖 (Always)</SelectItem>
+                      <SelectItem value="size">大文件覆盖小文件 (Size) — 推荐</SelectItem>
+                      <SelectItem value="latest">仅覆盖同季同集视频 (Latest)</SelectItem>
+                    </SelectGroup>
+                  </SelectContent>
+                </Select>
+              </Field>
+              <Field orientation="horizontal">
+                <Switch id="auto-scrape" v-model="settings.auto_scrape" />
+                <FieldLabel for="auto-scrape">整理后自动触发刮削</FieldLabel>
+              </Field>
+
+              <Field orientation="horizontal" class="md:col-span-3">
+                <Switch id="scrape-person-toggle" v-model="settings.scrape_person" />
+                <FieldContent>
+                  <FieldLabel for="scrape-person-toggle">启用演职人员刮削</FieldLabel>
+                  <FieldDescription>
+                    开启后，写入 NFO 的 <code>&lt;actor&gt;</code> 字段会包含主要演职人员（与电影/电视剧均生效）。
+                  </FieldDescription>
+                </FieldContent>
+              </Field>
+
+              <Field orientation="horizontal" class="md:col-span-3">
+                <Switch id="lock-nfo-toggle" v-model="settings.lock_nfo" />
+                <FieldContent>
+                  <FieldLabel for="lock-nfo-toggle">锁定 NFO 文件</FieldLabel>
+                  <FieldDescription>
+                    开启后，写入 NFO 的 <code>&lt;lockdata&gt;</code> 字段将被设为 true，防止被媒体服务器自动修改/覆盖。
+                  </FieldDescription>
+                </FieldContent>
+              </Field>
+            </FieldGroup>
+          </CardContent>
+        </Card>
+      </TabsContent>
+
+      <!-- ===================== 目录管理 ===================== -->
+      <TabsContent value="directories" class="flex flex-col gap-4">
+        <PageSection title="目录管理" description="配置下载源目录、归档目录和媒体类型，支持多目录管理">
+          <Button @click="openNewCard">
+            <PlusIcon data-icon="inline-start" />
+            添加目录
+          </Button>
+        </PageSection>
+
+        <Alert v-if="cardSuccessMsg" class="text-success">
+          <CheckCircle2Icon />
+          <AlertTitle>{{ cardSuccessMsg }}</AlertTitle>
+        </Alert>
+
+        <Card v-if="showCardForm" class="border-primary/30">
+          <CardHeader>
+            <CardTitle>{{ editingCard?.id ? '编辑目录' : '新建目录' }}</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <FieldGroup class="gap-4">
+              <div class="grid gap-4 md:grid-cols-2">
+                <Field>
+                  <FieldLabel for="card-name">名称</FieldLabel>
+                  <Input id="card-name" v-model="editingCard.name" placeholder="例如: 电影整理" />
+                </Field>
+                <Field>
+                  <FieldLabel for="card-media-type">媒体类型</FieldLabel>
+                  <Select v-model="editingCard.media_type">
+                    <SelectTrigger id="card-media-type" class="w-full"><SelectValue /></SelectTrigger>
+                    <SelectContent>
+                      <SelectGroup>
+                        <SelectItem value="movie">电影 (Movie)</SelectItem>
+                        <SelectItem value="tv">电视剧 (TV)</SelectItem>
+                      </SelectGroup>
+                    </SelectContent>
+                  </Select>
+                </Field>
               </div>
-              <Button @click="saveSettings" :disabled="isSaving" class="shrink-0 bg-amber-500 hover:bg-amber-600 text-slate-950 font-bold flex items-center gap-2">
-                <Loader2 v-if="isSaving" class="h-4 w-4 animate-spin" />
-                <Save v-else class="h-4 w-4" />
-                保存设置
-              </Button>
-            </div>
-
-            <div v-if="successMsg" class="bg-green-500/10 border border-green-500/20 text-green-400 text-sm px-4 py-3 rounded-lg flex items-center gap-2">
-              <CheckCircle2 class="h-5 w-5" />
-              <span>{{ successMsg }}</span>
-            </div>
-
-            <!-- TMDB settings -->
-            <Card class="bg-slate-900 border-slate-800 text-slate-100">
-              <CardHeader>
-                <CardTitle class="text-amber-500 flex items-center gap-2">
-                  <Clapperboard class="h-5 w-5" />
-                  TMDB API 配置
-                </CardTitle>
-                <CardDescription class="text-slate-400 flex items-center gap-1.5 flex-wrap">
-                  <span>刮削媒体墙海报及 NFO 文件必须配置此项。</span>
-                  <a href="https://www.themoviedb.org/settings/api" target="_blank" rel="noopener noreferrer" class="text-amber-500 hover:text-amber-400 hover:underline inline-flex items-center gap-0.5">
-                    点此获取 API 密钥
-                    <svg class="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" /></svg>
-                  </a>
-                </CardDescription>
-              </CardHeader>
-              <CardContent class="grid gap-6 md:grid-cols-2">
-                <div class="space-y-1.5">
-                  <label class="text-xs font-semibold text-slate-400">TMDB API Key</label>
-                  <Input v-model="settings.tmdb_api_key" type="password" placeholder="填入您的 TMDB API Key" class="bg-slate-950 border-slate-800 text-slate-100" />
-                </div>
-                <div class="space-y-1.5">
-                  <label class="text-xs font-semibold text-slate-400">刮削首选语言</label>
-                  <select v-model="settings.tmdb_language" class="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-sm focus:outline-none text-slate-100 focus:border-amber-500">
-                    <option value="zh-CN">简体中文 (zh-CN)</option>
-                    <option value="zh-TW">繁体中文 (zh-TW)</option>
-                    <option value="en-US">英文 (en-US)</option>
-                  </select>
-                </div>
-              </CardContent>
-            </Card>
-
-            <!-- Transfer & Scrape rules -->
-            <Card class="bg-slate-900 border-slate-800 text-slate-100">
-              <CardHeader>
-                <CardTitle class="text-amber-500 flex items-center gap-2">
-                  <SlidersHorizontal class="h-5 w-5" />
-                  整理与刮削规则
-                </CardTitle>
-                <CardDescription class="text-slate-400">调整文件转移策略与覆盖机制</CardDescription>
-              </CardHeader>
-              <CardContent class="grid gap-6 md:grid-cols-3">
-                <div class="space-y-1.5">
-                  <label class="text-xs font-semibold text-slate-400">转移模式</label>
-                  <select v-model="settings.transfer_mode" class="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-sm focus:outline-none text-slate-100 focus:border-amber-500">
-                    <option value="copy">复制 (Copy) — 占双倍硬盘空间</option>
-                    <option value="move">移动 (Move) — 源文件将被清除</option>
-                    <option value="link">硬链接 (Link) — 推荐，不占空间可双向删除</option>
-                    <option value="softlink">软链接 (Softlink) — 快捷方式</option>
-                  </select>
-                </div>
-                <div class="space-y-1.5">
-                  <label class="text-xs font-semibold text-slate-400">覆盖冲突模式</label>
-                  <select v-model="settings.overwrite_mode" class="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-sm focus:outline-none text-slate-100 focus:border-amber-500">
-                    <option value="never">从不覆盖 (Never)</option>
-                    <option value="always">总是覆盖 (Always)</option>
-                    <option value="size">大文件覆盖小文件 (Size) — 推荐</option>
-                    <option value="latest">仅覆盖同季同集视频 (Latest)</option>
-                  </select>
-                </div>
-                <div class="space-y-1.5">
-                  <label class="text-xs font-semibold text-slate-400">自动刮削</label>
-                  <div class="flex items-center h-10">
-                    <label class="relative inline-flex items-center cursor-pointer">
-                      <input type="checkbox" v-model="settings.auto_scrape" class="sr-only peer" />
-                      <div class="w-11 h-6 bg-slate-800 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-slate-400 after:border-slate-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-amber-500 peer-checked:after:bg-slate-950"></div>
-                      <span class="ml-3 text-sm font-medium text-slate-300">整理后自动触发刮削</span>
-                    </label>
-                  </div>
-                </div>
-                <div class="space-y-1.5 md:col-span-3">
-                  <label class="text-xs font-semibold text-slate-400">演职人员刮削</label>
-                  <div class="flex items-center gap-3 h-10">
-                    <Switch id="scrape-person-toggle" v-model="settings.scrape_person" />
-                    <label for="scrape-person-toggle" class="cursor-pointer select-none text-sm font-medium text-slate-300">
-                      启用演职人员刮削
-                    </label>
-                    <span class="text-xs text-slate-500">开启后，写入 NFO 的 <code class="px-1 py-0.5 rounded bg-slate-800 text-slate-300">&lt;actor&gt;</code> 字段会包含主要演职人员（与电影/电视剧均生效）。</span>
-                  </div>
-                </div>
-                <div class="space-y-1.5 md:col-span-3">
-                  <label class="text-xs font-semibold text-slate-400">锁定元数据 NFO 文件</label>
-                  <div class="flex items-center gap-3 h-10">
-                    <Switch id="lock-nfo-toggle" v-model="settings.lock_nfo" />
-                    <label for="lock-nfo-toggle" class="cursor-pointer select-none text-sm font-medium text-slate-300">
-                      锁定 NFO 文件
-                    </label>
-                    <span class="text-xs text-slate-500">开启后，写入 NFO 的 <code class="px-1 py-0.5 rounded bg-slate-800 text-slate-300">&lt;lockdata&gt;</code> 字段将被设为 true，防止被媒体服务器自动修改/覆盖。</span>
-                  </div>
-                </div>
-              </CardContent>
-            </Card>
-          </template>
-
-          <!-- ===================== 目录管理 ===================== -->
-          <div v-else-if="activeTab === 'directories'">
-            <div class="flex items-center justify-between gap-4 mb-4">
-              <div class="min-w-0">
-                <h2 class="text-xl font-bold text-slate-100">目录管理</h2>
-                <p class="text-slate-400 text-sm truncate">配置下载源目录、归档目录和媒体类型，支持多目录管理</p>
-              </div>
-              <Button @click="openNewCard" class="shrink-0 bg-amber-500 hover:bg-amber-600 text-slate-950 font-bold flex items-center gap-2">
-                <Plus class="h-4 w-4" />
-                添加目录
-              </Button>
-            </div>
-
-            <div v-if="cardSuccessMsg" class="bg-green-500/10 border border-green-500/20 text-green-400 text-sm px-4 py-3 rounded-lg flex items-center gap-2 mb-4">
-              <CheckCircle2 class="h-5 w-5" />
-              <span>{{ cardSuccessMsg }}</span>
-            </div>
-
-            <!-- Card Form -->
-            <Card v-if="showCardForm" class="bg-slate-900 border-amber-500/30 text-slate-100 mb-6">
-              <CardHeader>
-                <CardTitle class="text-amber-500">{{ editingCard?.id ? '编辑目录' : '新建目录' }}</CardTitle>
-              </CardHeader>
-              <CardContent class="space-y-4">
-                <div class="grid gap-4 md:grid-cols-2">
-                  <div class="space-y-1.5">
-                    <label class="text-xs font-semibold text-slate-400">名称</label>
-                    <Input v-model="editingCard.name" placeholder="例如: 电影整理" class="bg-slate-950 border-slate-800 text-slate-100" />
-                  </div>
-                  <div class="space-y-1.5">
-                    <label class="text-xs font-semibold text-slate-400">媒体类型</label>
-                    <select v-model="editingCard.media_type" class="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-sm focus:outline-none text-slate-100 focus:border-amber-500">
-                      <option value="movie">电影 (Movie)</option>
-                      <option value="tv">电视剧 (TV)</option>
-                    </select>
-                  </div>
-                </div>
-                <div class="space-y-1.5">
-                  <label class="text-xs font-semibold text-slate-400">下载源目录</label>
-                  <Input v-model="editingCard.download_path" placeholder="例如: /downloads/movies" class="bg-slate-950 border-slate-800 text-slate-100" />
-                </div>
-                <div class="space-y-1.5">
-                  <label class="text-xs font-semibold text-slate-400">归档目录</label>
-                  <Input v-model="editingCard.archive_path" placeholder="例如: /media/Movies" class="bg-slate-950 border-slate-800 text-slate-100" />
-                </div>
-                <div class="space-y-1.5">
-                  <label class="text-xs font-semibold text-slate-400">所属媒体服务器 (整理刮削完成后自动刷新)</label>
-                  <select v-model.number="editingCard.media_library_id" class="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-sm focus:outline-none text-slate-100 focus:border-amber-500">
-                    <option :value="0">不绑定（不触发刷新）</option>
-                    <option v-for="lib in libraries" :key="lib.id" :value="lib.id">{{ lib.name }} ({{ lib.type }})</option>
-                  </select>
-                </div>
-                <div class="flex items-center gap-2">
-                  <input type="checkbox" v-model="editingCard.is_default" class="rounded border-slate-700 bg-slate-950 text-amber-500 focus:ring-amber-500" />
-                  <span class="text-sm text-slate-300">设为默认卡片</span>
-                </div>
-                <div class="flex items-center gap-2">
-                  <input type="checkbox" v-model="editingCard.watch_directory" class="rounded border-slate-700 bg-slate-950 text-amber-500 focus:ring-amber-500" />
-                  <span class="text-sm text-slate-300">开启实时目录监听 (自动整理)</span>
-                </div>
-                <div class="flex gap-3 pt-2">
-                  <Button @click="saveCard" :disabled="isCardSaving" class="bg-amber-500 hover:bg-amber-600 text-slate-950 font-bold flex items-center gap-2">
-                    <Loader2 v-if="isCardSaving" class="h-4 w-4 animate-spin" />
-                    <Save v-else class="h-4 w-4" />
-                    {{ isCardSaving ? '保存中...' : '保存目录' }}
-                  </Button>
-                  <Button @click="closeCardForm" variant="outline" class="border-slate-700 text-slate-300 hover:bg-slate-800">
-                    取消
-                  </Button>
-                </div>
-              </CardContent>
-            </Card>
-
-            <!-- Cards Grid -->
-            <div class="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
-              <Card v-for="card in cards" :key="card.id" :class="[
-                'bg-slate-900 border-slate-800 text-slate-100 transition-all hover:border-slate-700',
-                card.is_default ? 'ring-1 ring-amber-500/50' : ''
-              ]">
-                <CardHeader class="pb-3">
-                  <div class="flex items-center justify-between">
-                    <div class="flex items-center gap-2">
-                      <Film v-if="card.media_type === 'movie'" class="h-5 w-5 text-amber-500" />
-                      <Tv v-else class="h-5 w-5 text-emerald-500" />
-                      <CardTitle class="text-slate-100 text-base">{{ card.name }}</CardTitle>
-                    </div>
-                    <div class="flex items-center gap-1">
-                      <button
-                        v-if="!card.is_default"
-                        @click="setDefaultCard(card.id)"
-                        class="p-1.5 rounded hover:bg-slate-800 text-slate-500 hover:text-amber-500 transition-colors"
-                        title="设为默认"
-                      >
-                        <Star class="h-4 w-4" />
-                      </button>
-                      <Star v-else class="h-4 w-4 text-amber-500 fill-amber-500" />
-                      <button
-                        @click="openEditCard(card)"
-                        class="p-1.5 rounded hover:bg-slate-800 text-slate-500 hover:text-slate-300 transition-colors"
-                        title="编辑"
-                      >
-                        <svg class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" /></svg>
-                      </button>
-                      <button
-                        @click="deleteCard(card.id)"
-                        class="p-1.5 rounded hover:bg-slate-800 text-slate-500 hover:text-rose-500 transition-colors"
-                        title="删除"
-                      >
-                        <Trash2 class="h-4 w-4" />
-                      </button>
-                    </div>
-                  </div>
-                  <CardDescription class="text-slate-400 text-xs">
-                    {{ card.media_type === 'movie' ? '电影' : '电视剧' }}
-                    <span v-if="card.is_default" class="text-amber-500 ml-1">[默认]</span>
-                  </CardDescription>
-                </CardHeader>
-                <CardContent class="space-y-2 pt-0">
-                  <div class="text-xs">
-                    <span class="text-slate-500">下载源:</span>
-                    <span class="text-slate-300 ml-1 font-mono">{{ card.download_path }}</span>
-                  </div>
-                  <div class="text-xs">
-                    <span class="text-slate-500">归档到:</span>
-                    <span class="text-slate-300 ml-1 font-mono">{{ card.archive_path }}</span>
-                  </div>
-                  <div class="text-xs">
-                    <span class="text-slate-500">自动整理:</span>
-                    <span :class="['ml-1 font-semibold', card.watch_directory ? 'text-amber-500' : 'text-slate-400']">
-                      {{ card.watch_directory ? '已开启目录监听' : '已关闭' }}
-                    </span>
-                  </div>
-                  <div class="text-xs" v-if="card.media_library_id">
-                    <span class="text-slate-500">媒体服务器:</span>
-                    <span class="text-sky-300 ml-1">{{ libraryName(card.media_library_id) }}</span>
-                  </div>
-                </CardContent>
-              </Card>
-
-              <!-- Empty State -->
-              <div v-if="cards.length === 0" class="md:col-span-2 lg:col-span-3 text-center py-12 bg-slate-900/50 rounded-lg border border-dashed border-slate-800">
-                <p class="text-slate-500 text-sm">暂无目录，点击上方按钮添加</p>
-              </div>
-            </div>
-          </div>
-
-          <!-- ===================== 媒体服务器 ===================== -->
-          <div v-else-if="activeTab === 'servers'">
-            <div class="flex items-center justify-between gap-4 mb-4">
-              <div class="min-w-0">
-                <h2 class="text-xl font-bold text-slate-100">媒体服务器</h2>
-                <p class="text-slate-400 text-sm truncate">配置 Emby / Jellyfin / Plex，整理刮削完成后自动刷新</p>
-              </div>
-              <Button @click="openNewLibrary" class="shrink-0 bg-amber-500 hover:bg-amber-600 text-slate-950 font-bold flex items-center gap-2">
-                <Plus class="h-4 w-4" />
-                添加媒体服务器
-              </Button>
-            </div>
-
-            <div v-if="librarySuccessMsg" class="bg-green-500/10 border border-green-500/20 text-green-400 text-sm px-4 py-3 rounded-lg flex items-center gap-2 mb-4">
-              <CheckCircle2 class="h-5 w-5" />
-              <span>{{ librarySuccessMsg }}</span>
-            </div>
-
-            <!-- Library Form -->
-            <Card v-if="showLibraryForm" class="bg-slate-900 border-amber-500/30 text-slate-100 mb-6">
-              <CardHeader>
-                <CardTitle class="text-amber-500">{{ editingLibrary?.id ? '编辑媒体服务器' : '新建媒体服务器' }}</CardTitle>
-              </CardHeader>
-              <CardContent class="space-y-4">
-                <div class="grid gap-4 md:grid-cols-2">
-                  <div class="space-y-1.5">
-                    <label class="text-xs font-semibold text-slate-400">名称</label>
-                    <Input v-model="editingLibrary.name" placeholder="例如: 家庭 Emby" class="bg-slate-950 border-slate-800 text-slate-100" />
-                  </div>
-                  <div class="space-y-1.5">
-                    <label class="text-xs font-semibold text-slate-400">类型</label>
-                    <select v-model="editingLibrary.type" class="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-sm focus:outline-none text-slate-100 focus:border-amber-500">
-                      <option value="emby">Emby</option>
-                      <option value="jellyfin">Jellyfin</option>
-                      <option value="plex">Plex</option>
-                    </select>
-                  </div>
-                </div>
-                <div class="space-y-1.5">
-                  <label class="text-xs font-semibold text-slate-400">服务器地址</label>
-                  <Input v-model="editingLibrary.url" placeholder="例如: http://192.168.1.10:8096" class="bg-slate-950 border-slate-800 text-slate-100" />
-                </div>
-                <div class="space-y-1.5">
-                  <label class="text-xs font-semibold text-slate-400">{{ editingLibrary.type === 'plex' ? 'X-Plex-Token' : 'API Key' }}</label>
-                  <Input v-model="editingLibrary.api_key" type="password" placeholder="服务器密钥 / Token" class="bg-slate-950 border-slate-800 text-slate-100" />
-                </div>
-                <!-- 密钥正确时自动展示媒体库下拉 -->
-                <div class="space-y-1.5">
-                  <label class="text-xs font-semibold text-slate-400 flex items-center gap-2">
-                    刷新的媒体库
-                    <Loader2 v-if="probingLibraries" class="h-3 w-3 animate-spin text-slate-500" />
-                  </label>
-                  <select
-                    v-if="probeLibraries.length > 0"
-                    v-model="editingLibrary.library_id"
-                    @change="onLibrarySelect"
-                    class="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-sm focus:outline-none text-slate-100 focus:border-amber-500"
-                  >
-                    <option value="">全部媒体库</option>
-                    <option v-for="l in probeLibraries" :key="l.id" :value="l.id">{{ l.name }}</option>
-                  </select>
-                  <p v-else class="text-xs text-slate-500">
-                    填写正确的地址与密钥后将自动加载媒体库列表；当前默认刷新「全部媒体库」。
-                  </p>
-                </div>
-                <div class="flex items-center gap-2">
-                  <input type="checkbox" v-model="editingLibrary.enabled" class="rounded border-slate-700 bg-slate-950 text-amber-500 focus:ring-amber-500" />
-                  <span class="text-sm text-slate-300">启用此媒体服务器</span>
-                </div>
-                <div class="flex gap-3 pt-2">
-                  <Button @click="saveLibrary" :disabled="isLibrarySaving" class="bg-amber-500 hover:bg-amber-600 text-slate-950 font-bold flex items-center gap-2">
-                    <Loader2 v-if="isLibrarySaving" class="h-4 w-4 animate-spin" />
-                    <Save v-else class="h-4 w-4" />
-                    {{ isLibrarySaving ? '保存中...' : '保存媒体服务器' }}
-                  </Button>
-                  <Button @click="closeLibraryForm" variant="outline" class="border-slate-700 text-slate-300 hover:bg-slate-800">
-                    取消
-                  </Button>
-                </div>
-              </CardContent>
-            </Card>
-
-            <!-- Servers Grid -->
-            <div class="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
-              <Card v-for="lib in libraries" :key="lib.id" class="bg-slate-900 border-slate-800 text-slate-100 transition-all hover:border-slate-700">
-                <CardHeader class="pb-3">
-                  <div class="flex items-center justify-between">
-                    <div class="flex items-center gap-2">
-                      <span
-                        :class="['inline-block h-2.5 w-2.5 rounded-full shrink-0', statusMap[lib.id] ? 'bg-emerald-500 shadow-[0_0_6px_1px] shadow-emerald-500/60' : 'bg-slate-600']"
-                        :title="statusMap[lib.id] ? '在线' : '离线 / 未知'"
-                      ></span>
-                      <Server class="h-5 w-5 text-sky-400" />
-                      <CardTitle class="text-slate-100 text-base">{{ lib.name }}</CardTitle>
-                    </div>
-                    <div class="flex items-center gap-1">
-                      <button
-                        @click="refreshLibrary(lib.id)"
-                        :disabled="refreshingLibraryId === lib.id"
-                        class="p-1.5 rounded hover:bg-slate-800 text-slate-500 hover:text-amber-400 transition-colors disabled:opacity-50"
-                        title="立即刷新媒体库"
-                      >
-                        <RefreshCw :class="['h-4 w-4', refreshingLibraryId === lib.id ? 'animate-spin' : '']" />
-                      </button>
-                      <button
-                        @click="testLibrary(lib.id)"
-                        :disabled="testingLibraryId === lib.id"
-                        class="p-1.5 rounded hover:bg-slate-800 text-slate-500 hover:text-emerald-400 transition-colors disabled:opacity-50"
-                        title="测试连接"
-                      >
-                        <Loader2 v-if="testingLibraryId === lib.id" class="h-4 w-4 animate-spin" />
-                        <Plug v-else class="h-4 w-4" />
-                      </button>
-                      <button
-                        @click="openEditLibrary(lib)"
-                        class="p-1.5 rounded hover:bg-slate-800 text-slate-500 hover:text-slate-300 transition-colors"
-                        title="编辑"
-                      >
-                        <svg class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" /></svg>
-                      </button>
-                      <button
-                        @click="deleteLibrary(lib.id)"
-                        class="p-1.5 rounded hover:bg-slate-800 text-slate-500 hover:text-rose-500 transition-colors"
-                        title="删除"
-                      >
-                        <Trash2 class="h-4 w-4" />
-                      </button>
-                    </div>
-                  </div>
-                  <CardDescription class="text-slate-400 text-xs">
-                    <span class="uppercase">{{ lib.type }}</span>
-                    <span v-if="!lib.enabled" class="text-rose-400 ml-1">[已禁用]</span>
-                  </CardDescription>
-                </CardHeader>
-                <CardContent class="space-y-2 pt-0">
-                  <div class="text-xs">
-                    <span class="text-slate-500">地址:</span>
-                    <span class="text-slate-300 ml-1 font-mono break-all">{{ lib.url }}</span>
-                  </div>
-                  <div class="text-xs">
-                    <span class="text-slate-500">刷新范围:</span>
-                    <span class="text-sky-300 ml-1">{{ lib.library_name || '全部媒体库' }}</span>
-                  </div>
-                </CardContent>
-              </Card>
-
-              <!-- Empty State -->
-              <div v-if="libraries.length === 0" class="md:col-span-2 lg:col-span-3 text-center py-12 bg-slate-900/50 rounded-lg border border-dashed border-slate-800">
-                <p class="text-slate-500 text-sm">暂无媒体服务器，点击上方按钮添加</p>
-              </div>
-            </div>
-          </div>
-
-          <!-- ===================== 通知配置 ===================== -->
-          <div v-else-if="activeTab === 'notify'">
-            <div class="flex items-center justify-between gap-4 mb-4">
-              <div class="min-w-0">
-                <h2 class="text-xl font-bold text-slate-100">通知配置</h2>
-                <p class="text-slate-400 text-sm truncate">配置第三方通知渠道，刮削入库后自动推送</p>
-              </div>
-              <Button @click="openNewChannel" class="shrink-0 bg-amber-500 hover:bg-amber-600 text-slate-950 font-bold flex items-center gap-2">
-                <Plus class="h-4 w-4" />
-                添加渠道
-              </Button>
-            </div>
-
-            <div v-if="channelSuccessMsg" class="bg-green-500/10 border border-green-500/20 text-green-400 text-sm px-4 py-3 rounded-lg flex items-center gap-2 mb-4">
-              <CheckCircle2 class="h-5 w-5" />
-              <span>{{ channelSuccessMsg }}</span>
-            </div>
-
-            <!-- Channel Form -->
-            <Card v-if="showChannelForm" class="bg-slate-900 border-amber-500/30 text-slate-100 mb-6">
-              <CardHeader>
-                <CardTitle class="text-amber-500">{{ editingChannel?.id ? '编辑渠道' : '新建渠道' }}</CardTitle>
-              </CardHeader>
-              <CardContent class="space-y-4">
-                <div class="grid gap-4 md:grid-cols-2">
-                  <div class="space-y-1.5">
-                    <label class="text-xs font-semibold text-slate-400">渠道名称</label>
-                    <Input v-model="editingChannel.name" placeholder="例如: 我的企业微信" class="bg-slate-950 border-slate-800 text-slate-100" />
-                  </div>
-                  <div class="space-y-1.5">
-                    <label class="text-xs font-semibold text-slate-400">渠道类型</label>
-                    <select v-model="editingChannel.type" @change="onChannelTypeChange" class="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-sm focus:outline-none text-slate-100 focus:border-amber-500">
-                      <option v-for="t in channelTypes" :key="t.type" :value="t.type">{{ t.name }}</option>
-                    </select>
-                  </div>
-                </div>
-                <!-- 按渠道 schema 动态渲染字段 -->
-                <div v-for="f in currentChannelFields" :key="f.key" class="space-y-1.5">
-                  <label class="text-xs font-semibold text-slate-400">
-                    {{ f.label }}<span v-if="f.required" class="text-rose-400 ml-0.5">*</span>
-                  </label>
-                  <textarea
-                    v-if="f.type === 'textarea'"
-                    v-model="editingChannel.config[f.key]"
-                    :placeholder="f.placeholder"
-                    rows="3"
-                    class="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-sm focus:outline-none text-slate-100 focus:border-amber-500 font-mono"
-                  ></textarea>
-                  <Input
-                    v-else
-                    v-model="editingChannel.config[f.key]"
-                    :type="f.type === 'password' ? 'password' : 'text'"
-                    :placeholder="f.placeholder"
-                    class="bg-slate-950 border-slate-800 text-slate-100"
-                  />
-                </div>
-                <div class="flex items-center gap-2">
-                  <input type="checkbox" v-model="editingChannel.enabled" class="rounded border-slate-700 bg-slate-950 text-amber-500 focus:ring-amber-500" />
-                  <span class="text-sm text-slate-300">启用此渠道</span>
-                </div>
-                <div class="flex gap-3 pt-2">
-                  <Button @click="saveChannel" :disabled="isChannelSaving" class="bg-amber-500 hover:bg-amber-600 text-slate-950 font-bold flex items-center gap-2">
-                    <Loader2 v-if="isChannelSaving" class="h-4 w-4 animate-spin" />
-                    <Save v-else class="h-4 w-4" />
-                    {{ isChannelSaving ? '保存中...' : '保存渠道' }}
-                  </Button>
-                  <Button @click="closeChannelForm" variant="outline" class="border-slate-700 text-slate-300 hover:bg-slate-800">
-                    取消
-                  </Button>
-                </div>
-              </CardContent>
-            </Card>
-
-            <!-- Channels Grid -->
-            <div class="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
-              <Card v-for="ch in notifyChannels" :key="ch.id" class="bg-slate-900 border-slate-800 text-slate-100 transition-all hover:border-slate-700">
-                <CardHeader class="pb-3">
-                  <div class="flex items-center justify-between">
-                    <div class="flex items-center gap-2">
-                      <Bell class="h-5 w-5 text-amber-400" />
-                      <CardTitle class="text-slate-100 text-base">{{ ch.name }}</CardTitle>
-                    </div>
-                    <div class="flex items-center gap-1">
-                      <button
-                        @click="testChannel(ch.id)"
-                        :disabled="testingChannelId === ch.id"
-                        class="p-1.5 rounded hover:bg-slate-800 text-slate-500 hover:text-emerald-400 transition-colors disabled:opacity-50"
-                        title="测试发送"
-                      >
-                        <Loader2 v-if="testingChannelId === ch.id" class="h-4 w-4 animate-spin" />
-                        <Send v-else class="h-4 w-4" />
-                      </button>
-                      <button
-                        @click="openEditChannel(ch)"
-                        class="p-1.5 rounded hover:bg-slate-800 text-slate-500 hover:text-slate-300 transition-colors"
-                        title="编辑"
-                      >
-                        <svg class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" /></svg>
-                      </button>
-                      <button
-                        @click="deleteChannel(ch.id)"
-                        class="p-1.5 rounded hover:bg-slate-800 text-slate-500 hover:text-rose-500 transition-colors"
-                        title="删除"
-                      >
-                        <Trash2 class="h-4 w-4" />
-                      </button>
-                    </div>
-                  </div>
-                  <CardDescription class="text-slate-400 text-xs">
-                    {{ channelTypeName(ch.type) }}
-                    <span v-if="!ch.enabled" class="text-rose-400 ml-1">[已禁用]</span>
-                  </CardDescription>
-                </CardHeader>
-              </Card>
-
-              <!-- Empty State -->
-              <div v-if="notifyChannels.length === 0" class="md:col-span-2 lg:col-span-3 text-center py-12 bg-slate-900/50 rounded-lg border border-dashed border-slate-800">
-                <p class="text-slate-500 text-sm">暂无通知渠道，点击上方按钮添加</p>
-              </div>
-            </div>
-          </div>
-
-          <!-- ===================== 安全 ===================== -->
-          <template v-else-if="activeTab === 'security'">
-            <div class="flex items-center justify-between gap-4 mb-2">
-              <div class="min-w-0">
-                <h2 class="text-xl font-bold text-slate-100">安全</h2>
-                <p class="text-slate-400 text-sm truncate">修改控制台登录密码</p>
-              </div>
-            </div>
-            <Card class="bg-slate-900 border-slate-800 text-slate-100">
-              <CardHeader>
-                <CardTitle class="text-amber-500 flex items-center gap-2">
-                  <KeyRound class="h-5 w-5" />
-                  修改登录密码
-                </CardTitle>
-                <CardDescription class="text-slate-400">为了系统安全，请定期修改控制台登录密码</CardDescription>
-              </CardHeader>
-              <CardContent class="grid gap-6 md:grid-cols-3">
-                <div class="space-y-1.5">
-                  <label class="text-xs font-semibold text-slate-400">当前密码</label>
-                  <Input v-model="currentPassword" type="password" placeholder="当前登录密码" class="bg-slate-950 border-slate-800 text-slate-100" />
-                </div>
-                <div class="space-y-1.5">
-                  <label class="text-xs font-semibold text-slate-400">新密码</label>
-                  <Input v-model="newPassword" type="password" placeholder="新登录密码" class="bg-slate-950 border-slate-800 text-slate-100" />
-                </div>
-                <div class="space-y-1.5">
-                  <label class="text-xs font-semibold text-slate-400">确认新密码</label>
-                  <div class="flex gap-3">
-                    <Input v-model="confirmNewPassword" type="password" placeholder="确认新登录密码" class="bg-slate-950 border-slate-800 text-slate-100 flex-1" />
-                    <Button @click="changePassword" :disabled="isChangingPassword" class="bg-amber-500 hover:bg-amber-600 text-slate-950 font-bold flex items-center gap-2 shrink-0 h-10 px-4">
-                      <Loader2 v-if="isChangingPassword" class="h-4 w-4 animate-spin" />
-                      <span>修改密码</span>
-                    </Button>
-                  </div>
-                </div>
-              </CardContent>
-            </Card>
-          </template>
-
-          <!-- ===================== MCP / API Key ===================== -->
-          <template v-else-if="activeTab === 'mcp'">
-            <div class="flex items-center justify-between gap-4 mb-2">
-              <div class="min-w-0">
-                <h2 class="text-xl font-bold text-slate-100">MCP / API Key</h2>
-                <p class="text-slate-400 text-sm truncate">为 Agent 提供媒体库查询与字幕工具的访问凭证</p>
-              </div>
-              <div class="flex items-center gap-2">
-                <Button @click="openRecords" class="shrink-0 bg-slate-800 hover:bg-slate-700 text-slate-200 flex items-center gap-2">
-                  <History class="h-4 w-4" />
-                  查看调用记录
+              <Field>
+                <FieldLabel for="card-download-path">下载源目录</FieldLabel>
+                <Input id="card-download-path" v-model="editingCard.download_path" placeholder="例如: /downloads/movies" />
+              </Field>
+              <Field>
+                <FieldLabel for="card-archive-path">归档目录</FieldLabel>
+                <Input id="card-archive-path" v-model="editingCard.archive_path" placeholder="例如: /media/Movies" />
+              </Field>
+              <Field>
+                <FieldLabel for="card-library">所属媒体服务器（整理刮削完成后自动刷新）</FieldLabel>
+                <Select v-model.number="editingCard.media_library_id">
+                  <SelectTrigger id="card-library" class="w-full"><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    <SelectGroup>
+                      <SelectItem :value="0">不绑定（不触发刷新）</SelectItem>
+                      <SelectItem v-for="lib in libraries" :key="lib.id" :value="lib.id">{{ lib.name }} ({{ lib.type }})</SelectItem>
+                    </SelectGroup>
+                  </SelectContent>
+                </Select>
+              </Field>
+              <Field orientation="horizontal">
+                <Checkbox id="card-default" :model-value="editingCard.is_default" @update:model-value="editingCard.is_default = Boolean($event)" />
+                <FieldLabel for="card-default">设为默认卡片</FieldLabel>
+              </Field>
+              <Field orientation="horizontal">
+                <Checkbox id="card-watch" :model-value="editingCard.watch_directory" @update:model-value="editingCard.watch_directory = Boolean($event)" />
+                <FieldLabel for="card-watch">开启实时目录监听（自动整理）</FieldLabel>
+              </Field>
+              <div class="flex gap-3">
+                <Button :disabled="isCardSaving" @click="saveCard">
+                  <Spinner v-if="isCardSaving" data-icon="inline-start" />
+                  <SaveIcon v-else data-icon="inline-start" />
+                  {{ isCardSaving ? '保存中…' : '保存目录' }}
                 </Button>
+                <Button variant="outline" @click="closeCardForm">取消</Button>
               </div>
-            </div>
+            </FieldGroup>
+          </CardContent>
+        </Card>
 
-            <!-- Intro / endpoint -->
-            <Card class="bg-slate-900 border-slate-800 text-slate-100">
-              <CardContent class="pt-6 space-y-3">
-                <div class="flex items-center gap-2 text-slate-300 text-sm">
-                  <Bot class="h-5 w-5 text-amber-400 shrink-0" />
-                  <span>MCP 端点（仅 API Key 鉴权，不接受网页登录态）：</span>
-                  <code class="px-2 py-1 rounded bg-slate-950 border border-slate-800 text-amber-300 text-xs font-mono">{{ locationOrigin }}/api/v1/mcp</code>
+        <div class="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
+          <Card
+            v-for="card in cards"
+            :key="card.id"
+            :class="card.is_default ? 'ring-1 ring-ring/50' : ''"
+            class="transition-all hover:border-input"
+          >
+            <CardHeader>
+              <div class="flex items-center justify-between">
+                <div class="flex items-center gap-2">
+                  <FilmIcon v-if="card.media_type === 'movie'" class="text-primary size-5" />
+                  <TvIcon v-else class="text-info size-5" />
+                  <CardTitle class="text-base">{{ card.name }}</CardTitle>
                 </div>
-                <p class="text-xs text-slate-500">创建 Key 后把完整密钥填入 Agent 的 MCP 配置（<code class="text-slate-400">Authorization: Bearer &lt;key&gt;</code>）。明文仅在创建时展示一次。</p>
-              </CardContent>
-            </Card>
-
-            <!-- Create -->
-            <Card class="bg-slate-900 border-slate-800 text-slate-100">
-              <CardHeader>
-                <CardTitle class="text-amber-500 flex items-center gap-2">
-                  <Plus class="h-5 w-5" />
-                  创建 API Key
-                </CardTitle>
-                <CardDescription class="text-slate-400">每个 Agent / 用途一个独立 Key，便于按需禁用与审计</CardDescription>
-              </CardHeader>
-              <CardContent class="flex gap-3">
-                <Input v-model="newKeyName" placeholder="用途备注，例如: Claude Code 字幕助手" class="bg-slate-950 border-slate-800 text-slate-100 flex-1" @keyup.enter="createMCPKey" />
-                <Button @click="createMCPKey" :disabled="creatingKey" class="bg-amber-500 hover:bg-amber-600 text-slate-950 font-bold flex items-center gap-2 shrink-0">
-                  <Loader2 v-if="creatingKey" class="h-4 w-4 animate-spin" />
-                  <KeyRound v-else class="h-4 w-4" />
-                  创建
-                </Button>
-              </CardContent>
-            </Card>
-
-            <!-- Key list -->
-            <Card class="bg-slate-900 border-slate-800 text-slate-100">
-              <CardHeader>
-                <CardTitle class="text-slate-100">已有 Key</CardTitle>
-              </CardHeader>
-              <CardContent class="space-y-3">
-                <div
-                  v-for="k in mcpKeys"
-                  :key="k.id"
-                  class="flex flex-wrap items-center gap-x-4 gap-y-2 rounded-lg border border-slate-800 bg-slate-950/60 px-4 py-3"
-                >
-                  <div class="min-w-0 flex-1">
-                    <div class="text-sm font-semibold text-slate-200">{{ k.name }}</div>
-                    <div class="text-xs text-slate-500 font-mono mt-0.5">{{ k.key_prefix }}</div>
-                  </div>
-                  <span :class="['text-xs font-semibold px-2 py-1 rounded-full border', keyStatusBadge(k.status)]">
-                    {{ k.status === 'active' ? '启用' : '已禁用' }}
-                  </span>
-                  <span class="text-xs text-slate-500">{{ k.last_used_at ? '最近使用: ' + fmtTime(k.last_used_at) : '从未使用' }}</span>
-                  <div class="flex items-center gap-1">
-                    <Button
-                      variant="outline"
-                      class="h-8 border-slate-700 text-slate-300 hover:bg-slate-800"
-                      @click="copyMCPConfig(k)"
-                      title="复制配置模板（不含明文 Key，需手动填入 API Key）"
-                    >
-                      <Copy class="h-3.5 w-3.5 mr-1" /> 配置模板
-                    </Button>
-                    <Button
-                      :disabled="togglingKeyId === k.id"
-                      :class="k.status === 'active'
-                        ? 'h-8 border border-rose-500/40 text-rose-400 hover:bg-rose-500/10'
-                        : 'h-8 border border-emerald-500/40 text-emerald-400 hover:bg-emerald-500/10'"
-                      variant="outline"
-                      @click="toggleMCPKey(k)"
-                    >
-                      <Loader2 v-if="togglingKeyId === k.id" class="h-3.5 w-3.5 animate-spin" />
-                      {{ k.status === 'active' ? '禁用' : '启用' }}
-                    </Button>
-                    <Button
-                      variant="outline"
-                      class="h-8 border border-slate-700 text-rose-400 hover:bg-rose-500/10"
-                      @click="deleteMCPKey(k)"
-                      title="删除此 Key（历史调用记录保留）"
-                    >
-                      <Trash2 class="h-3.5 w-3.5" />
-                    </Button>
-                  </div>
-                </div>
-
-                <!-- Empty State -->
-                <div v-if="mcpKeys.length === 0" class="text-center py-10 bg-slate-950/40 rounded-lg border border-dashed border-slate-800">
-                  <p class="text-slate-500 text-sm">暂无 API Key，请先在上方创建</p>
-                </div>
-              </CardContent>
-            </Card>
-
-            <!-- Secret modal (created once) -->
-            <div v-if="showSecret !== null" class="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/80 p-4">
-              <div class="w-full max-w-lg rounded-2xl border border-amber-500/30 bg-slate-900 p-6 space-y-4 shadow-2xl">
-                <h3 class="text-lg font-bold text-amber-500 flex items-center gap-2">
-                  <KeyRound class="h-5 w-5" />
-                  Key 创建成功（{{ secretName }}）
-                </h3>
-                <p class="text-sm text-rose-400 font-semibold">⚠ 明文仅显示这一次，关闭后无法再次查看。请立即复制并妥善保存。</p>
-                <div class="flex gap-2">
-                  <Input :model-value="secretText" readonly class="bg-slate-950 border-slate-800 text-amber-300 font-mono flex-1" />
-                  <Button @click="copySecret" class="bg-amber-500 hover:bg-amber-600 text-slate-950 font-bold shrink-0">
-                    <Copy class="h-4 w-4 mr-1" /> 复制
+                <div class="flex items-center gap-1">
+                  <Button v-if="!card.is_default" variant="ghost" size="icon-sm" title="设为默认" @click="setDefaultCard(card.id)">
+                    <StarIcon />
                   </Button>
-                </div>
-                <div class="flex gap-2">
-                  <Button @click="copyMCPConfig({ key: secretText })" variant="outline" class="border-slate-700 text-slate-300 hover:bg-slate-800 flex-1">
-                    复制 MCP 配置片段
+                  <StarIcon v-else class="text-primary size-4 fill-current" />
+                  <Button variant="ghost" size="icon-sm" title="编辑" @click="openEditCard(card)">
+                    <PencilIcon />
                   </Button>
-                  <Button @click="closeSecret" variant="outline" class="border-slate-700 text-slate-300 hover:bg-slate-800 flex-1">
-                    我已保存，关闭
-                  </Button>
-                </div>
-              </div>
-            </div>
-
-            <!-- Call records -->
-            <Card class="bg-slate-900 border-slate-800 text-slate-100" v-if="mcpRecords.length > 0 || recordsTotal > 0">
-              <CardHeader class="pb-3">
-                <div class="flex items-center justify-between">
-                  <CardTitle class="text-slate-100 flex items-center gap-2">
-                    <History class="h-5 w-5 text-amber-400" />
-                    调用记录
-                  </CardTitle>
-                  <div class="flex items-center gap-2">
-                    <select v-model.number="recordsFilterKey" @change="openRecords" class="bg-slate-950 border border-slate-800 rounded-lg px-2 py-1.5 text-xs text-slate-300 focus:outline-none focus:border-amber-500">
-                      <option value="">全部 Key</option>
-                      <option v-for="k in mcpKeys" :key="k.id" :value="k.id">{{ k.name }}</option>
-                    </select>
-                    <select v-model="recordsFilterTool" @change="openRecords" class="bg-slate-950 border border-slate-800 rounded-lg px-2 py-1.5 text-xs text-slate-300 focus:outline-none focus:border-amber-500">
-                      <option value="">全部工具</option>
-                      <option
-                        v-for="tool in ['list_media_cards','query_media_list','query_media_subtitles','fetch_subtitle','upload_subtitle']"
-                        :key="tool"
-                        :value="tool"
-                      >{{ TOOL_LABELS[tool] }}</option>
-                    </select>
-                    <Button @click="openRecords" variant="outline" class="h-8 border-slate-700 text-slate-300 hover:bg-slate-800">
-                      <RefreshCw :class="['h-3.5 w-3.5', loadingRecords ? 'animate-spin' : '']" />
-                    </Button>
-                    <Button
-                      v-if="recordsTotal > 0"
-                      variant="outline"
-                      class="h-8 border border-rose-500/40 text-rose-400 hover:bg-rose-500/10"
-                      @click="clearMCPRecords"
-                      title="清空全部调用记录"
-                    >
-                      <Trash2 class="h-3.5 w-3.5 mr-1" /> 清空
-                    </Button>
-                  </div>
-                </div>
-              </CardHeader>
-              <CardContent>
-                <div v-if="loadingRecords" class="text-center py-8 text-slate-500 text-sm">加载中…</div>
-                <div v-else class="space-y-2 max-h-96 overflow-y-auto pr-1">
-                  <div
-                    v-for="r in mcpRecords"
-                    :key="r.id"
-                    class="flex flex-wrap items-center gap-x-3 gap-y-1 rounded border border-slate-800 bg-slate-950/40 px-3 py-2 text-xs"
+                  <Button
+                    variant="ghost"
+                    size="icon-sm"
+                    class="text-muted-foreground hover:text-destructive"
+                    title="删除"
+                    @click="deleteCard(card.id)"
                   >
-                    <span class="text-slate-400 font-mono">{{ fmtTime(r.created_at) }}</span>
-                    <span class="text-amber-300 font-mono">{{ toolLabel(r.tool) }}</span>
-                    <span :class="['px-1.5 py-0.5 rounded-full border font-semibold',
-                      r.status === 'ok' ? 'border-emerald-500/30 text-emerald-400'
-                        : 'border-rose-500/30 text-rose-400']">
-                      {{ r.status }}
-                    </span>
-                    <span class="text-slate-500">耗时 {{ r.duration_ms }}ms</span>
-                    <span class="text-slate-500">结果 {{ r.result_bytes }}B</span>
-                    <span class="text-slate-500 truncate max-w-[30ch]" :title="r.input_meta">{{ r.input_meta }}</span>
-                  </div>
-                  <div v-if="mcpRecords.length === 0" class="text-center py-6 text-slate-500 text-sm">暂无记录</div>
+                    <Trash2Icon />
+                  </Button>
                 </div>
-                <div v-if="recordsTotal > 0" class="text-xs text-slate-500 mt-3 flex items-center justify-between">
-                  <span>共 {{ recordsTotal }} 条</span>
-                  <div class="flex items-center gap-1">
-                    <button :disabled="recordsPage <= 1" @click="recordsPage--; fetchMCPRecords()" class="px-2 py-0.5 rounded hover:bg-slate-800 disabled:opacity-40 text-slate-400">‹</button>
-                    <span class="text-slate-400 px-1">{{ recordsPage }}</span>
-                    <button :disabled="recordsPage * recordsLimit >= recordsTotal" @click="recordsPage++; fetchMCPRecords()" class="px-2 py-0.5 rounded hover:bg-slate-800 disabled:opacity-40 text-slate-400">›</button>
-                  </div>
-                </div>
-              </CardContent>
-            </Card>
-          </template>
+              </div>
+              <CardDescription class="text-xs">
+                {{ card.media_type === 'movie' ? '电影' : '电视剧' }}
+                <Badge v-if="card.is_default" variant="secondary" class="ml-1 text-primary">默认</Badge>
+              </CardDescription>
+            </CardHeader>
+            <CardContent class="flex flex-col gap-2 pt-0">
+              <p class="text-xs">
+                <span class="text-muted-foreground">下载源：</span>
+                <span class="ml-1 font-mono break-all">{{ card.download_path }}</span>
+              </p>
+              <p class="text-xs">
+                <span class="text-muted-foreground">归档到：</span>
+                <span class="ml-1 font-mono break-all">{{ card.archive_path }}</span>
+              </p>
+              <p class="text-xs">
+                <span class="text-muted-foreground">自动整理：</span>
+                <span :class="['ml-1 font-semibold', card.watch_directory ? 'text-success' : 'text-muted-foreground']">
+                  {{ card.watch_directory ? '已开启目录监听' : '已关闭' }}
+                </span>
+              </p>
+              <p v-if="card.media_library_id" class="text-xs">
+                <span class="text-muted-foreground">媒体服务器：</span>
+                <span class="text-info ml-1">{{ libraryName(card.media_library_id) }}</span>
+              </p>
+            </CardContent>
+          </Card>
+
+          <Empty v-if="!cards.length" class="md:col-span-2 lg:col-span-3">
+            <EmptyHeader>
+              <EmptyMedia variant="icon"><FolderTreeIcon /></EmptyMedia>
+              <EmptyTitle>暂无目录</EmptyTitle>
+              <EmptyDescription>点击上方「添加目录」开始配置。</EmptyDescription>
+            </EmptyHeader>
+          </Empty>
         </div>
-      </Transition>
-    </template>
+      </TabsContent>
+
+      <!-- ===================== 媒体服务器 ===================== -->
+      <TabsContent value="servers" class="flex flex-col gap-4">
+        <PageSection title="媒体服务器" description="配置 Emby / Jellyfin / Plex，整理刮削完成后自动刷新">
+          <Button @click="openNewLibrary">
+            <PlusIcon data-icon="inline-start" />
+            添加媒体服务器
+          </Button>
+        </PageSection>
+
+        <Alert v-if="librarySuccessMsg" class="text-success">
+          <CheckCircle2Icon />
+          <AlertTitle>{{ librarySuccessMsg }}</AlertTitle>
+        </Alert>
+
+        <Card v-if="showLibraryForm" class="border-primary/30">
+          <CardHeader>
+            <CardTitle>{{ editingLibrary?.id ? '编辑媒体服务器' : '新建媒体服务器' }}</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <FieldGroup class="gap-4">
+              <div class="grid gap-4 md:grid-cols-2">
+                <Field>
+                  <FieldLabel for="lib-name">名称</FieldLabel>
+                  <Input id="lib-name" v-model="editingLibrary.name" placeholder="例如: 家庭 Emby" />
+                </Field>
+                <Field>
+                  <FieldLabel for="lib-type">类型</FieldLabel>
+                  <Select v-model="editingLibrary.type">
+                    <SelectTrigger id="lib-type" class="w-full"><SelectValue /></SelectTrigger>
+                    <SelectContent>
+                      <SelectGroup>
+                        <SelectItem value="emby">Emby</SelectItem>
+                        <SelectItem value="jellyfin">Jellyfin</SelectItem>
+                        <SelectItem value="plex">Plex</SelectItem>
+                      </SelectGroup>
+                    </SelectContent>
+                  </Select>
+                </Field>
+              </div>
+              <Field>
+                <FieldLabel for="lib-url">服务器地址</FieldLabel>
+                <Input id="lib-url" v-model="editingLibrary.url" placeholder="例如: http://192.168.1.10:8096" />
+              </Field>
+              <Field>
+                <FieldLabel for="lib-key">{{ editingLibrary.type === 'plex' ? 'X-Plex-Token' : 'API Key' }}</FieldLabel>
+                <Input id="lib-key" v-model="editingLibrary.api_key" type="password" placeholder="服务器密钥 / Token" />
+              </Field>
+
+              <Field>
+                <FieldLabel for="lib-scope" class="flex items-center gap-2">
+                  刷新的媒体库
+                  <Spinner v-if="probingLibraries" class="text-muted-foreground" />
+                </FieldLabel>
+                <Select
+                  v-if="probeLibraries.length > 0"
+                  :model-value="toSelectValue(editingLibrary.library_id)"
+                  @update:model-value="editingLibrary.library_id = fromSelectValue($event); onLibrarySelect()"
+                >
+                  <SelectTrigger id="lib-scope" class="w-full"><SelectValue placeholder="全部媒体库" /></SelectTrigger>
+                  <SelectContent>
+                    <SelectGroup>
+                      <SelectItem :value="EMPTY_SELECT_VALUE">全部媒体库</SelectItem>
+                      <SelectItem v-for="l in probeLibraries" :key="l.id" :value="l.id">{{ l.name }}</SelectItem>
+                    </SelectGroup>
+                  </SelectContent>
+                </Select>
+                <FieldDescription v-else>
+                  填写正确的地址与密钥后将自动加载媒体库列表；当前默认刷新「全部媒体库」。
+                </FieldDescription>
+              </Field>
+
+              <Field orientation="horizontal">
+                <Checkbox id="lib-enabled" :model-value="editingLibrary.enabled" @update:model-value="editingLibrary.enabled = Boolean($event)" />
+                <FieldLabel for="lib-enabled">启用此媒体服务器</FieldLabel>
+              </Field>
+
+              <div class="flex gap-3">
+                <Button :disabled="isLibrarySaving" @click="saveLibrary">
+                  <Spinner v-if="isLibrarySaving" data-icon="inline-start" />
+                  <SaveIcon v-else data-icon="inline-start" />
+                  {{ isLibrarySaving ? '保存中…' : '保存媒体服务器' }}
+                </Button>
+                <Button variant="outline" @click="closeLibraryForm">取消</Button>
+              </div>
+            </FieldGroup>
+          </CardContent>
+        </Card>
+
+        <div class="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
+          <Card v-for="lib in libraries" :key="lib.id" class="transition-all hover:border-input">
+            <CardHeader>
+              <div class="flex items-center justify-between">
+                <div class="flex items-center gap-2">
+                  <span
+                    :class="['size-2.5 shrink-0 rounded-full', statusMap[lib.id] ? 'bg-success shadow-[0_0_6px_1px] shadow-success/60' : 'bg-muted']"
+                    :title="statusMap[lib.id] ? '在线' : '离线 / 未知'"
+                  ></span>
+                  <ServerIcon class="text-info size-5" />
+                  <CardTitle class="text-base">{{ lib.name }}</CardTitle>
+                </div>
+                <div class="flex items-center gap-1">
+                  <Button
+                    variant="ghost"
+                    size="icon-sm"
+                    title="立即刷新媒体库"
+                    :disabled="refreshingLibraryId === lib.id"
+                    @click="refreshLibrary(lib.id)"
+                  >
+                    <Spinner v-if="refreshingLibraryId === lib.id" />
+                    <RefreshCwIcon v-else />
+                  </Button>
+                  <Button
+                    variant="ghost"
+                    size="icon-sm"
+                    title="测试连接"
+                    :disabled="testingLibraryId === lib.id"
+                    @click="testLibrary(lib.id)"
+                  >
+                    <Spinner v-if="testingLibraryId === lib.id" />
+                    <PlugIcon v-else />
+                  </Button>
+                  <Button variant="ghost" size="icon-sm" title="编辑" @click="openEditLibrary(lib)">
+                    <PencilIcon />
+                  </Button>
+                  <Button
+                    variant="ghost"
+                    size="icon-sm"
+                    class="text-muted-foreground hover:text-destructive"
+                    title="删除"
+                    @click="deleteLibrary(lib.id)"
+                  >
+                    <Trash2Icon />
+                  </Button>
+                </div>
+              </div>
+              <CardDescription class="text-xs">
+                <span class="uppercase">{{ lib.type }}</span>
+                <Badge v-if="!lib.enabled" variant="destructive" class="ml-1">已禁用</Badge>
+              </CardDescription>
+            </CardHeader>
+            <CardContent class="flex flex-col gap-2 pt-0">
+              <p class="text-xs"><span class="text-muted-foreground">地址：</span><span class="ml-1 font-mono break-all">{{ lib.url }}</span></p>
+              <p class="text-xs"><span class="text-muted-foreground">刷新范围：</span><span class="text-info ml-1">{{ lib.library_name || '全部媒体库' }}</span></p>
+            </CardContent>
+          </Card>
+
+          <Empty v-if="!libraries.length" class="md:col-span-2 lg:col-span-3">
+            <EmptyHeader>
+              <EmptyMedia variant="icon"><ServerIcon /></EmptyMedia>
+              <EmptyTitle>暂无媒体服务器</EmptyTitle>
+              <EmptyDescription>点击上方「添加媒体服务器」开始配置。</EmptyDescription>
+            </EmptyHeader>
+          </Empty>
+        </div>
+      </TabsContent>
+
+      <!-- ===================== 下载器 ===================== -->
+      <TabsContent value="clients" class="flex flex-col gap-4">
+        <PageSection title="下载器" description="配置 qBittorrent；保存目录由下载器的分类规则决定，这里只配置分类映射" />
+        <DownloadClientPanel />
+      </TabsContent>
+
+      <!-- ===================== 通知配置 ===================== -->
+      <TabsContent value="notify" class="flex flex-col gap-4">
+        <PageSection title="通知配置" description="配置第三方通知渠道，刮削入库后自动推送">
+          <Button @click="openNewChannel">
+            <PlusIcon data-icon="inline-start" />
+            添加渠道
+          </Button>
+        </PageSection>
+
+        <Alert v-if="channelSuccessMsg" class="text-success">
+          <CheckCircle2Icon />
+          <AlertTitle>{{ channelSuccessMsg }}</AlertTitle>
+        </Alert>
+
+        <Card v-if="showChannelForm" class="border-primary/30">
+          <CardHeader>
+            <CardTitle>{{ editingChannel?.id ? '编辑渠道' : '新建渠道' }}</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <FieldGroup class="gap-4">
+              <div class="grid gap-4 md:grid-cols-2">
+                <Field>
+                  <FieldLabel for="ch-name">渠道名称</FieldLabel>
+                  <Input id="ch-name" v-model="editingChannel.name" placeholder="例如: 我的企业微信" />
+                </Field>
+                <Field>
+                  <FieldLabel for="ch-type">渠道类型</FieldLabel>
+                  <Select v-model="editingChannel.type" @update:model-value="onChannelTypeChange">
+                    <SelectTrigger id="ch-type" class="w-full"><SelectValue /></SelectTrigger>
+                    <SelectContent>
+                      <SelectGroup>
+                        <SelectItem v-for="t in channelTypes" :key="t.type" :value="t.type">{{ t.name }}</SelectItem>
+                      </SelectGroup>
+                    </SelectContent>
+                  </Select>
+                </Field>
+              </div>
+
+              <Field v-for="f in currentChannelFields" :key="f.key">
+                <FieldLabel :for="`ch-field-${f.key}`">
+                  {{ f.label }}<span v-if="f.required" class="text-destructive ml-0.5">*</span>
+                </FieldLabel>
+                <Textarea
+                  v-if="f.type === 'textarea'"
+                  :id="`ch-field-${f.key}`"
+                  v-model="editingChannel.config[f.key]"
+                  :placeholder="f.placeholder"
+                  rows="3"
+                  class="font-mono"
+                />
+                <Input
+                  v-else
+                  :id="`ch-field-${f.key}`"
+                  v-model="editingChannel.config[f.key]"
+                  :type="f.type === 'password' ? 'password' : 'text'"
+                  :placeholder="f.placeholder"
+                />
+              </Field>
+
+              <Field orientation="horizontal">
+                <Checkbox id="ch-enabled" :model-value="editingChannel.enabled" @update:model-value="editingChannel.enabled = Boolean($event)" />
+                <FieldLabel for="ch-enabled">启用此渠道</FieldLabel>
+              </Field>
+
+              <div class="flex gap-3">
+                <Button :disabled="isChannelSaving" @click="saveChannel">
+                  <Spinner v-if="isChannelSaving" data-icon="inline-start" />
+                  <SaveIcon v-else data-icon="inline-start" />
+                  {{ isChannelSaving ? '保存中…' : '保存渠道' }}
+                </Button>
+                <Button variant="outline" @click="closeChannelForm">取消</Button>
+              </div>
+            </FieldGroup>
+          </CardContent>
+        </Card>
+
+        <div class="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
+          <Card v-for="ch in notifyChannels" :key="ch.id" class="transition-all hover:border-input">
+            <CardHeader>
+              <div class="flex items-center justify-between">
+                <div class="flex items-center gap-2">
+                  <BellIcon class="text-primary size-5" />
+                  <CardTitle class="text-base">{{ ch.name }}</CardTitle>
+                </div>
+                <div class="flex items-center gap-1">
+                  <Button variant="ghost" size="icon-sm" title="测试发送" :disabled="testingChannelId === ch.id" @click="testChannel(ch.id)">
+                    <Spinner v-if="testingChannelId === ch.id" />
+                    <SendIcon v-else />
+                  </Button>
+                  <Button variant="ghost" size="icon-sm" title="编辑" @click="openEditChannel(ch)">
+                    <PencilIcon />
+                  </Button>
+                  <Button
+                    variant="ghost"
+                    size="icon-sm"
+                    class="text-muted-foreground hover:text-destructive"
+                    title="删除"
+                    @click="deleteChannel(ch.id)"
+                  >
+                    <Trash2Icon />
+                  </Button>
+                </div>
+              </div>
+              <CardDescription class="text-xs">
+                {{ channelTypeName(ch.type) }}
+                <Badge v-if="!ch.enabled" variant="destructive" class="ml-1">已禁用</Badge>
+              </CardDescription>
+            </CardHeader>
+          </Card>
+
+          <Empty v-if="!notifyChannels.length" class="md:col-span-2 lg:col-span-3">
+            <EmptyHeader>
+              <EmptyMedia variant="icon"><BellIcon /></EmptyMedia>
+              <EmptyTitle>暂无通知渠道</EmptyTitle>
+              <EmptyDescription>点击上方「添加渠道」开始配置。</EmptyDescription>
+            </EmptyHeader>
+          </Empty>
+        </div>
+      </TabsContent>
+
+      <!-- ===================== 安全 ===================== -->
+      <TabsContent value="security" class="flex flex-col gap-4">
+        <PageSection title="安全" description="修改控制台登录密码" />
+
+        <Card>
+          <CardHeader>
+            <CardTitle class="flex items-center gap-2">
+              <KeyRoundIcon class="text-primary size-5" />
+              修改登录密码
+            </CardTitle>
+            <CardDescription>为了系统安全，请定期修改控制台登录密码</CardDescription>
+          </CardHeader>
+          <CardContent>
+            <FieldGroup class="gap-4 md:grid md:grid-cols-3">
+              <Field>
+                <FieldLabel for="current-pw">当前密码</FieldLabel>
+                <Input id="current-pw" v-model="currentPassword" type="password" placeholder="当前登录密码" />
+              </Field>
+              <Field>
+                <FieldLabel for="new-pw">新密码</FieldLabel>
+                <Input id="new-pw" v-model="newPassword" type="password" placeholder="新登录密码" />
+              </Field>
+              <Field>
+                <FieldLabel for="confirm-pw">确认新密码</FieldLabel>
+                <div class="flex items-center gap-3">
+                  <Input id="confirm-pw" v-model="confirmNewPassword" type="password" placeholder="确认新登录密码" class="flex-1" />
+                  <Button :disabled="isChangingPassword" @click="changePassword">
+                    <Spinner v-if="isChangingPassword" data-icon="inline-start" />
+                    修改密码
+                  </Button>
+                </div>
+              </Field>
+            </FieldGroup>
+          </CardContent>
+        </Card>
+      </TabsContent>
+
+      <!-- ===================== 搜索下载 ===================== -->
+      <TabsContent value="search" class="flex flex-col gap-4">
+        <PageSection title="搜索下载" description="全局代理与定义源">
+          <Button :disabled="isSaving" @click="saveSettings">
+            <Spinner v-if="isSaving" data-icon="inline-start" />
+            <SaveIcon v-else data-icon="inline-start" />
+            保存设置
+          </Button>
+        </PageSection>
+
+        <Alert v-if="searchProxyMsg" :class="searchProxyMsgOk ? 'text-success' : 'text-destructive'">
+          <CheckCircle2Icon v-if="searchProxyMsgOk" />
+          <CircleAlertIcon v-else />
+          <AlertTitle>{{ searchProxyMsgOk ? '代理可用' : '代理不可用' }}</AlertTitle>
+          <AlertDescription>{{ searchProxyMsg }}</AlertDescription>
+        </Alert>
+
+        <Card>
+          <CardHeader>
+            <CardTitle class="flex items-center gap-2">
+              <PlugIcon class="text-primary size-5" />
+              网络代理
+            </CardTitle>
+            <CardDescription>
+              站点的默认出口。支持 <code>http://</code>、<code>https://</code>、<code>socks5://</code>、<code>socks5h://</code>；留空表示直连。
+              单个站点可在「已添加站点」页单独覆盖。下载器（qBittorrent）始终直连，不走此代理。
+            </CardDescription>
+          </CardHeader>
+          <CardContent>
+            <FieldGroup class="gap-4">
+              <Field>
+                <FieldLabel for="search-proxy">全局代理地址</FieldLabel>
+                <Input id="search-proxy" v-model="settings.search_proxy" placeholder="socks5h://127.0.0.1:10808" />
+              </Field>
+              <div class="flex flex-wrap items-center gap-2">
+                <Button variant="outline" size="sm" :disabled="isTestingProxy" @click="testProxy">
+                  <Spinner v-if="isTestingProxy" data-icon="inline-start" />
+                  <PlugIcon v-else data-icon="inline-start" />
+                  保存并测试代理
+                </Button>
+                <Button variant="ghost" size="sm" @click="clearProxy">清空代理</Button>
+                <span class="text-muted-foreground text-xs">测试会通过此代理访问定义源。</span>
+              </div>
+            </FieldGroup>
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardHeader>
+            <CardTitle class="flex items-center gap-2">
+              <ServerIcon class="text-primary size-5" />
+              定义库来源
+            </CardTitle>
+            <CardDescription>Cardigann 定义的上游地址与版本。同步失败时会保留本地定义。</CardDescription>
+          </CardHeader>
+          <CardContent>
+            <FieldGroup class="gap-4 md:grid md:grid-cols-2">
+              <Field class="md:col-span-2">
+                <FieldLabel for="definition-source">定义源地址</FieldLabel>
+                <Input id="definition-source" v-model="settings.search_definition_source" placeholder="https://indexers.prowlarr.com" />
+              </Field>
+              <Field>
+                <FieldLabel for="definition-version">定义版本</FieldLabel>
+                <Input id="definition-version" v-model="settings.search_definition_version" placeholder="12" />
+              </Field>
+              <Field orientation="horizontal">
+                <Checkbox
+                  id="auto-sync"
+                  :model-value="settings.search_auto_sync"
+                  @update:model-value="settings.search_auto_sync = Boolean($event)"
+                />
+                <FieldLabel for="auto-sync">启动时自动同步定义库</FieldLabel>
+              </Field>
+            </FieldGroup>
+          </CardContent>
+        </Card>
+      </TabsContent>
+
+      <!-- ===================== MCP / API Key ===================== -->
+      <TabsContent value="mcp" class="flex flex-col gap-4">
+        <PageSection title="MCP / API Key" description="为 Agent 提供媒体库查询与字幕工具的访问凭证">
+          <Button variant="outline" @click="openRecords">
+            <HistoryIcon data-icon="inline-start" />
+            查看调用记录
+          </Button>
+        </PageSection>
+
+        <Card>
+          <CardContent class="pt-6">
+            <p class="flex flex-wrap items-center gap-2 text-sm">
+              <BotIcon class="text-primary size-5 shrink-0" />
+              <span>MCP 端点（仅 API Key 鉴权，不接受网页登录态）：</span>
+              <code class="bg-muted text-primary rounded px-2 py-1 font-mono text-xs">{{ locationOrigin }}/api/v1/mcp</code>
+            </p>
+            <p class="text-muted-foreground mt-3 text-xs">
+              创建 Key 后把完整密钥填入 Agent 的 MCP 配置（<code>Authorization: Bearer &lt;key&gt;</code>）。明文仅在创建时展示一次。
+            </p>
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardHeader>
+            <CardTitle class="flex items-center gap-2">
+              <PlusIcon class="text-primary size-5" />
+              创建 API Key
+            </CardTitle>
+            <CardDescription>每个 Agent / 用途一个独立 Key，便于按需禁用与审计</CardDescription>
+          </CardHeader>
+          <CardContent>
+            <div class="flex gap-3">
+              <Input
+                v-model="newKeyName"
+                placeholder="用途备注，例如: Claude Code 字幕助手"
+                class="flex-1"
+                @keyup.enter="createMCPKey"
+              />
+              <Button :disabled="creatingKey" class="shrink-0" @click="createMCPKey">
+                <Spinner v-if="creatingKey" data-icon="inline-start" />
+                <KeyRoundIcon v-else data-icon="inline-start" />
+                创建
+              </Button>
+            </div>
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardHeader>
+            <CardTitle>已有 Key</CardTitle>
+          </CardHeader>
+          <CardContent class="flex flex-col gap-3">
+            <div
+              v-for="k in mcpKeys"
+              :key="k.id"
+              class="bg-muted/40 flex flex-wrap items-center gap-x-4 gap-y-2 rounded-lg border px-4 py-3"
+            >
+              <div class="min-w-0 flex-1">
+                <p class="text-sm font-semibold">{{ k.name }}</p>
+                <p class="text-muted-foreground mt-0.5 font-mono text-xs">{{ k.key_prefix }}</p>
+              </div>
+              <Badge :variant="keyStatusTone(k.status).variant" :class="keyStatusTone(k.status).tone">
+                {{ k.status === 'active' ? '启用' : '已禁用' }}
+              </Badge>
+              <span class="text-muted-foreground text-xs">
+                {{ k.last_used_at ? '最近使用: ' + fmtTime(k.last_used_at) : '从未使用' }}
+              </span>
+              <div class="flex items-center gap-1">
+                <Button
+                  variant="outline"
+                  size="sm"
+                  title="复制配置模板（不含明文 Key，需手动填入 API Key）"
+                  @click="copyMCPConfig(k)"
+                >
+                  <CopyIcon data-icon="inline-start" />
+                  配置模板
+                </Button>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  :class="k.status === 'active' ? 'text-destructive' : 'text-success'"
+                  :disabled="togglingKeyId === k.id"
+                  @click="toggleMCPKey(k)"
+                >
+                  <Spinner v-if="togglingKeyId === k.id" data-icon="inline-start" />
+                  {{ k.status === 'active' ? '禁用' : '启用' }}
+                </Button>
+                <Button
+                  variant="ghost"
+                  size="icon-sm"
+                  class="text-destructive"
+                  title="删除此 Key（历史调用记录保留）"
+                  @click="deleteMCPKey(k)"
+                >
+                  <Trash2Icon />
+                </Button>
+              </div>
+            </div>
+
+            <Empty v-if="!mcpKeys.length">
+              <EmptyHeader>
+                <EmptyMedia variant="icon"><KeyRoundIcon /></EmptyMedia>
+                <EmptyTitle>暂无 API Key</EmptyTitle>
+                <EmptyDescription>请先在上方创建。</EmptyDescription>
+              </EmptyHeader>
+            </Empty>
+          </CardContent>
+        </Card>
+
+        <Dialog :open="showSecret !== null" @update:open="(value) => { if (!value) closeSecret() }">
+          <DialogContent class="sm:max-w-lg">
+            <DialogHeader>
+              <DialogTitle class="flex items-center gap-2">
+                <KeyRoundIcon class="text-primary size-5" />
+                Key 创建成功（{{ secretName }}）
+              </DialogTitle>
+              <DialogDescription class="text-destructive font-semibold">
+                明文仅显示这一次，关闭后无法再次查看。请立即复制并妥善保存。
+              </DialogDescription>
+            </DialogHeader>
+            <div class="flex gap-2">
+              <Input :model-value="secretText" readonly class="text-primary flex-1 font-mono" />
+              <Button class="shrink-0" @click="copySecret">
+                <CopyIcon data-icon="inline-start" />
+                复制
+              </Button>
+            </div>
+            <div class="flex gap-2">
+              <Button variant="outline" class="flex-1" @click="copyMCPConfig({ key: secretText })">复制 MCP 配置片段</Button>
+              <Button variant="outline" class="flex-1" @click="closeSecret">我已保存，关闭</Button>
+            </div>
+          </DialogContent>
+        </Dialog>
+
+        <Card v-if="mcpRecords.length > 0 || recordsTotal > 0">
+          <CardHeader>
+            <div class="flex flex-wrap items-center justify-between gap-2">
+              <CardTitle class="flex items-center gap-2">
+                <HistoryIcon class="text-primary size-5" />
+                调用记录
+              </CardTitle>
+              <div class="flex flex-wrap items-center gap-2">
+                <Select
+                  :model-value="recordsFilterKey === '' ? EMPTY_SELECT_VALUE : recordsFilterKey"
+                  @update:model-value="recordsFilterKey = $event === EMPTY_SELECT_VALUE ? '' : Number($event); openRecords()"
+                >
+                  <SelectTrigger size="sm" class="w-32"><SelectValue placeholder="全部 Key" /></SelectTrigger>
+                  <SelectContent>
+                    <SelectGroup>
+                      <SelectItem :value="EMPTY_SELECT_VALUE">全部 Key</SelectItem>
+                      <SelectItem v-for="k in mcpKeys" :key="k.id" :value="k.id">{{ k.name }}</SelectItem>
+                    </SelectGroup>
+                  </SelectContent>
+                </Select>
+                <Select
+                  :model-value="toSelectValue(recordsFilterTool)"
+                  @update:model-value="recordsFilterTool = fromSelectValue($event); openRecords()"
+                >
+                  <SelectTrigger size="sm" class="w-36"><SelectValue placeholder="全部工具" /></SelectTrigger>
+                  <SelectContent>
+                    <SelectGroup>
+                      <SelectItem :value="EMPTY_SELECT_VALUE">全部工具</SelectItem>
+                      <SelectItem
+                                          v-for="tool in ['list_media_cards','query_media_list','query_media_subtitles','fetch_subtitle','upload_subtitle']"
+                                          :key="tool"
+                                          :value="tool"
+                                        >{{ TOOL_LABELS[tool] }}</SelectItem>
+                    </SelectGroup>
+                  </SelectContent>
+                </Select>
+                <Button variant="outline" size="icon-sm" @click="openRecords">
+                  <Spinner v-if="loadingRecords" />
+                  <RefreshCwIcon v-else />
+                </Button>
+                <Button v-if="recordsTotal > 0" variant="outline" size="sm" class="text-destructive" title="清空全部调用记录" @click="clearMCPRecords">
+                  <Trash2Icon data-icon="inline-start" />
+                  清空
+                </Button>
+              </div>
+            </div>
+          </CardHeader>
+          <CardContent>
+            <div v-if="loadingRecords" class="flex justify-center py-8">
+              <Spinner class="text-primary" />
+            </div>
+            <div v-else class="flex max-h-96 flex-col gap-2 overflow-y-auto pr-1">
+              <div
+                v-for="r in mcpRecords"
+                :key="r.id"
+                class="bg-muted/40 flex flex-wrap items-center gap-x-3 gap-y-1 rounded border px-3 py-2 text-xs"
+              >
+                <span class="text-muted-foreground font-mono">{{ fmtTime(r.created_at) }}</span>
+                <span class="text-primary font-mono">{{ toolLabel(r.tool) }}</span>
+                <Badge :variant="r.status === 'ok' ? 'secondary' : 'destructive'" :class="r.status === 'ok' ? 'text-success' : ''">
+                  {{ r.status }}
+                </Badge>
+                <span class="text-muted-foreground">耗时 {{ r.duration_ms }}ms</span>
+                <span class="text-muted-foreground">结果 {{ r.result_bytes }}B</span>
+                <span class="text-muted-foreground max-w-[30ch] truncate" :title="r.input_meta">{{ r.input_meta }}</span>
+              </div>
+
+              <Empty v-if="!mcpRecords.length">
+                <EmptyHeader>
+                  <EmptyDescription>暂无记录</EmptyDescription>
+                </EmptyHeader>
+              </Empty>
+            </div>
+
+            <div v-if="recordsTotal > 0" class="text-muted-foreground mt-3 flex items-center justify-between text-xs">
+              <span>共 {{ recordsTotal }} 条</span>
+              <div class="flex items-center gap-1">
+                <Button variant="ghost" size="icon-xs" :disabled="recordsPage <= 1" @click="recordsPage--; fetchMCPRecords()">‹</Button>
+                <span class="px-1">{{ recordsPage }}</span>
+                <Button
+                  variant="ghost"
+                  size="icon-xs"
+                  :disabled="recordsPage * recordsLimit >= recordsTotal"
+                  @click="recordsPage++; fetchMCPRecords()"
+                >›</Button>
+              </div>
+            </div>
+          </CardContent>
+        </Card>
+      </TabsContent>
+    </Tabs>
   </div>
 </template>
-
-<style scoped>
-/* Tab panel cross-fade */
-.panel-enter-active {
-  transition: opacity 0.2s ease;
-}
-.panel-leave-active {
-  transition: opacity 0.12s ease;
-}
-.panel-enter-from,
-.panel-leave-to {
-  opacity: 0;
-}
-
-/* Staggered reveal of the active panel's content */
-.stagger > * {
-  animation: rise 0.42s cubic-bezier(0.22, 0.61, 0.36, 1) both;
-}
-.stagger > *:nth-child(1) { animation-delay: 0.02s; }
-.stagger > *:nth-child(2) { animation-delay: 0.09s; }
-.stagger > *:nth-child(3) { animation-delay: 0.16s; }
-.stagger > *:nth-child(4) { animation-delay: 0.23s; }
-
-@keyframes rise {
-  from {
-    opacity: 0;
-    transform: translateY(12px);
-  }
-  to {
-    opacity: 1;
-    transform: none;
-  }
-}
-</style>

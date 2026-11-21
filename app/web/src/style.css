@@ -43,6 +43,12 @@
     --color-card: var(--card);
     --color-foreground: var(--foreground);
     --color-background: var(--background);
+    --color-success: var(--success);
+    --color-success-foreground: var(--success-foreground);
+    --color-warning: var(--warning);
+    --color-warning-foreground: var(--warning-foreground);
+    --color-info: var(--info);
+    --color-info-foreground: var(--info-foreground);
     --radius-sm: calc(var(--radius) - 4px);
     --radius-md: calc(var(--radius) - 2px);
     --radius-lg: var(--radius);
@@ -82,6 +88,12 @@
     --sidebar-accent-foreground: oklch(0.205 0 0);
     --sidebar-border: oklch(0.922 0 0);
     --sidebar-ring: oklch(0.708 0 0);
+    --success: oklch(0.55 0.14 155);
+    --success-foreground: oklch(0.99 0 0);
+    --warning: oklch(0.7 0.15 75);
+    --warning-foreground: oklch(0.2 0 0);
+    --info: oklch(0.6 0.13 240);
+    --info-foreground: oklch(0.99 0 0);
 }
 
 .dark {
@@ -116,6 +128,18 @@
     --sidebar-accent-foreground: oklch(0.985 0 0);
     --sidebar-border: oklch(1 0 0 / 10%);
     --sidebar-ring: oklch(0.556 0 0);
+
+    /* 品牌色：琥珀强调 + 蓝灰底，与既有界面一致。 */
+    --primary: oklch(0.77 0.16 74);
+    --primary-foreground: oklch(0.2 0.02 250);
+    --accent: oklch(0.28 0.02 250);
+    --accent-foreground: oklch(0.97 0.01 250);
+    --success: oklch(0.72 0.15 155);
+    --success-foreground: oklch(0.18 0.02 250);
+    --warning: oklch(0.8 0.14 80);
+    --warning-foreground: oklch(0.2 0.02 250);
+    --info: oklch(0.7 0.12 235);
+    --info-foreground: oklch(0.18 0.02 250);
 }
 
 @layer base {
@@ -145,4 +169,26 @@
 
 ::-webkit-scrollbar-thumb:hover {
   background: oklch(0.439 0 0 / 80%);
+}
+
+/*
+ * 路由页面的挂载淡入。
+ *
+ * 用纯 CSS 动画而不是 <transition mode="out-in">：后者要求旧页面先离场才肯
+ * 卸载，一旦离场事件不可靠就会把组件树卡死。挂载动画只影响新页面的入场，
+ * 不参与任何生命周期判断。
+ */
+.route-fade {
+  animation: route-fade-in 0.18s ease-out both;
+}
+
+@keyframes route-fade-in {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
 }

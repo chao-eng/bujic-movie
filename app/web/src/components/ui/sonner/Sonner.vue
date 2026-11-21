@@ -6,7 +6,7 @@ import {
   OctagonXIcon,
   Loader2Icon,
   XIcon,
-} from '@lucide/vue';
+} from 'lucide-vue-next';
 
 
 import type { ToasterProps } from "vue-sonner"
