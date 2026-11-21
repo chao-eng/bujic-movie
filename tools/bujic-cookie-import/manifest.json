@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Bujic Movie Cookie 导入",
-  "version": "1.3.0",
+  "version": "1.4.0",
   "description": "从当前 Bujic Movie 页面复用登录状态，把已通过 Cloudflare 验证的 Cookie 与 User-Agent 导入回去。",
   "permissions": [
     "cookies",
@@ -15,6 +15,18 @@
   ],
   "action": {
     "default_title": "导入到 Bujic Movie",
-    "default_popup": "popup.html"
+    "default_popup": "popup.html",
+    "default_icon": {
+      "16": "icons/icon-16.png",
+      "32": "icons/icon-32.png",
+      "48": "icons/icon-48.png",
+      "128": "icons/icon-128.png"
+    }
+  },
+  "icons": {
+    "16": "icons/icon-16.png",
+    "32": "icons/icon-32.png",
+    "48": "icons/icon-48.png",
+    "128": "icons/icon-128.png"
   }
 }

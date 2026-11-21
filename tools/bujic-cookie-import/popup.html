@@ -11,7 +11,9 @@
       background: #0f172a; color: #e2e8f0;
       font: 13px/1.5 -apple-system, "Segoe UI", sans-serif;
     }
-    h1 { margin: 0 0 4px; font-size: 14px; color: #f59e0b; }
+    .brand { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; }
+    .brand img { border-radius: 6px; flex-shrink: 0; }
+    h1 { margin: 0; font-size: 14px; color: #f59e0b; }
     p.hint { margin: 0 0 10px; font-size: 11px; color: #94a3b8; }
     button {
       width: 100%; padding: 8px; margin-top: 4px; border: 0; border-radius: 6px;
@@ -43,7 +45,10 @@
   </style>
 </head>
 <body>
-  <h1>导入到 Bujic Movie</h1>
+  <div class="brand">
+    <img src="icons/icon-48.png" alt="" width="28" height="28" />
+    <h1>导入到 Bujic Movie</h1>
+  </div>
   <p class="hint">
     先在浏览器里打开目标站点完成验证，再点「抓取并导入」。服务端需与浏览器使用同一出口 IP。
   </p>

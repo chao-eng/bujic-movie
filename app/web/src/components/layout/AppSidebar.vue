@@ -41,11 +41,11 @@ const isActive = (path: string) => route.path.startsWith(path)
   >
     <div class="border-sidebar-border flex h-16 items-center justify-between border-b px-4">
       <div v-if="!isCollapsed" class="flex items-center gap-2">
-        <Film class="text-primary size-6" />
+        <img src="/favicon.png" alt="Bujic Movie" class="bg-muted ring-border size-7 shrink-0 rounded ring-1" />
         <span class="text-primary text-lg font-bold tracking-wider">BUJIC MOVIE</span>
       </div>
       <div v-else class="mx-auto">
-        <Film class="text-primary size-6" />
+        <img src="/favicon.png" alt="Bujic Movie" class="bg-muted ring-border size-7 rounded ring-1" />
       </div>
       <Button
         variant="ghost"

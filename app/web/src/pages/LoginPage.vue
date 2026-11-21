@@ -2,7 +2,7 @@
 import { ref } from 'vue'
 import { useRouter } from 'vue-router'
 import axios from 'axios'
-import { FilmIcon, LockIcon, UserIcon } from 'lucide-vue-next'
+import { LockIcon, UserIcon } from 'lucide-vue-next'
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
@@ -68,9 +68,7 @@ const handleLogin = async () => {
 
     <Card class="relative z-10 w-full max-w-md backdrop-blur-xl">
       <CardHeader class="justify-items-center py-6 text-center">
-        <div class="bg-primary/10 mb-2 flex size-12 items-center justify-center rounded-full">
-          <FilmIcon class="text-primary size-6" />
-        </div>
+        <img src="/favicon.png" alt="Bujic Movie" class="bg-muted ring-border mb-2 size-14 rounded-xl ring-1" />
         <CardTitle class="text-2xl font-extrabold tracking-wider">BUJIC MOVIE</CardTitle>
         <CardDescription>登入您的媒体管家控制台</CardDescription>
       </CardHeader>
