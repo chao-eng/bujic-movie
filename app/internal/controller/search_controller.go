@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/bujic-movie/bujic-movie/internal/service"
+	"github.com/bujic-movie/bujic-movie/pkg/logger"
 	"github.com/bujic-movie/bujic-movie/pkg/response"
 	"github.com/gin-gonic/gin"
 	"gorm.io/gorm"
@@ -519,7 +520,11 @@ func (h *SearchController) TitleCandidates(c *gin.Context) {
 	}
 	resolution, err := h.titles.Resolve(c.Request.Context(), body.Keyword, body.MediaType, body.RefreshTitles)
 	if err != nil {
-		response.Error(c, http.StatusBadGateway, 50203, err.Error())
+		// Resolve degrades instead of failing, so this is defensive: a future
+		// change that starts returning an error must not leak its text (it can
+		// carry the TMDB URL) to the client.
+		logger.Warn("search: title candidates failed: %v", err)
+		response.Error(c, http.StatusBadGateway, 50203, "片名解析失败，请稍后重试")
 		return
 	}
 	response.Success(c, resolution)
@@ -546,6 +551,7 @@ func (h *SearchController) ConfirmTitle(c *gin.Context) {
 	}
 	resolution, err := h.titles.Confirm(c.Request.Context(), body.Keyword, body.MediaType, body.TMDBID)
 	if err != nil {
+		logger.Warn("search: confirming title failed: %v", err)
 		response.Error(c, http.StatusBadRequest, 40011, err.Error())
 		return
 	}
