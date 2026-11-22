@@ -8,6 +8,7 @@ import {
   compatOf,
   filterIndexerRows,
   languageOptions,
+  enabledCounts,
 } from '../indexerFilter'
 
 /** 造一个最小可用模板。 */
@@ -180,5 +181,48 @@ describe('站点筛选：选项计数', () => {
     for (const compat of ['full', 'partial', 'missing'] as const) {
       expect(filterIndexerRows(rows, { compat }).map((r) => r.name)).not.toContain('Torznab')
     }
+  })
+})
+
+describe('站点筛选：启用状态', () => {
+  // 停用两个站点，用来验证筛选与计数。
+  const mixed = buildIndexerRows(
+    [
+      idx({ id: 1, name: 'On1', definition_id: 'pirates', enabled: true }),
+      idx({ id: 2, name: 'Off1', definition_id: 'nyaa', enabled: false }),
+      idx({ id: 3, name: 'Off2', connector: 'torznab', enabled: false }),
+      idx({ id: 4, name: 'On2', connector: 'torznab', enabled: true }),
+    ],
+    definitions,
+  )
+
+  it('默认不过滤，返回全部站点', () => {
+    expect(filterIndexerRows(mixed, {}).map((r) => r.name)).toEqual(['On1', 'Off1', 'Off2', 'On2'])
+  })
+
+  it('只筛已启用', () => {
+    expect(filterIndexerRows(mixed, { enabled: 'enabled' }).map((r) => r.name)).toEqual(['On1', 'On2'])
+  })
+
+  it('只筛已停用', () => {
+    expect(filterIndexerRows(mixed, { enabled: 'disabled' }).map((r) => r.name)).toEqual(['Off1', 'Off2'])
+  })
+
+  it('启用状态与模板无关，非 cardigann 连接器同样参与', () => {
+    // 这是与语言/分类/访问类型筛选的关键差别：那些维度需要模板，
+    // 而启停是站点自身的属性。
+    const disabled = filterIndexerRows(mixed, { enabled: 'disabled' })
+    expect(disabled.map((r) => r.name)).toContain('Off2')
+    expect(disabled.find((r) => r.name === 'Off2')?.definition).toBeUndefined()
+  })
+
+  it('与其它条件叠加时取交集', () => {
+    expect(filterIndexerRows(mixed, { enabled: 'enabled', term: 'on1' }).map((r) => r.name)).toEqual(['On1'])
+    expect(filterIndexerRows(mixed, { enabled: 'disabled', term: 'on1' })).toEqual([])
+  })
+
+  it('计数覆盖全部站点', () => {
+    expect(enabledCounts(mixed)).toEqual({ enabled: 2, disabled: 2 })
+    expect(enabledCounts([])).toEqual({ enabled: 0, disabled: 0 })
   })
 })

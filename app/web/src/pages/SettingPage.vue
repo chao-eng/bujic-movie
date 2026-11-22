@@ -10,6 +10,7 @@ import {
   CopyIcon,
   FilmIcon,
   FolderTreeIcon,
+  GlobeIcon,
   HardDriveIcon,
   HistoryIcon,
   KeyRoundIcon,
@@ -49,10 +50,10 @@ import { copyText, EMPTY_SELECT_VALUE, fromSelectValue, toSelectValue } from '@/
 
 const { confirm } = useConfirm()
 
-type TabKey = 'general' | 'directories' | 'servers' | 'clients' | 'notify' | 'security' | 'mcp' | 'search'
+type TabKey = 'general' | 'directories' | 'servers' | 'clients' | 'notify' | 'security' | 'mcp' | 'search' | 'proxy'
 const activeTab = ref<TabKey>('general')
 const tabs: { key: TabKey; label: string; icon: any }[] = [
-  { key: 'general', label: '常规', icon: SlidersHorizontalIcon },
+  { key: 'general', label: '刮削配置', icon: SlidersHorizontalIcon },
   { key: 'directories', label: '目录管理', icon: FolderTreeIcon },
   { key: 'servers', label: '媒体服务器', icon: ServerIcon },
   { key: 'clients', label: '下载器', icon: HardDriveIcon },
@@ -60,6 +61,7 @@ const tabs: { key: TabKey; label: string; icon: any }[] = [
   { key: 'security', label: '安全', icon: ShieldCheckIcon },
   { key: 'mcp', label: 'MCP / API Key', icon: BotIcon },
   { key: 'search', label: '搜索下载', icon: PlugIcon },
+  { key: 'proxy', label: '代理配置', icon: GlobeIcon },
 ]
 
 const settings = ref({
@@ -74,6 +76,9 @@ const settings = ref({
   search_definition_source: '',
   search_definition_version: '',
   search_auto_sync: true,
+  network_proxy: '',
+  network_scrape_via_proxy: false,
+  network_search_via_proxy: true,
 })
 
 const cards = ref<any[]>([])
@@ -144,7 +149,7 @@ const testProxy = async () => {
   searchProxyMsg.value = ''
   isTestingProxy.value = true
   try {
-    const res: any = await client.put('/api/v1/settings', settings.value)
+    const res: any = await client.put('/api/v1/settings', settingsPayload())
     if (res.code !== 0) throw new Error(res.msg || '保存失败')
     const res2: any = await client.post('/api/v1/search/proxy-test', {}, { timeout: 20000 })
     const data = res2.data ?? {}
@@ -160,15 +165,35 @@ const testProxy = async () => {
 }
 
 const clearProxy = async () => {
+  settings.value.network_proxy = ''
   settings.value.search_proxy = ''
-  await saveSettings()
+  isSaving.value = true
+  successMsg.value = ''
+  try {
+    const res: any = await client.put('/api/v1/settings', { ...settingsPayload(), clear_network_proxy: true })
+    if (res.code === 0) {
+      successMsg.value = '代理已清空'
+      setTimeout(() => { successMsg.value = '' }, 3000)
+    }
+  } catch (err) {
+    console.error('Failed to clear proxy', err)
+  } finally {
+    isSaving.value = false
+  }
+}
+
+// settingsPayload 去掉升级前遗留的 search_proxy：它是服务端只读回显字段，回传会被
+// 当成「清空旧代理」的指令。
+const settingsPayload = (): Record<string, any> => {
+  const { search_proxy: _legacySearchProxy, ...payload } = settings.value as Record<string, any>
+  return payload
 }
 
 const saveSettings = async () => {
   isSaving.value = true
   successMsg.value = ''
   try {
-    const res: any = await client.put('/api/v1/settings', settings.value)
+    const res: any = await client.put('/api/v1/settings', settingsPayload())
     if (res.code === 0) {
       successMsg.value = '配置保存成功！'
       setTimeout(() => { successMsg.value = '' }, 3000)
@@ -829,7 +854,7 @@ onUnmounted(() => {
 
       <!-- ===================== 常规 ===================== -->
       <TabsContent value="general" class="flex flex-col gap-4">
-        <PageSection title="常规" description="TMDB 配置与整理、刮削规则">
+        <PageSection title="刮削配置" description="TMDB 配置与整理、刮削规则">
           <Button :disabled="isSaving" @click="saveSettings">
             <Spinner v-if="isSaving" data-icon="inline-start" />
             <SaveIcon v-else data-icon="inline-start" />
@@ -1417,7 +1442,7 @@ onUnmounted(() => {
 
       <!-- ===================== 搜索下载 ===================== -->
       <TabsContent value="search" class="flex flex-col gap-4">
-        <PageSection title="搜索下载" description="全局代理与定义源">
+        <PageSection title="搜索下载" description="定义库来源与搜索开关">
           <Button :disabled="isSaving" @click="saveSettings">
             <Spinner v-if="isSaving" data-icon="inline-start" />
             <SaveIcon v-else data-icon="inline-start" />
@@ -1425,39 +1450,27 @@ onUnmounted(() => {
           </Button>
         </PageSection>
 
-        <Alert v-if="searchProxyMsg" :class="searchProxyMsgOk ? 'text-success' : 'text-destructive'">
-          <CheckCircle2Icon v-if="searchProxyMsgOk" />
-          <CircleAlertIcon v-else />
-          <AlertTitle>{{ searchProxyMsgOk ? '代理可用' : '代理不可用' }}</AlertTitle>
-          <AlertDescription>{{ searchProxyMsg }}</AlertDescription>
-        </Alert>
-
         <Card>
           <CardHeader>
             <CardTitle class="flex items-center gap-2">
               <PlugIcon class="text-primary size-5" />
-              网络代理
+              搜索行为
             </CardTitle>
             <CardDescription>
-              站点的默认出口。支持 <code>http://</code>、<code>https://</code>、<code>socks5://</code>、<code>socks5h://</code>；留空表示直连。
-              单个站点可在「已添加站点」页单独覆盖。下载器（qBittorrent）始终直连，不走此代理。
+              网络出口在「代理配置」页统一设置；片名识别的开关在搜索页顶部，这里只管定义库来源。
             </CardDescription>
           </CardHeader>
           <CardContent>
             <FieldGroup class="gap-4">
               <Field>
-                <FieldLabel for="search-proxy">全局代理地址</FieldLabel>
-                <Input id="search-proxy" v-model="settings.search_proxy" placeholder="socks5h://127.0.0.1:10808" />
+                <FieldLabel>当前代理</FieldLabel>
+                <div class="text-muted-foreground flex flex-wrap items-center gap-2 text-xs">
+                  <Badge variant="outline">{{ settings.network_proxy || '未配置（直连）' }}</Badge>
+                  <span>刮削 {{ settings.network_scrape_via_proxy ? '走代理' : '直连' }}</span>
+                  <span>·</span>
+                  <span>搜索器 {{ settings.network_search_via_proxy ? '走代理' : '直连' }}</span>
+                </div>
               </Field>
-              <div class="flex flex-wrap items-center gap-2">
-                <Button variant="outline" size="sm" :disabled="isTestingProxy" @click="testProxy">
-                  <Spinner v-if="isTestingProxy" data-icon="inline-start" />
-                  <PlugIcon v-else data-icon="inline-start" />
-                  保存并测试代理
-                </Button>
-                <Button variant="ghost" size="sm" @click="clearProxy">清空代理</Button>
-                <span class="text-muted-foreground text-xs">测试会通过此代理访问定义源。</span>
-              </div>
             </FieldGroup>
           </CardContent>
         </Card>
@@ -1488,6 +1501,77 @@ onUnmounted(() => {
                 />
                 <FieldLabel for="auto-sync">启动时自动同步定义库</FieldLabel>
               </Field>
+            </FieldGroup>
+          </CardContent>
+        </Card>
+      </TabsContent>
+
+      <!-- ===================== 代理配置 ===================== -->
+      <TabsContent value="proxy" class="flex flex-col gap-4">
+        <PageSection title="代理配置" description="网络出口，刮削与搜索器各自独立开关">
+          <Button :disabled="isSaving" @click="saveSettings">
+            <Spinner v-if="isSaving" data-icon="inline-start" />
+            <SaveIcon v-else data-icon="inline-start" />
+            保存设置
+          </Button>
+        </PageSection>
+
+        <Alert v-if="searchProxyMsg" :class="searchProxyMsgOk ? 'text-success' : 'text-destructive'">
+          <CheckCircle2Icon v-if="searchProxyMsgOk" />
+          <CircleAlertIcon v-else />
+          <AlertTitle>{{ searchProxyMsgOk ? '代理可用' : '代理不可用' }}</AlertTitle>
+          <AlertDescription>{{ searchProxyMsg }}</AlertDescription>
+        </Alert>
+
+        <Card>
+          <CardHeader>
+            <CardTitle class="flex items-center gap-2">
+              <GlobeIcon class="text-primary size-5" />
+              网络代理
+            </CardTitle>
+            <CardDescription>
+              全局出口。支持 <code>http://</code>、<code>https://</code>、<code>socks5://</code>、<code>socks5h://</code>；留空表示直连。
+              刮削（TMDB 与海报下载）和搜索器各自独立开关，因为两者常常需要不同的出口。
+              下载器（qBittorrent）始终直连。
+            </CardDescription>
+          </CardHeader>
+          <CardContent>
+            <FieldGroup class="gap-4">
+              <Field>
+                <FieldLabel for="network-proxy">代理地址</FieldLabel>
+                <Input id="network-proxy" v-model="settings.network_proxy" placeholder="socks5h://127.0.0.1:10808" />
+              </Field>
+              <Field orientation="horizontal">
+                <Checkbox
+                  id="scrape-proxy"
+                  :model-value="settings.network_scrape_via_proxy"
+                  @update:model-value="settings.network_scrape_via_proxy = Boolean($event)"
+                />
+                <div class="flex flex-col gap-1">
+                  <FieldLabel for="scrape-proxy">刮削走代理</FieldLabel>
+                  <FieldDescription>TMDB 元数据与海报/背景图下载。</FieldDescription>
+                </div>
+              </Field>
+              <Field orientation="horizontal">
+                <Checkbox
+                  id="search-proxy"
+                  :model-value="settings.network_search_via_proxy"
+                  @update:model-value="settings.network_search_via_proxy = Boolean($event)"
+                />
+                <div class="flex flex-col gap-1">
+                  <FieldLabel for="search-proxy">搜索器走代理</FieldLabel>
+                  <FieldDescription>定义源同步与站点搜索。单个站点仍可在「已添加站点」页单独覆盖。</FieldDescription>
+                </div>
+              </Field>
+              <div class="flex flex-wrap items-center gap-2">
+                <Button variant="outline" size="sm" :disabled="isTestingProxy" @click="testProxy">
+                  <Spinner v-if="isTestingProxy" data-icon="inline-start" />
+                  <PlugIcon v-else data-icon="inline-start" />
+                  保存并测试代理
+                </Button>
+                <Button variant="ghost" size="sm" @click="clearProxy">清空代理</Button>
+                <span class="text-muted-foreground text-xs">测试会通过此代理访问定义源。</span>
+              </div>
             </FieldGroup>
           </CardContent>
         </Card>

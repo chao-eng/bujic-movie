@@ -62,14 +62,19 @@
     --card-foreground: oklch(0.145 0 0);
     --popover: oklch(1 0 0);
     --popover-foreground: oklch(0.145 0 0);
-    --primary: oklch(0.205 0 0);
-    --primary-foreground: oklch(0.985 0 0);
+    /* 品牌色：琥珀强调 + 蓝灰底。两套主题都必须定义，否则亮色下
+       text-primary 会退化成纯黑，logo 与当前菜单项失去品牌色。
+       同一个变量既当白底上的文字色，又当主按钮底色配白字；这两种方向的
+       对比度数值相同，L=0.55 时约 5.0，白底文字与琥珀底白字都过 WCAG AA。
+       再亮（如 0.62）只有 3.8，两边都不达标。 */
+    --primary: oklch(0.55 0.14 62);
+    --primary-foreground: oklch(0.99 0.01 80);
     --secondary: oklch(0.97 0 0);
     --secondary-foreground: oklch(0.205 0 0);
     --muted: oklch(0.97 0 0);
     --muted-foreground: oklch(0.556 0 0);
-    --accent: oklch(0.97 0 0);
-    --accent-foreground: oklch(0.205 0 0);
+    --accent: oklch(0.96 0.02 80);
+    --accent-foreground: oklch(0.25 0.03 60);
     --destructive: oklch(0.577 0.245 27.325);
     --border: oklch(0.922 0 0);
     --input: oklch(0.922 0 0);
@@ -82,17 +87,18 @@
     --radius: 0.625rem;
     --sidebar: oklch(0.985 0 0);
     --sidebar-foreground: oklch(0.145 0 0);
-    --sidebar-primary: oklch(0.205 0 0);
-    --sidebar-primary-foreground: oklch(0.985 0 0);
-    --sidebar-accent: oklch(0.97 0 0);
-    --sidebar-accent-foreground: oklch(0.205 0 0);
+    --sidebar-primary: oklch(0.62 0.15 62);
+    --sidebar-primary-foreground: oklch(0.99 0.01 80);
+    --sidebar-accent: oklch(0.96 0.02 80);
+    --sidebar-accent-foreground: oklch(0.25 0.03 60);
     --sidebar-border: oklch(0.922 0 0);
     --sidebar-ring: oklch(0.708 0 0);
-    --success: oklch(0.55 0.14 155);
+    /* 语义色在亮色底上既是文字色也是图标色，需要足够深且保留色相。 */
+    --success: oklch(0.52 0.15 152);
     --success-foreground: oklch(0.99 0 0);
-    --warning: oklch(0.7 0.15 75);
-    --warning-foreground: oklch(0.2 0 0);
-    --info: oklch(0.6 0.13 240);
+    --warning: oklch(0.56 0.14 62);
+    --warning-foreground: oklch(0.99 0 0);
+    --info: oklch(0.52 0.14 240);
     --info-foreground: oklch(0.99 0 0);
 }
 
@@ -103,14 +109,10 @@
     --card-foreground: oklch(0.985 0 0);
     --popover: oklch(0.205 0 0);
     --popover-foreground: oklch(0.985 0 0);
-    --primary: oklch(0.922 0 0);
-    --primary-foreground: oklch(0.205 0 0);
     --secondary: oklch(0.269 0 0);
     --secondary-foreground: oklch(0.985 0 0);
     --muted: oklch(0.269 0 0);
     --muted-foreground: oklch(0.708 0 0);
-    --accent: oklch(0.269 0 0);
-    --accent-foreground: oklch(0.985 0 0);
     --destructive: oklch(0.704 0.191 22.216);
     --border: oklch(1 0 0 / 10%);
     --input: oklch(1 0 0 / 15%);
@@ -122,8 +124,8 @@
     --chart-5: oklch(0.269 0 0);
     --sidebar: oklch(0.205 0 0);
     --sidebar-foreground: oklch(0.985 0 0);
-    --sidebar-primary: oklch(0.488 0.243 264.376);
-    --sidebar-primary-foreground: oklch(0.985 0 0);
+    --sidebar-primary: oklch(0.77 0.16 74);
+    --sidebar-primary-foreground: oklch(0.2 0.02 250);
     --sidebar-accent: oklch(0.269 0 0);
     --sidebar-accent-foreground: oklch(0.985 0 0);
     --sidebar-border: oklch(1 0 0 / 10%);

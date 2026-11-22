@@ -2,6 +2,7 @@
 import { computed, onMounted, reactive, ref } from 'vue'
 import { toast } from 'vue-sonner'
 import {
+  ChevronDownIcon,
   CircleCheckIcon,
   FlaskConicalIcon,
   PencilIcon,
@@ -21,6 +22,7 @@ import {
   categoryOptions as indexerCategoryOptions,
   languageOptions as indexerLanguageOptions,
   accessCounts as indexerAccessCounts,
+  enabledCounts as indexerEnabledCounts,
   type CompatFilter,
 } from '@/lib/indexerFilter'
 import TemplatePicker from '@/components/search/TemplatePicker.vue'
@@ -36,6 +38,13 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog'
+import {
+  DropdownMenu,
+  DropdownMenuCheckboxItem,
+  DropdownMenuContent,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu'
 import { Empty, EmptyContent, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from '@/components/ui/empty'
 import { Field, FieldDescription, FieldGroup, FieldLabel } from '@/components/ui/field'
 import { Input } from '@/components/ui/input'
@@ -80,8 +89,73 @@ const form = reactive({
   user_agent: '',
   settings: {} as Record<string, string>,
   secrets: {} as Record<string, string>,
+  search_languages: [] as string[],
 })
 const isSaving = ref(false)
+
+// 站点可选的搜索语言：取自已启用站点的语言分布，另加常见语言兜底，
+// 这样即使是新站点也能选到尚未出现的语言。
+const COMMON_LANGUAGES: { language: string; label: string }[] = [
+  { language: 'zh', label: '中文' },
+  { language: 'en', label: '英语' },
+  { language: 'ko', label: '韩语' },
+  { language: 'ja', label: '日语' },
+  { language: 'ru', label: '俄语' },
+  { language: 'fr', label: '法语' },
+  { language: 'de', label: '德语' },
+  { language: 'es', label: '西班牙语' },
+  { language: 'pt', label: '葡萄牙语' },
+  { language: 'it', label: '意大利语' },
+  { language: 'th', label: '泰语' },
+  { language: 'vi', label: '越南语' },
+]
+
+const formLanguageOptions = computed(() => {
+  const seen = new Map<string, string>()
+  for (const lang of COMMON_LANGUAGES) seen.set(lang.language, lang.label)
+  // 已添加站点里出现过的语言也补进来（按中文标签反查语言码）。
+  for (const opt of languageOptions.value) {
+    const code = codeForLabel(opt.label)
+    if (code && !seen.has(code)) seen.set(code, opt.label)
+  }
+  return [...seen.entries()].map(([language, label]) => ({ language, label }))
+})
+
+/** 把语言的中文标签反查成语言码；未知标签则跳过。 */
+const codeForLabel = (label: string): string => {
+  for (const lang of COMMON_LANGUAGES) {
+    if (lang.label === label) return lang.language
+  }
+  // 后端把 zh-CN / zh-TW 都渲染成中文名，这里按前缀兜底。
+  if (label.includes('中文')) return 'zh'
+  return ''
+}
+
+const formLanguageLabel = computed(() => {
+  if (form.search_languages.length === 0) {
+    // 显示定义声明的语言，让用户知道默认值是什么。
+    const def = availableDefinitions.value.find((d) => d.id === form.definition_id)
+    const fallback = def?.language_label || '定义默认'
+    return `跟随定义（${fallback}）`
+  }
+  const labels = form.search_languages.map(
+    (lang) => formLanguageOptions.value.find((o) => o.language === lang)?.label ?? lang,
+  )
+  return labels.join(' + ')
+})
+
+const toggleFormLanguage = (language: string) => {
+  const at = form.search_languages.indexOf(language)
+  if (at >= 0) {
+    form.search_languages.splice(at, 1)
+    return
+  }
+  if (form.search_languages.length >= 4) {
+    toast.error('搜索语言最多选择 4 种')
+    return
+  }
+  form.search_languages.push(language)
+}
 
 const captchaFor = ref<IndexerItem | null>(null)
 const captchaValue = ref('')
@@ -130,6 +204,7 @@ const openManualCreate = () => {
     user_agent: '',
     settings: {},
     secrets: {},
+    search_languages: [] as string[],
   })
   showForm.value = true
 }
@@ -151,6 +226,7 @@ const openEdit = (indexer: IndexerItem) => {
     user_agent: indexer.user_agent || '',
     settings: {},
     secrets: {},
+    search_languages: [...(indexer.search_languages ?? [])],
   })
   showForm.value = true
 }
@@ -292,13 +368,38 @@ const submitCaptcha = async () => {
   }
 }
 
+// 启停只补丁受影响的这一行，不重新拉整张列表。
+// 重载会让列表滚动位置、展开状态、筛选条件全部回到初始，用户连点几行就得重新找位置。
 const toggleEnabled = async (indexer: IndexerItem) => {
+  const next = !indexer.enabled
+  // 乐观更新：接口失败时回滚，避免开关抖动。
+  const previous = indexer.enabled
+  applyEnabledState(indexer.id, next)
   try {
-    await searchApi.setIndexerEnabled(indexer.id, !indexer.enabled)
-    await load()
+    const res: any = await searchApi.setIndexerEnabled(indexer.id, next)
+    // 服务端可能返回完整视图（含重新计算的状态），有就合并进来。
+    const updated = res?.data as IndexerItem | undefined
+    if (updated && typeof updated === 'object' && 'enabled' in updated) {
+      patchIndexer(indexer.id, updated)
+    }
   } catch (err: any) {
+    applyEnabledState(indexer.id, previous)
     toast.error(err?.msg || '操作失败')
   }
+}
+
+/** 就地改一行的启用标记；行对象整体替换，保证 Vue 能感知。 */
+const applyEnabledState = (id: number, enabled: boolean) => {
+  const at = indexers.value.findIndex((i) => i.id === id)
+  if (at < 0) return
+  indexers.value.splice(at, 1, { ...indexers.value[at], enabled })
+}
+
+/** 合并服务端返回的字段，只覆盖这一行。 */
+const patchIndexer = (id: number, patch: Partial<IndexerItem>) => {
+  const at = indexers.value.findIndex((i) => i.id === id)
+  if (at < 0) return
+  indexers.value.splice(at, 1, { ...indexers.value[at], ...patch })
 }
 
 const clearCooldown = async (indexer: IndexerItem) => {
@@ -370,6 +471,7 @@ const categoryFilter = ref('all')
 const languageFilter = ref('all')
 const accessFilter = ref('all')
 const compatFilter = ref<CompatFilter>('all')
+const enabledFilter = ref('all')
 
 const filterState = computed(() => ({
   term: filterText.value,
@@ -377,6 +479,7 @@ const filterState = computed(() => ({
   category: categoryFilter.value,
   language: languageFilter.value,
   access: accessFilter.value,
+  enabled: enabledFilter.value,
 }))
 
 const filtered = computed(() => filterIndexerRows(rows.value, filterState.value))
@@ -385,6 +488,7 @@ const categoryOptions = computed(() => indexerCategoryOptions(rows.value))
 const languageOptions = computed(() => indexerLanguageOptions(rows.value))
 const accessCounts = computed(() => indexerAccessCounts(rows.value))
 const compatCounts = computed(() => indexerCompatCounts(rows.value))
+const enabledCounts = computed(() => indexerEnabledCounts(rows.value))
 
 const enabledCount = computed(() => indexers.value.filter((i) => i.enabled).length)
 
@@ -414,13 +518,20 @@ const compatLabel = computed(() => {
   return `全部（${rows.value.length}）`
 })
 
+const enabledFilterLabel = computed(() => {
+  if (enabledFilter.value === 'enabled') return `已启用（${enabledCounts.value.enabled}）`
+  if (enabledFilter.value === 'disabled') return `已停用（${enabledCounts.value.disabled}）`
+  return '启用状态'
+})
+
 const hasFilters = computed(
   () =>
     filterText.value.trim() !== '' ||
     categoryFilter.value !== 'all' ||
     languageFilter.value !== 'all' ||
     accessFilter.value !== 'all' ||
-    compatFilter.value !== 'all',
+    compatFilter.value !== 'all' ||
+    enabledFilter.value !== 'all',
 )
 
 const clearFilters = () => {
@@ -429,6 +540,7 @@ const clearFilters = () => {
   languageFilter.value = 'all'
   accessFilter.value = 'all'
   compatFilter.value = 'all'
+  enabledFilter.value = 'all'
 }
 
 /** 状态用 Badge 表达，文案与语气分开，不只靠颜色。 *//** 状态用 Badge 表达，文案与语气分开，不只靠颜色。 */
@@ -515,7 +627,7 @@ onMounted(load)
         </Select>
 
         <Select v-model="languageFilter">
-          <SelectTrigger class="w-32"><SelectValue placeholder="全部语言">{{ languageLabel }}</SelectValue></SelectTrigger>
+          <SelectTrigger class="w-36"><SelectValue placeholder="全部语言">{{ languageLabel }}</SelectValue></SelectTrigger>
           <SelectContent>
             <SelectGroup>
               <SelectItem value="all">全部语言</SelectItem>
@@ -531,6 +643,17 @@ onMounted(load)
               <SelectItem value="all">公开与非公开</SelectItem>
               <SelectItem value="public">公开（{{ accessCounts.public }}）</SelectItem>
               <SelectItem value="nonPublic">非公开（{{ accessCounts.nonPublic }}）</SelectItem>
+            </SelectGroup>
+          </SelectContent>
+        </Select>
+
+        <Select v-model="enabledFilter">
+          <SelectTrigger class="w-32"><SelectValue placeholder="启用状态">{{ enabledFilterLabel }}</SelectValue></SelectTrigger>
+          <SelectContent>
+            <SelectGroup>
+              <SelectItem value="all">启用状态</SelectItem>
+              <SelectItem value="enabled">已启用（{{ enabledCounts.enabled }}）</SelectItem>
+              <SelectItem value="disabled">已停用（{{ enabledCounts.disabled }}）</SelectItem>
             </SelectGroup>
           </SelectContent>
         </Select>
@@ -631,6 +754,40 @@ onMounted(load)
           <Field>
             <FieldLabel for="indexer-interval">请求间隔（毫秒）</FieldLabel>
             <Input id="indexer-interval" v-model.number="form.min_interval_ms" type="number" min="200" max="60000" />
+          </Field>
+
+          <Field class="md:col-span-2">
+            <FieldLabel>搜索语言（可多选）</FieldLabel>
+            <FieldDescription>
+              留空则跟随定义声明的语言。选中多种语言时，会用每种语言各搜一次并合并结果——
+              适合像 FileMood 这种同时收录中文和英文资源的站点。最多 4 种。
+            </FieldDescription>
+            <DropdownMenu>
+              <DropdownMenuTrigger as-child>
+                <Button variant="outline" class="w-full justify-between font-normal">
+                  <span class="truncate">{{ formLanguageLabel }}</span>
+                  <ChevronDownIcon class="text-muted-foreground size-4 shrink-0" />
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="start" class="max-h-72 w-56 overflow-y-auto">
+                <DropdownMenuCheckboxItem
+                  :model-value="form.search_languages.length === 0"
+                  @update:model-value="form.search_languages = []"
+                >
+                  跟随定义
+                </DropdownMenuCheckboxItem>
+                <DropdownMenuSeparator v-if="formLanguageOptions.length" />
+                <DropdownMenuCheckboxItem
+                  v-for="opt in formLanguageOptions"
+                  :key="opt.language"
+                  :model-value="form.search_languages.includes(opt.language)"
+                  @select.prevent
+                  @update:model-value="toggleFormLanguage(opt.language)"
+                >
+                  <span class="flex-1">{{ opt.label }}</span>
+                </DropdownMenuCheckboxItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
           </Field>
           <Field>
             <FieldLabel for="indexer-client">绑定下载器</FieldLabel>
@@ -772,6 +929,15 @@ onMounted(load)
             <Badge v-if="indexer.definition" variant="outline">{{ accessLabel(indexer.definition.type) }}</Badge>
             <Badge v-if="indexer.definition?.language_label" variant="outline" class="text-info">
               {{ indexer.definition.language_label }}
+            </Badge>
+            <!-- 多语言搜索是站点级覆盖，和模板声明的语言是两件事，单独标出。 -->
+            <Badge
+              v-if="(indexer.search_languages?.length ?? 0) > 1"
+              variant="secondary"
+              class="text-primary"
+              :title="'按这些语言各搜一次：' + (indexer.search_languages ?? []).join(' + ')"
+            >
+              多语言 {{ (indexer.search_languages ?? []).length }}
             </Badge>
             <Badge
               v-for="group in (indexer.definition?.category_groups ?? []).slice(0, 4)"

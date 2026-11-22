@@ -1,9 +1,20 @@
 <script setup lang="ts">
 import { onMounted, onUnmounted, ref } from 'vue'
 import axios from 'axios'
-import { CircleCheckIcon, CircleAlertIcon, LogOutIcon, ServerIcon } from 'lucide-vue-next'
+import {
+  CircleCheckIcon,
+  CircleAlertIcon,
+  LogOutIcon,
+  MoonIcon,
+  ServerIcon,
+  SunIcon,
+} from 'lucide-vue-next'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
+import { useTheme } from '@/composables/useTheme'
+
+// 只做明暗两态：默认跟随系统，点一次即固定为用户选的那一侧。
+const { isDark, toggle } = useTheme()
 
 const backendStatus = ref<'online' | 'offline' | 'checking'>('checking')
 let timer: ReturnType<typeof setInterval> | null = null
@@ -36,7 +47,7 @@ onUnmounted(() => {
   <header
     class="bg-background/80 border-border sticky top-0 z-40 flex h-16 shrink-0 items-center justify-between border-b px-6 backdrop-blur-md"
   >
-    <h2 class="text-lg font-semibold">Bujic Movie 媒体管理系统</h2>
+    <h2 class="text-lg font-semibold">布吉影库 · 媒体管理系统</h2>
 
     <div class="flex items-center gap-4">
       <div class="flex items-center gap-2 text-xs">
@@ -52,6 +63,17 @@ onUnmounted(() => {
         </Badge>
         <Badge v-else variant="outline" class="text-warning">检测中</Badge>
       </div>
+
+      <Button
+        variant="ghost"
+        size="icon-sm"
+        :title="isDark ? '切换到亮色主题' : '切换到暗色主题'"
+        :aria-label="isDark ? '切换到亮色主题' : '切换到暗色主题'"
+        @click="toggle"
+      >
+        <SunIcon v-if="isDark" />
+        <MoonIcon v-else />
+      </Button>
 
       <Button variant="outline" size="sm" title="退出登录" @click="handleLogout">
         <LogOutIcon data-icon="inline-start" />

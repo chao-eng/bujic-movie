@@ -335,7 +335,7 @@ onMounted(load)
         </Select>
 
         <Select v-model="languageFilter">
-          <SelectTrigger class="w-32"><SelectValue placeholder="全部语言">{{ languageLabel }}</SelectValue></SelectTrigger>
+          <SelectTrigger class="w-36"><SelectValue placeholder="全部语言">{{ languageLabel }}</SelectValue></SelectTrigger>
           <SelectContent>
             <SelectGroup>
               <SelectItem value="all">全部语言</SelectItem>

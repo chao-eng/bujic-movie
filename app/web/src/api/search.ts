@@ -52,6 +52,8 @@ export interface IndexerItem {
   session_state: string
   definition_status: string
   site_url: string
+  /** 该站点要搜索的语言（空表示跟随定义）。 */
+  search_languages?: string[] | null
 }
 
 export interface CategoryMapping {
@@ -122,6 +124,47 @@ export interface SearchFailure {
   message: string
 }
 
+export interface SiteQuery {
+  indexer_id: number
+  indexer_name: string
+  keyword: string
+  language: string
+}
+
+/** One title variant with the language it belongs to. */
+export interface TitleAliasEntry {
+  title: string
+  lang: string
+  source: 'localized' | 'original' | 'alternative' | 'manual' | string
+}
+
+/** One TMDB match offered for manual confirmation. */
+export interface TitleCandidate {
+  tmdb_id: number
+  media_type: 'movie' | 'tv' | string
+  title: string
+  original_title: string
+  year: number
+  overview: string
+  poster_path: string
+  vote_average: number
+  aliases: TitleAliasEntry[] | null
+}
+
+/** How a keyword was resolved into the titles indexers actually publish. */
+export interface TitleResolution {
+  keyword: string
+  media_type: string
+  selected?: TitleCandidate | null
+  candidates: TitleCandidate[] | null
+  aliases: string[] | null
+  needs_confirmation: boolean
+  confirmed: boolean
+  cached: boolean
+  degraded: boolean
+  message?: string
+}
+
 export interface SearchResponse {
   search_id: string
   request_id: string
@@ -134,6 +177,10 @@ export interface SearchResponse {
   page: number
   page_size: number
   skipped: number
+  /** 每个站点实际使用的检索词。 */
+  site_queries?: SiteQuery[] | null
+  /** Alias resolution behind this query, when enabled. */
+  title?: TitleResolution | null
 }
 
 export interface TestResult {
@@ -265,7 +312,18 @@ export const searchApi = {
   testClient: (id: number) => client.post(`${base}/download-clients/${id}/test`),
   clientCategories: (id: number) => client.get(`${base}/download-clients/${id}/categories`),
 
-  query: (payload: unknown) => client.post(`${base}/query`, payload),
+  query: (payload: unknown) =>
+    // 服务端搜索预算默认 15s，客户端的等待必须比它更长，否则服务端还在收尾
+    // （合并、去重、写历史）时前端就先超时，用户看到「搜索失败」但其实有结果。
+    client.post(`${base}/query`, payload, { timeout: 25000 }),
+  titleCandidates: (payload: { keyword: string; media_type?: string; refresh?: boolean }) =>
+    // 解析包含 TMDB 搜索 + 候选别名，冷启动可能接近 4s 预算。
+    client.post(`${base}/title-candidates`, payload, { timeout: 20000 }),
+  confirmTitle: (payload: { keyword: string; media_type?: string; tmdb_id: number }) =>
+    // 确认在缓存未命中时会先解析片名（一次 TMDB 往返），比普通写接口慢。
+    client.post(`${base}/title-confirm`, payload, { timeout: 20000 }),
+  clearTitleAlias: (keyword: string) =>
+    client.delete(`${base}/title-alias`, { params: { keyword } }),
   grabPreview: (payload: unknown) => client.post(`${base}/grab/preview`, payload),
   grab: (payload: unknown) => client.post(`${base}/grab`, payload),
   tasks: () => client.get(`${base}/tasks`),

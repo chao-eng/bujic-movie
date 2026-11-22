@@ -1,11 +1,11 @@
 <script setup lang="ts">
-import {
-  Dialog,
+import { Dialog,
   DialogContent,
   DialogDescription,
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog'
+import { cn } from '@/lib/utils'
 
 /**
  * 通用弹层：模板选择、添加站点这类需要集中注意力的流程放进弹层。
@@ -27,7 +27,16 @@ const open = defineModel<boolean>('open', { default: true })
       }
     "
   >
-    <DialogContent :class="props.wide ? 'sm:max-w-4xl' : 'sm:max-w-2xl'">
+    <DialogContent
+      :class="
+        cn(
+          props.wide ? 'sm:max-w-4xl' : 'sm:max-w-2xl',
+          // 内容可能远超视口（站点表单要滚很久）。限制高度并让整个弹层可滚动，
+          // 否则 DialogContent 固定居中会把上下两端顶到屏幕外，用户点不到也滚不动。
+          'max-h-[calc(100dvh-2rem)] overflow-y-auto overscroll-contain',
+        )
+      "
+    >
       <DialogHeader>
         <DialogTitle>{{ props.title }}</DialogTitle>
         <DialogDescription v-if="props.subtitle">{{ props.subtitle }}</DialogDescription>

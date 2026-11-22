@@ -82,3 +82,24 @@ describe('createVisibilityPoller', () => {
     expect(h.clearIntervalFn).toHaveBeenCalledTimes(1)
   })
 })
+
+// 片名识别：每次主动搜索都清空上一轮的识别结果并重新识别，
+// 只有「点选候选后立刻重搜」保留刚确认的选择。
+describe('titleRefreshOnSearch', () => {
+  /** 复刻 SearchPanel 里「是否清空识别结果并强制重新识别」的判断。 */
+  function decide(keepTitle: boolean) {
+    return { cleared: !keepTitle, refreshTitle: !keepTitle }
+  }
+
+  it('clears a confirmed pick on a new manual search', () => {
+    expect(decide(false)).toEqual({ cleared: true, refreshTitle: true })
+  })
+
+  it('keeps the pick when re-running right after confirming a candidate', () => {
+    expect(decide(true)).toEqual({ cleared: false, refreshTitle: false })
+  })
+
+  it('an unconfirmed automatic match is cleared too, so it cannot stick', () => {
+    expect(decide(false)).toEqual({ cleared: true, refreshTitle: true })
+  })
+})

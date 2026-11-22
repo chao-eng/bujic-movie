@@ -15,6 +15,9 @@ export type IndexerRow = IndexerItem & { definition?: DefinitionItem }
 
 export type CompatFilter = 'all' | 'full' | 'partial' | 'missing'
 
+/** 启用状态筛选。 */
+export type EnabledFilter = 'all' | 'enabled' | 'disabled'
+
 export interface IndexerFilterState {
   /** 按名称 / 定义 id / 模板名搜索，不区分大小写 */
   term?: string
@@ -24,6 +27,8 @@ export interface IndexerFilterState {
   language?: string
   /** public / nonPublic */
   access?: string
+  /** enabled / disabled */
+  enabled?: string
 }
 
 /** 把站点与其模板关联起来。 */
@@ -76,9 +81,14 @@ export function filterIndexerRows(rows: IndexerRow[], state: IndexerFilterState)
   const category = state.category ?? 'all'
   const language = state.language ?? 'all'
   const access = state.access ?? 'all'
+  const enabled = state.enabled ?? 'all'
 
   return rows.filter((row) => {
     const def = usableDefinition(row)
+
+    // 启用状态是站点自身的属性，不依赖模板，所以放在最前面判断。
+    if (enabled === 'enabled' && !row.enabled) return false
+    if (enabled === 'disabled' && row.enabled) return false
 
     if (compat !== 'all') {
       // 不使用模板的连接器没有兼容性可言，任何具体取值下都不应出现。
@@ -146,6 +156,17 @@ export function accessCounts(rows: IndexerRow[]): { public: number; nonPublic: n
     else nonPublicCount++
   }
   return { public: publicCount, nonPublic: nonPublicCount }
+}
+
+/** 启用状态计数：全部站点都参与，与模板无关。 */
+export function enabledCounts(rows: IndexerRow[]): { enabled: number; disabled: number } {
+  let enabled = 0
+  let disabled = 0
+  for (const row of rows) {
+    if (row.enabled) enabled++
+    else disabled++
+  }
+  return { enabled, disabled }
 }
 
 /** 兼容性计数，含「定义缺失」。 */
