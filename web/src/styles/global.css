@@ -289,3 +289,39 @@
 ::-webkit-scrollbar-thumb:hover {
   background: oklch(0.439 0 0 / 70%);
 }
+
+/* 文档「本页目录」：滚动条极简化为一条白色细光标，不占视觉重量。
+   浅色底上白色等于不可见，所以浅色下用同样的极淡中性色，悬停才提亮。 */
+.toc-scroll {
+  scrollbar-width: thin;
+  scrollbar-color: color-mix(in oklab, var(--foreground) 14%, transparent) transparent;
+}
+.toc-scroll::-webkit-scrollbar {
+  width: 2px;
+  height: 2px;
+}
+.toc-scroll::-webkit-scrollbar-track {
+  background: transparent;
+}
+.toc-scroll::-webkit-scrollbar-thumb {
+  background: color-mix(in oklab, var(--foreground) 14%, transparent);
+  border-radius: 9999px;
+}
+.toc-scroll:hover {
+  scrollbar-color: color-mix(in oklab, var(--foreground) 32%, transparent) transparent;
+}
+.toc-scroll:hover::-webkit-scrollbar-thumb {
+  background: color-mix(in oklab, var(--foreground) 32%, transparent);
+}
+.dark .toc-scroll {
+  scrollbar-color: color-mix(in oklab, white 20%, transparent) transparent;
+}
+.dark .toc-scroll::-webkit-scrollbar-thumb {
+  background: color-mix(in oklab, white 20%, transparent);
+}
+.dark .toc-scroll:hover {
+  scrollbar-color: color-mix(in oklab, white 45%, transparent) transparent;
+}
+.dark .toc-scroll:hover::-webkit-scrollbar-thumb {
+  background: color-mix(in oklab, white 45%, transparent);
+}
