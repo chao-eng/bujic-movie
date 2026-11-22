@@ -191,6 +191,29 @@ func TestTST031_TorznabMalformedRSS(t *testing.T) {
 	}
 }
 
+// A 404 from a wrong base URL must not be reported as rate limiting: the two
+// failures need different fixes, so the message carries the real status code.
+func TestBlockedMessageKeepsStatus(t *testing.T) {
+	cases := []struct {
+		status int
+		want   string
+	}{
+		{http.StatusTooManyRequests, "429"},
+		{http.StatusForbidden, "403"},
+		{http.StatusNotFound, "404"},
+		{http.StatusBadRequest, "400"},
+	}
+	for _, tc := range cases {
+		got := blockedMessage(&httpclient.Error{Kind: httpclient.KindBlocked, Message: "站点返回", Status: tc.status})
+		if !strings.Contains(got, tc.want) {
+			t.Errorf("status %d -> %q, want mention of %s", tc.status, got, tc.want)
+		}
+	}
+	if got := blockedMessage(&httpclient.Error{Kind: httpclient.KindBlocked}); got != "站点限制访问" {
+		t.Errorf("no status -> %q", got)
+	}
+}
+
 func asConnectorError(err error, target **Error) bool {
 	for err != nil {
 		if c, ok := err.(*Error); ok {

@@ -39,7 +39,8 @@ bujic-movie
 
 # Database and runtime data files
 app/data/
-data/
+# 只忽略根目录的 data/：写成 `data/` 会连带忽略 web/src/data/（官网的导航数据）。
+/data/
 *.db
 *.db-journal
 *.sqlite

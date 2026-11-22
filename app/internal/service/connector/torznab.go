@@ -6,6 +6,7 @@ import (
 	"encoding/xml"
 	"fmt"
 	"io"
+	"net/http"
 	"net/url"
 	"strconv"
 	"strings"
@@ -371,10 +372,32 @@ func translateHTTPError(err error) error {
 	case httpclient.KindChallenge:
 		return NewError(KindChallenge, "站点要求浏览器验证，当前不支持绕过", "", err)
 	case httpclient.KindBlocked:
-		return NewError(KindBlocked, "站点拒绝或限流", "", err)
+		return NewError(KindBlocked, blockedMessage(hErr), "", err)
 	default:
 		return NewError(KindUnreachable, "无法连接站点", "", err)
 	}
+}
+
+// blockedMessage names the real status. "blocked" covers bot protection (403),
+// throttling (429) and a plain 4xx such as a wrong base URL (404); reporting all
+// of them as "限流" sends users looking for a rate problem that does not exist.
+func blockedMessage(err *httpclient.Error) string {
+	switch err.Status {
+	case http.StatusTooManyRequests:
+		return "站点限流（HTTP 429），请稍后重试或调大请求间隔"
+	case http.StatusForbidden:
+		return "站点拒绝访问（HTTP 403），可能被反爬拦截，可尝试配置代理"
+	case http.StatusNotFound:
+		return "站点返回 HTTP 404，接口地址可能不对；内置站点请留空使用官方地址"
+	}
+	if err.Status > 0 {
+		return fmt.Sprintf("站点返回 HTTP %d：%s", err.Status, err.Message)
+	}
+	// Allowlist and redirect failures have no status but do carry the reason.
+	if err.Message != "" {
+		return err.Message
+	}
+	return "站点限制访问"
 }
 
 func asHTTPError(err error, target **httpclient.Error) bool {
