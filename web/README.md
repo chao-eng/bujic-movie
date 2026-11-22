@@ -21,7 +21,29 @@ npm run preview   # 预览构建产物
 npm run check     # Astro + TS 类型检查
 ```
 
-> 需要 Node.js >= 22.23（Astro 7 的要求）。
+> 需要 Node.js >= 22.23（Astro 7 的要求）。`web/.nvmrc` 已固定版本，
+> 用 nvm/fnm 的机器会自动切换。
+
+## 部署到 Cloudflare Pages
+
+| 配置项 | 值 |
+|--------|-----|
+| 根目录（Root directory） | `web` |
+| 构建命令（Build command） | `npm ci && npm run build` |
+| 输出目录（Build output directory） | `dist` |
+| 环境变量 | `NODE_VERSION=22.23.4`（或让平台读 `.nvmrc`） |
+
+产物是纯静态文件，不需要 Functions 或 Workers 运行时。
+
+两个容易踩的点：
+
+- **`package-lock.json` 必须进版本库**，否则 `npm ci` 会直接失败。仓库根的 `.gitignore`
+  里有 `data/` 这类规则时要留意别误伤 `web/src/data/`——导航数据就在那里，被忽略会导致
+  构建报 `Could not load src/data/nav`。
+- **锁文件里的 `resolved` 统一写 `registry.npmjs.org`**。从国内镜像生成的锁文件会带
+  `registry.npmmirror.com`，在 Cloudflare 的构建机上可能超时；`integrity` 是内容摘要，
+  换源不影响校验。
+
 
 ## 目录
 
