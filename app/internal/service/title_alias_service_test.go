@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/bujic-movie/bujic-movie/internal/config"
+	"github.com/bujic-movie/bujic-movie/internal/model/entity"
 	"github.com/bujic-movie/bujic-movie/internal/service/connector"
 	"github.com/bujic-movie/bujic-movie/pkg/tmdb"
 )
@@ -308,5 +309,74 @@ func TestTitleAliasSwitchingSelection(t *testing.T) {
 		}
 	case <-time.After(5 * time.Second):
 		t.Fatal("switching a confirmed selection deadlocked")
+	}
+}
+
+// 未命中的关键词必须真正走负缓存：同一关键词连续解析不应每次都问 TMDB。
+func TestTitleAliasNegativeCacheWorks(t *testing.T) {
+	var hits int32
+	env := newTestEnv(t)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		atomic.AddInt32(&hits, 1)
+		// 查询成功但没有任何结果 —— 这才是负缓存的场景。
+		switch r.URL.Path {
+		case "/search/movie":
+			_ = json.NewEncoder(w).Encode(tmdb.SearchMovieResponse{Results: []tmdb.SearchMovieResult{}})
+		case "/search/tv":
+			_ = json.NewEncoder(w).Encode(tmdb.SearchTVResponse{Results: []tmdb.SearchTVResult{}})
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer server.Close()
+
+	env.cfg.Search.AliasResolution = true
+	env.cfg.Search.AliasTimeoutMS = 3000
+	svc := NewTitleAliasService(env.repo, tmdb.NewClient("k", server.URL, "zh-CN"), env.cfg)
+
+	for i := 0; i < 3; i++ {
+		resolution, err := svc.Resolve(context.Background(), "完全不存在的片子xyz", "", false)
+		if err != nil {
+			t.Fatalf("resolve %d: %v", i, err)
+		}
+		if resolution.Degraded {
+			t.Fatalf("resolve %d degraded unexpectedly: %s", i, resolution.Message)
+		}
+	}
+	got := atomic.LoadInt32(&hits)
+	// 首次解析 movie+tv 各一次；之后应全部命中负缓存。
+	if got > 2 {
+		t.Errorf("TMDB calls = %d, want <= 2 (negative cache must suppress repeats)", got)
+	}
+}
+
+// 缓存清扫有节流：同一进程内短时间重复调用只真正执行一次。
+func TestTitleAliasPruneIsThrottled(t *testing.T) {
+	svc, env := newAliasEnv(t, nil)
+
+	// 直接写库，绕过 SaveTitleAlias 强制刷新 updated_at 的行为。
+	seed := func(keyword string, age time.Duration) {
+		t.Helper()
+		stamp := time.Now().Add(-age)
+		row := entity.SearchTitleAlias{
+			Keyword: keyword, MediaType: "", AliasesJSON: `["` + keyword + `"]`,
+			CandidatesJSON: "[]", CreatedAt: stamp, UpdatedAt: stamp,
+		}
+		if err := env.db.Create(&row).Error; err != nil {
+			t.Fatalf("seed %s: %v", keyword, err)
+		}
+	}
+
+	seed("旧词", 200*24*time.Hour)
+	svc.PruneStale(time.Now())
+	if _, err := env.repo.GetTitleAlias("旧词", ""); err == nil {
+		t.Error("a row older than the prune TTL should be deleted")
+	}
+
+	// 第二次调用应被节流跳过。
+	seed("旧词2", 200*24*time.Hour)
+	svc.PruneStale(time.Now().Add(time.Minute))
+	if _, err := env.repo.GetTitleAlias("旧词2", ""); err != nil {
+		t.Error("the second sweep must be throttled, leaving the row in place")
 	}
 }

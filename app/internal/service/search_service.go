@@ -456,6 +456,11 @@ func (s *SearchService) Search(ctx context.Context, q SearchQuery) (*SearchResul
 		}
 		s.pruneHistory()
 	}
+	// The alias table grows with every new keyword; sweep it on the same path so
+	// no separate timer is needed. PruneStale throttles itself.
+	if s.titles != nil {
+		s.titles.PruneStale(time.Now())
+	}
 
 	sort.SliceStable(failures, func(i, j int) bool { return failures[i].IndexerID < failures[j].IndexerID })
 	sort.SliceStable(siteQueries, func(i, j int) bool { return siteQueries[i].IndexerID < siteQueries[j].IndexerID })
@@ -544,7 +549,12 @@ func (s *SearchService) candidatesFor(ids []uint, languages []string) ([]entity.
 		}
 		// Language filtering happens here, before the fan-out, so a restricted
 		// search does not waste a request on a site that cannot answer.
-		if len(wantLang) > 0 && !wantLang[languageGroup(s.indexers.DefinitionLanguage(idx))] {
+		//
+		// The site's own SearchLanguages override decides: a site whose
+		// definition says en-US but is configured to search zh+en genuinely
+		// supports Chinese, so filtering on the definition language alone would
+		// wrongly exclude it.
+		if len(wantLang) > 0 && !siteSupportsAnyLanguage(idx, s.indexers.DefinitionLanguage(idx), wantLang) {
 			continue
 		}
 		status, err := s.repo.GetStatus(idx.ID)
@@ -557,6 +567,22 @@ func (s *SearchService) candidatesFor(ids []uint, languages []string) ([]entity.
 		out = append(out, idx)
 	}
 	return out, nil
+}
+
+// siteSupportsAnyLanguage reports whether a site answers in any of the requested
+// language groups. A configured SearchLanguages override wins over the
+// definition's declared language, because that is what the search actually uses.
+func siteSupportsAnyLanguage(idx entity.SearchIndexer, definitionLang string, wantLang map[string]bool) bool {
+	langs := splitLanguages(idx.SearchLanguages)
+	if len(langs) == 0 {
+		langs = []string{definitionLang}
+	}
+	for _, lang := range langs {
+		if wantLang[languageGroup(lang)] {
+			return true
+		}
+	}
+	return false
 }
 
 // normaliseLanguageSet lower-cases and de-duplicates the requested languages.
@@ -767,7 +793,7 @@ func siteKeywords(idx entity.SearchIndexer, base string, resolution *TitleResolu
 // keywordFor picks the alias for one language. It prefers the selected
 // candidate, which carries language tags. When only a bare alias list is
 // available (a caller supplied aliases directly), it falls back to picking by
-// writing system so a multi-language site still gets distinct keywords.
+// writing system — and skips transliterations, which a tracker never indexes.
 func keywordFor(resolution *TitleResolution, base, lang string) string {
 	if resolution != nil && resolution.Selected != nil {
 		return KeywordForLanguage(resolution, base, lang)
@@ -787,7 +813,7 @@ func keywordFor(resolution *TitleResolution, base, lang string) string {
 			return alias
 		case wantKana && isKana(alias):
 			return alias
-		case !wantHangul && !wantKana && !containsCJK(alias) && containsLatin(alias):
+		case !wantHangul && !wantKana && !containsCJK(alias) && containsLatin(alias) && !isTransliteration(alias):
 			return alias
 		}
 	}

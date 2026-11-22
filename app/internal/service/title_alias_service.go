@@ -81,6 +81,10 @@ type TitleAliasService struct {
 
 	mu       sync.Mutex
 	inFlight map[string]*sync.Mutex
+
+	// pruneMu guards lastPrune so the cache sweep runs at most once per interval.
+	pruneMu   sync.Mutex
+	lastPrune time.Time
 }
 
 // NewTitleAliasService wires the resolver.
@@ -100,8 +104,33 @@ func (s *TitleAliasService) timeout() time.Duration {
 	return 4000 * time.Millisecond
 }
 
-// cacheTTL is how long a confirmed resolution is trusted.
+// aliasCacheTTL is how long a confirmed resolution is trusted.
 const aliasCacheTTL = 30 * 24 * time.Hour
+
+// negativeCacheTTL is how long a "TMDB found nothing" result is trusted.
+//
+// A miss used to be stored with Stale=true, and the cache check required
+// !Stale — so every later search for the same word asked TMDB again, and the
+// negative cache never worked. A miss is now reused for a shorter window than a
+// hit: a title TMDB lacks today may be added, so this is deliberately brief.
+const negativeCacheTTL = 2 * 24 * time.Hour
+
+// cacheFresh reports whether a stored row may be reused without asking TMDB.
+func cacheFresh(cached *entity.SearchTitleAlias) bool {
+	if cached == nil {
+		return false
+	}
+	// A confirmed choice is authoritative and never expires.
+	if cached.Confirmed {
+		return true
+	}
+	age := time.Since(cached.UpdatedAt)
+	// A remembered miss ("no candidates") is short-lived.
+	if len(decodeCandidates(cached.CandidatesJSON)) == 0 {
+		return age < negativeCacheTTL
+	}
+	return age < aliasCacheTTL
+}
 
 // Resolve returns aliases for keyword. forceRefresh bypasses the cache, which is
 // what the UI uses when the user rejects the automatic pick.
@@ -135,11 +164,9 @@ func (s *TitleAliasService) resolveLocked(ctx context.Context, keyword, mediaTyp
 	}
 
 	if !forceRefresh {
-		if cached, err := s.repo.GetTitleAlias(keyword, mediaType); err == nil && !cached.Stale {
+		if cached, err := s.repo.GetTitleAlias(keyword, mediaType); err == nil && cacheFresh(cached) {
 			if resolution := s.fromCache(cached); resolution != nil {
-				if cached.Confirmed || time.Since(cached.UpdatedAt) < aliasCacheTTL {
-					return resolution, nil
-				}
+				return resolution, nil
 			}
 		}
 	}
@@ -651,13 +678,14 @@ func KeywordForLanguage(resolution *TitleResolution, keyword, lang string) strin
 func latinMarketPriority(alias TitleAliasEntry, wantLang string) int {
 	lang := strings.ToLower(strings.TrimSpace(alias.Lang))
 	switch {
-	case lang == wantLang, strings.HasPrefix(lang, wantLang+":"):
+	// TMDB tags alternative titles with a region code ("us", "gb") while the
+	// caller passes a language tag ("en"). An exact hit or a prefix match covers
+	// the region that matches the requested language.
+	case lang != "" && (lang == wantLang || strings.HasPrefix(lang, wantLang+"-") || strings.HasPrefix(wantLang, lang)):
 		return 4
-	case lang == "us", lang == "gb", lang == "au", lang == "ca", lang == "nz":
+	case lang == "us", lang == "gb", lang == "au", lang == "ca", lang == "nz", lang == "ie":
 		return 3
 	case lang == "original", lang == "":
-		return 2
-	case lang == "ie", lang == "nz":
 		return 2
 	default:
 		return 1
@@ -739,16 +767,6 @@ func firstWithScript(aliases []TitleAliasEntry, match func(string) bool) string 
 	return ""
 }
 
-// firstNonCJK is the plain "any latin title" fallback.
-func firstNonCJK(aliases []TitleAliasEntry) string {
-	for _, alias := range aliases {
-		if !containsCJK(alias.Title) && containsLatin(alias.Title) {
-			return alias.Title
-		}
-	}
-	return ""
-}
-
 func isHangul(s string) bool {
 	for _, r := range s {
 		if unicode.Is(unicode.Hangul, r) {
@@ -761,15 +779,6 @@ func isHangul(s string) bool {
 func isKana(s string) bool {
 	for _, r := range s {
 		if unicode.Is(unicode.Hiragana, r) || unicode.Is(unicode.Katakana, r) {
-			return true
-		}
-	}
-	return false
-}
-
-func containsHan(s string) bool {
-	for _, r := range s {
-		if unicode.Is(unicode.Han, r) {
 			return true
 		}
 	}
@@ -861,4 +870,35 @@ func (s *TitleAliasService) PruneCache(before time.Time) error {
 		return nil
 	}
 	return s.repo.DeleteTitleAliasesBefore(before)
+}
+
+// pruneInterval throttles the cache sweep: the table is tiny, but scanning it on
+// every search would be pointless.
+const pruneInterval = 6 * time.Hour
+
+// pruneTTL is how long an untouched row survives. It is longer than the cache
+// TTLs so a still-useful row is not deleted the moment it expires.
+const pruneTTL = 90 * 24 * time.Hour
+
+// PruneStale removes rows nobody has read or written in a long time.
+//
+// The table grew without bound before this existed: every new keyword wrote one
+// row, and a row can carry several KB of candidate JSON. Concurrent searches may
+// both sweep; the delete is idempotent, so that is harmless.
+func (s *TitleAliasService) PruneStale(now time.Time) {
+	if s == nil || s.repo == nil {
+		return
+	}
+
+	s.pruneMu.Lock()
+	if !s.lastPrune.IsZero() && now.Sub(s.lastPrune) < pruneInterval {
+		s.pruneMu.Unlock()
+		return
+	}
+	s.lastPrune = now
+	s.pruneMu.Unlock()
+
+	if err := s.repo.DeleteTitleAliasesBefore(now.Add(-pruneTTL)); err != nil {
+		logger.Warn("search: pruning title alias cache failed: %v", err)
+	}
 }

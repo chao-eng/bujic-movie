@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -552,5 +553,78 @@ func TestJoinAndSplitLanguages(t *testing.T) {
 	}
 	if got := splitLanguages(" en , ,zh "); len(got) != 2 || got[0] != "en" || got[1] != "zh" {
 		t.Errorf("splitLanguages with blanks = %v", got)
+	}
+}
+
+// 站点的 search_languages 覆盖优先于定义声明的语言：定义是 en、但配成 zh+en
+// 的站点，按 zh 筛选时必须仍然参与，否则用户明确知道它能搜中文却被排除。
+func TestSearchLanguageFilterHonorsSiteOverride(t *testing.T) {
+	env := newTestEnv(t)
+	site := newAliasSite(t)
+	id := env.createSiteWithLanguage(t, "英文定义站", site.server.URL, "en-US")
+
+	idx, err := env.repo.GetIndexer(id)
+	if err != nil {
+		t.Fatalf("reload: %v", err)
+	}
+	idx.SearchLanguages = "zh,en"
+	if err := env.repo.UpdateIndexer(idx); err != nil {
+		t.Fatalf("update: %v", err)
+	}
+
+	if _, err := env.search.Search(context.Background(), SearchQuery{
+		Keyword: "test", SiteLanguages: []string{"zh"},
+	}); err != nil {
+		t.Fatalf("a site overridden to zh+en must not be filtered out: %v", err)
+	}
+	if site.lastQuery() == "" {
+		t.Error("the overridden site should have been queried")
+	}
+}
+
+// 覆盖里不含的语言仍然要被排除。
+func TestSearchLanguageFilterExcludesUnlistedOverride(t *testing.T) {
+	env := newTestEnv(t)
+	site := newAliasSite(t)
+	id := env.createSiteWithLanguage(t, "英文定义站", site.server.URL, "en-US")
+
+	idx, _ := env.repo.GetIndexer(id)
+	idx.SearchLanguages = "zh"
+	_ = env.repo.UpdateIndexer(idx)
+
+	// 定义是 en，覆盖只留 zh：按 en 筛选应当排除它。
+	if _, err := env.search.Search(context.Background(), SearchQuery{
+		Keyword: "test", SiteLanguages: []string{"en"},
+	}); !errors.Is(err, ErrNoIndexers) {
+		t.Fatalf("want ErrNoIndexers, got %v", err)
+	}
+	if site.lastQuery() != "" {
+		t.Error("the site must not be queried")
+	}
+}
+
+// 语言分布也要反映覆盖值，否则筛选下拉里会缺项或多项。
+func TestLanguageFacetsFollowSiteOverride(t *testing.T) {
+	env := newTestEnv(t)
+	site := newAliasSite(t)
+	id := env.createSiteWithLanguage(t, "英文定义站", site.server.URL, "en-US")
+
+	idx, _ := env.repo.GetIndexer(id)
+	idx.SearchLanguages = "zh,en"
+	_ = env.repo.UpdateIndexer(idx)
+
+	facets, err := env.indexers.LanguageFacets()
+	if err != nil {
+		t.Fatalf("facets: %v", err)
+	}
+	seen := map[string]bool{}
+	for _, f := range facets {
+		seen[f.Language] = true
+	}
+	if !seen["zh"] {
+		t.Errorf("zh should appear because the site is overridden to it: %+v", facets)
+	}
+	if !seen["en"] {
+		t.Errorf("en should appear too: %+v", facets)
 	}
 }

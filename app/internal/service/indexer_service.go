@@ -930,14 +930,22 @@ func (s *IndexerService) LanguageFacets() ([]LanguageFacet, error) {
 		if !idx.Enabled {
 			continue
 		}
-		tag := s.DefinitionLanguage(idx)
-		group := languageGroup(tag)
-		b := byGroup[group]
-		if b == nil {
-			b = &bucket{label: LanguageLabel(tag)}
-			byGroup[group] = b
+		// Count the languages the site is actually searched in. A site whose
+		// definition says en-US but is overridden to zh+en should show up under
+		// both, otherwise the filter offers a language that matches nothing.
+		langs := splitLanguages(idx.SearchLanguages)
+		if len(langs) == 0 {
+			langs = []string{s.DefinitionLanguage(idx)}
 		}
-		b.count++
+		for _, tag := range langs {
+			group := languageGroup(tag)
+			b := byGroup[group]
+			if b == nil {
+				b = &bucket{label: LanguageLabel(tag)}
+				byGroup[group] = b
+			}
+			b.count++
+		}
 	}
 
 	out := make([]LanguageFacet, 0, len(byGroup))
