@@ -518,10 +518,12 @@ func (s *limiterSet) wait(ctx context.Context, key string, interval time.Duratio
 	}
 	s.mu.Lock()
 	entry, ok := s.byKey[key]
-	// A larger burst is never downgraded: one multi-page search raises it for the
-	// following single-page requests too, which is harmless and avoids rebuilding
-	// the limiter on every call.
-	if !ok || entry.interval != interval || entry.burst < burst {
+	// Rebuild when the interval or burst changes. Raising the burst for one
+	// multi-page search would otherwise persist: a later single-page request
+	// would keep the larger allowance and quietly bypass the site's rate limit.
+	// rate.NewLimiter already carries its own token bucket, so rebuilding does
+	// not reset the reserved rate.
+	if !ok || entry.interval != interval || entry.burst != burst {
 		entry = waiterEntry{interval: interval, burst: burst, waiter: WaiterFactory(interval, burst)}
 		s.byKey[key] = entry
 	}

@@ -355,3 +355,39 @@ func TestTST058_BypassProxy(t *testing.T) {
 		t.Fatalf("proxy was used %d times, want 0", proxied)
 	}
 }
+
+// 一次多 path 搜索把 burst 抬高后，后续单 path 请求必须回到自己的 burst，
+// 否则站点限流会被悄悄放宽。
+func TestLimiterBurstDoesNotPersist(t *testing.T) {
+	var seen []int
+	restore := WaiterFactory
+	WaiterFactory = func(_ time.Duration, burst int) Waiter {
+		seen = append(seen, burst)
+		return instantWaiterHttp{}
+	}
+	t.Cleanup(func() { WaiterFactory = restore })
+
+	set := newLimiterSet()
+	ctx := context.Background()
+	const key = "site:a"
+	const interval = time.Second
+
+	// 多 path：burst 4
+	if err := set.wait(ctx, key, interval, 4); err != nil {
+		t.Fatalf("wait1: %v", err)
+	}
+	// 单 path：burst 1，必须重建而不是复用 4
+	if err := set.wait(ctx, key, interval, 1); err != nil {
+		t.Fatalf("wait2: %v", err)
+	}
+	if len(seen) != 2 {
+		t.Fatalf("expected two limiter builds, got %v", seen)
+	}
+	if seen[0] != 4 || seen[1] != 1 {
+		t.Errorf("bursts = %v, want [4 1]", seen)
+	}
+}
+
+type instantWaiterHttp struct{}
+
+func (instantWaiterHttp) Wait(context.Context) error { return nil }

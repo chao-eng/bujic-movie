@@ -190,13 +190,17 @@ func LooksLikeVideo(title string) bool {
 	return false
 }
 
+// separatorNormaliser maps the separator characters definitions use onto spaces,
+// so "windows.loader" and "windows loader" match alike. It is a package-level
+// value because LooksLikeNonVideo runs once per release on the search hot path.
+var separatorNormaliser = strings.NewReplacer(".", " ", "_", " ", "-", " ")
+
 // LooksLikeNonVideo reports whether a title is clearly software, a game or an
 // ebook. It yields to LooksLikeVideo so a film whose name contains "Repack"
 // is not mistaken for software.
 func LooksLikeNonVideo(title string) bool {
 	lower := strings.ToLower(title)
-	// Normalise separators so "windows.loader" and "windows loader" match alike.
-	normalised := strings.NewReplacer(".", " ", "_", " ", "-", " ").Replace(lower)
+	normalised := separatorNormaliser.Replace(lower)
 	matched := false
 	for _, marker := range nonVideoMarkers {
 		if strings.Contains(normalised, marker) || strings.Contains(lower, marker) {
