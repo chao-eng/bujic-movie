@@ -11,6 +11,21 @@ import (
 	"unicode/utf8"
 )
 
+// TemplateLiteral is Scriban's `.True` / `.False` constant. Upstream renders
+// `.True` as "True" and `.False` as null, and `.False` compares equal to an
+// absent value as well as to a setting that is off — that second part matters
+// because Cardigann stores checkbox settings as the strings "true"/"false",
+// while upstream stores them as a bool.
+type TemplateLiteral bool
+
+// String renders the literal the way Scriban's output does.
+func (l TemplateLiteral) String() string {
+	if l {
+		return "True"
+	}
+	return ""
+}
+
 // TemplateContext is the data a definition template may reference. Only these
 // keys exist; a definition cannot reach the filesystem, environment or other
 // instances through a template (BR-10).
@@ -22,6 +37,12 @@ type TemplateContext struct {
 	Result           map[string]string
 	Today            time.Time
 	CategoriesString string
+
+	// True and False stand for Scriban's `.True` / `.False` constants. They are
+	// fields because Go's template syntax has no such literals, and definitions
+	// compare them against settings (`eq .Config.disablesort .False`).
+	True  TemplateLiteral
+	False TemplateLiteral
 }
 
 // NewTemplateContext builds the render context for one request or row.
@@ -40,6 +61,8 @@ func NewTemplateContext(keywords string, categories []string, query map[string]s
 		Result:           map[string]string{},
 		Today:            nowFn(),
 		CategoriesString: strings.Join(categories, ","),
+		True:             true,
+		False:            false,
 	}
 }
 
@@ -147,8 +170,69 @@ func escapeTemplateStrings(src string) string {
 	return b.String()
 }
 
+// templateEq compares two template operands the way Cardigann does. A Scriban
+// boolean literal is spelled "true"/"false" here, while a checkbox setting
+// arrives as the string "true"/"false", so the two sides compare without regard
+// to case. Every other pair keeps Cardigann's exact string comparison.
+func templateEq(args ...any) bool {
+	if len(args) < 2 {
+		return false
+	}
+	for _, other := range args[1:] {
+		if compareOperands(args[0], other) == 0 {
+			return true
+		}
+	}
+	return false
+}
+
+// templateNe is the inverse of templateEq.
+func templateNe(a, b any) bool {
+	return compareOperands(a, b) != 0
+}
+
+// compareOperands normalises literal types before comparing. Returns 0 when the
+// operands are equal, negative/positive otherwise.
+func compareOperands(a, b any) int {
+	if lit, ok := a.(TemplateLiteral); ok {
+		return compareConstant(bool(lit), b)
+	}
+	if lit, ok := b.(TemplateLiteral); ok {
+		return -compareConstant(bool(lit), a)
+	}
+	// Every other pair keeps Cardigann's exact string comparison.
+	left, right := asString(a), asString(b)
+	if left == right {
+		return 0
+	}
+	if left < right {
+		return -1
+	}
+	return 1
+}
+
+// compareConstant compares a Scriban constant with another operand. Upstream
+// represents `.False` as null, so an absent value equals it; `.True` is the
+// string "True". Settings reach this build as "true"/"false" text, hence the
+// case-insensitive comparison.
+func compareConstant(want bool, other any) int {
+	text := strings.TrimSpace(asString(other))
+	if want {
+		if strings.EqualFold(text, "true") {
+			return 0
+		}
+		return 1
+	}
+	if text == "" || strings.EqualFold(text, "false") {
+		return 0
+	}
+	return 1
+}
+
 func templateFuncs() template.FuncMap {
 	return template.FuncMap{
+		"eq":        templateEq,
+		"ne":        templateNe,
 		"urlencode": url.QueryEscape,
 		"urldecode": func(s string) string {
 			out, err := url.QueryUnescape(s)

@@ -1,6 +1,9 @@
 package cardigann
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 // TST-015 / BUG-013: JSONPath-style selectors (`$`, `$[0].id`) must work; the
 // upstream TPB definition uses them.
@@ -157,4 +160,189 @@ func TestTST015_KeywordFiltersApplied(t *testing.T) {
 		t.Fatalf("BuildQueryURL: %v", err)
 	}
 	_ = url
+}
+
+// Regression for YTS: the title field appends a templated suffix built from
+// earlier underscore-prefixed helper fields. Those fields only exist if
+// evaluation follows declaration order, and the append argument must render.
+func TestTST015_YTSAppendFilterRendersResultFields(t *testing.T) {
+	def := &Definition{
+		Search: &SearchBlock{
+			Rows: &RowsBlock{SelectorBlock: SelectorBlock{Selector: "data.movies"}},
+			Fields: FieldMap{Entries: []FieldEntry{
+				{Name: "_quality", Selector: SelectorBlock{Selector: "torrents.0.quality"}},
+				{Name: "_type", Selector: SelectorBlock{Selector: "torrents.0.type"}},
+				{Name: "_audio", Selector: SelectorBlock{Selector: "torrents.0.audio_channels"}},
+				{Name: "_depth", Selector: SelectorBlock{Selector: "torrents.0.bit_depth"}},
+				{Name: "_codec", Selector: SelectorBlock{Selector: "torrents.0.video_codec"}},
+				{Name: "year", Selector: SelectorBlock{Selector: "year"}},
+				{Name: "title_default", Selector: SelectorBlock{
+					Selector: "title",
+					Filters:  []FilterBlock{{Name: "append", Args: " ({{ .Result.year }})"}},
+				}},
+				{Name: "title", Selector: SelectorBlock{
+					Selector: "title_long",
+					Filters: []FilterBlock{
+						{Name: "replace", Args: []any{":", ""}},
+						{Name: "append", Args: ` {{ .Result._quality }} ` +
+							`{{ if eq .Result._type "web" }}WEBRip{{ else }}BRRip{{ end }} ` +
+							`{{ if eq .Result._audio "5.1" }}5.1 {{ else }}{{ end }}` +
+							`{{ if eq .Result._depth "10" }}10Bit {{ else }}{{ end }}` +
+							`{{ .Result._codec }} -YTS`},
+					},
+				}},
+				{Name: "infohash", Selector: SelectorBlock{Selector: "torrents.0.hash"}},
+			}},
+		},
+	}
+	body := []byte(`{"data":{"movies":[{"title":"The Avenger","title_long":"The Avenger: Rebirth (2024)","year":2024,
+		"torrents":[{"hash":"BB36FCA157B406A8C3BF70718478E94CE24AB6AC","quality":"1080p","type":"web",
+		"video_codec":"x265","bit_depth":"10","audio_channels":"5.1"}]}]}}`)
+
+	releases, err := Extract(def, body, "json")
+	if err != nil {
+		t.Fatalf("Extract: %v", err)
+	}
+	if len(releases) != 1 {
+		t.Fatalf("releases = %d, want 1", len(releases))
+	}
+	const want = "The Avenger Rebirth (2024) 1080p WEBRip 5.1 10Bit x265 -YTS"
+	if releases[0].Title != want {
+		t.Errorf("title = %q, want %q", releases[0].Title, want)
+	}
+	if strings.Contains(releases[0].Title, "{{") {
+		t.Errorf("template text leaked into title: %q", releases[0].Title)
+	}
+}
+
+// BUG: `rows.attribute` + `rows.multiple` were ignored, so nested arrays (YTS
+// movies→torrents, Gazelle-style `attributes`) never produced releases and every
+// field read came from the wrong scope.
+func TestTST015_RowsAttributeAndMultiple(t *testing.T) {
+	def := &Definition{
+		Search: &SearchBlock{
+			Rows: &RowsBlock{
+				SelectorBlock: SelectorBlock{Selector: "data.movies", Attribute: "torrents"},
+				Multiple:      true,
+			},
+			Fields: FieldMap{Entries: []FieldEntry{
+				{Name: "_quality", Selector: SelectorBlock{Selector: "quality"}},
+				{Name: "year", Selector: SelectorBlock{Selector: "..year"}},
+				{Name: "title", Selector: SelectorBlock{Text: "{{ .Result.year }} {{ .Result._quality }}"}},
+				{Name: "infohash", Selector: SelectorBlock{Selector: "hash"}},
+			}},
+		},
+	}
+	body := []byte(`{"data":{"movies":[
+		{"year":2024,"title_long":"A","torrents":[
+			{"hash":"AAA","quality":"720p"},
+			{"hash":"BBB","quality":"1080p"}]},
+		{"year":1999,"title_long":"B","torrents":[]}
+	]}}`)
+
+	releases, err := Extract(def, body, "json")
+	if err != nil {
+		t.Fatalf("Extract: %v", err)
+	}
+	if len(releases) != 2 {
+		t.Fatalf("releases = %d, want 2 (one per torrent)", len(releases))
+	}
+	if releases[0].Title != "2024 720p" || releases[0].InfoHash != "AAA" {
+		t.Errorf("first = %+v", releases[0])
+	}
+	// The second element resolves `..year` against the movie, not the torrent.
+	if releases[1].Title != "2024 1080p" || releases[1].InfoHash != "BBB" {
+		t.Errorf("second = %+v", releases[1])
+	}
+}
+
+// A row whose attribute is missing contributes nothing; with
+// missingAttributeEqualsNoResults that is a normal empty result.
+func TestTST015_RowsAttributeMissing(t *testing.T) {
+	def := &Definition{
+		Search: &SearchBlock{
+			Rows: &RowsBlock{
+				SelectorBlock:                   SelectorBlock{Selector: "data", Attribute: "attributes"},
+				MissingAttributeEqualsNoResults: true,
+			},
+			Fields: FieldMap{Entries: []FieldEntry{
+				{Name: "title", Selector: SelectorBlock{Selector: "name"}},
+				{Name: "infohash", Selector: SelectorBlock{Selector: "hash"}},
+			}},
+		},
+	}
+	body := []byte(`{"data":[{"id":1},{"attributes":{"name":"T","hash":"ABC"}}]}`)
+	releases, err := Extract(def, body, "json")
+	if err != nil {
+		t.Fatalf("Extract: %v", err)
+	}
+	if len(releases) != 1 || releases[0].Title != "T" {
+		t.Fatalf("releases = %+v", releases)
+	}
+}
+
+// The count selector short-circuits before rows are walked, matching YTS's
+// "movie_count > 0 but no torrents" workaround.
+func TestTST015_RowsCountZero(t *testing.T) {
+	def := &Definition{
+		Search: &SearchBlock{
+			Rows: &RowsBlock{
+				SelectorBlock: SelectorBlock{Selector: "data.movies"},
+				Count:         &SelectorBlock{Selector: "data.movie_count"},
+			},
+			Fields: FieldMap{Entries: []FieldEntry{
+				{Name: "title", Selector: SelectorBlock{Selector: "title"}},
+				{Name: "infohash", Selector: SelectorBlock{Selector: "hash"}},
+			}},
+		},
+	}
+	releases, err := Extract(def, []byte(`{"data":{"movie_count":0,"movies":[]}}`), "json")
+	if err != nil {
+		t.Fatalf("Extract: %v", err)
+	}
+	if len(releases) != 0 {
+		t.Fatalf("releases = %d, want 0", len(releases))
+	}
+}
+
+// The `case` block maps a value to another (YTS quality → Newznab category id).
+func TestTST015_FieldCaseMapping(t *testing.T) {
+	def := &Definition{
+		Caps: CapabilitiesBlock{CategoryMappings: []CategoryMapping{
+			{ID: "45", Cat: "Movies/HD", Desc: "Movies/x264/720p"},
+			{ID: "44", Cat: "Movies/HD", Desc: "Movies/x264/1080p"},
+			{ID: "46", Cat: "Movies/UHD", Desc: "Movies/x264/2160p"},
+		}},
+		Search: &SearchBlock{
+			Rows: &RowsBlock{SelectorBlock: SelectorBlock{Selector: "data.movies"}},
+			Fields: FieldMap{Entries: []FieldEntry{
+				{Name: "title", Selector: SelectorBlock{Selector: "title"}},
+				{Name: "category", Selector: SelectorBlock{
+					Selector: "quality",
+					Case:     map[string]string{"720p": "45", "1080p": "44", "2160p": "46", "*": "45"},
+				}},
+				{Name: "infohash", Selector: SelectorBlock{Selector: "hash"}},
+			}},
+		},
+	}
+	body := []byte(`{"data":{"movies":[
+		{"title":"A","quality":"1080p","hash":"AAA"},
+		{"title":"B","quality":"720p","hash":"BBB"},
+		{"title":"C","quality":"2160p","hash":"CCC"},
+		{"title":"D","quality":"3D","hash":"DDD"}
+	]}}`)
+	releases, err := Extract(def, body, "json")
+	if err != nil {
+		t.Fatalf("Extract: %v", err)
+	}
+	if len(releases) != 4 {
+		t.Fatalf("releases = %d", len(releases))
+	}
+	// 1080p/720p map to Movies/HD (2040), 2160p to Movies/UHD (2045), and the
+	// `*` fallback takes 3D as 45 → Movies/HD.
+	for i, want := range [][]int{{2040}, {2040}, {2045}, {2040}} {
+		if len(releases[i].Categories) != 1 || releases[i].Categories[0] != want[0] {
+			t.Errorf("release %d categories = %v, want %v", i, releases[i].Categories, want)
+		}
+	}
 }

@@ -168,3 +168,87 @@ func TestTST007_DeclarationOrderPreserved(t *testing.T) {
 		t.Fatalf("order = %s", got)
 	}
 }
+
+// Scriban's `.True` / `.False` constants have no Go template equivalent, so
+// they live on the context. `.False` must compare equal to a checkbox setting
+// stored as the string "false" — that is how 1337x decides to sort.
+func TestTST015_ScribanTrueFalseConstants(t *testing.T) {
+	ctx := NewTemplateContext("avengers", nil, nil, map[string]string{
+		"disablesort": "false",
+		"freeleech":   "true",
+		"unset":       "",
+	})
+
+	cases := []struct {
+		src  string
+		want string
+	}{
+		// Output: upstream renders .True as "True" and .False as nothing.
+		{`{{ .True }}`, "True"},
+		{`{{ .False }}`, ""},
+		// Truthiness.
+		{`{{ if .True }}T{{ else }}F{{ end }}`, "T"},
+		{`{{ if .False }}T{{ else }}F{{ end }}`, "F"},
+		// Comparisons against setting text.
+		{`{{ if eq .Config.disablesort .False }}off{{ else }}on{{ end }}`, "off"},
+		{`{{ if eq .Config.freeleech .True }}on{{ else }}off{{ end }}`, "on"},
+		{`{{ if eq .Config.freeleech .False }}off{{ else }}on{{ end }}`, "on"},
+		{`{{ if ne .Config.disablesort .False }}on{{ else }}off{{ end }}`, "off"},
+		// An unset setting is the same as .False (upstream: null).
+		{`{{ if eq .Config.unset .False }}off{{ else }}on{{ end }}`, "off"},
+		// The literal spelling both casings.
+		{`{{ if eq "True" .True }}y{{ else }}n{{ end }}`, "y"},
+		{`{{ if eq "false" .False }}y{{ else }}n{{ end }}`, "y"},
+		// Other operands keep Cardigann's exact comparison.
+		{`{{ if eq "Web" "web" }}y{{ else }}n{{ end }}`, "n"},
+	}
+	for _, c := range cases {
+		got, err := Render(c.src, ctx)
+		if err != nil {
+			t.Errorf("%s: %v", c.src, err)
+			continue
+		}
+		if got != c.want {
+			t.Errorf("%s: got %q, want %q", c.src, got, c.want)
+		}
+	}
+}
+
+// The real 1337x path template failed with "can't evaluate field False"; it must
+// now build the sorted search URL.
+func TestTST015_1337xPathTemplate(t *testing.T) {
+	const path = `{{ if and (.Keywords) (eq .Config.disablesort .False) }}sort-{{ else }}{{ end }}{{ if .Keywords }}search/{{ .Keywords }}{{ else }}cat/Movies{{ end }}{{ if and (.Keywords) (eq .Config.disablesort .False) }}/{{ .Config.sort }}/{{ .Config.type }}{{ else }}{{ end }}/1/`
+
+	sorted := NewTemplateContext("avengers", nil, nil, map[string]string{
+		"disablesort": "false", "sort": "time", "type": "desc",
+	})
+	got, err := BuildQueryURL("https://1337x.to", RequestBlock{Path: path}, sorted)
+	if err != nil {
+		t.Fatalf("BuildQueryURL: %v", err)
+	}
+	if want := "https://1337x.to/sort-search/avengers/time/desc/1/"; got != want {
+		t.Errorf("sorted URL = %q, want %q", got, want)
+	}
+
+	// Sorting disabled: no `sort-` prefix and no sort suffix.
+	plain := NewTemplateContext("avengers", nil, nil, map[string]string{"disablesort": "true"})
+	got, err = BuildQueryURL("https://1337x.to", RequestBlock{Path: path}, plain)
+	if err != nil {
+		t.Fatalf("BuildQueryURL: %v", err)
+	}
+	if want := "https://1337x.to/search/avengers/1/"; got != want {
+		t.Errorf("unsorted URL = %q, want %q", got, want)
+	}
+
+	// No keyword: the browse page, still sorted.
+	empty := NewTemplateContext("", nil, nil, map[string]string{
+		"disablesort": "false", "sort": "time", "type": "desc",
+	})
+	got, err = BuildQueryURL("https://1337x.to", RequestBlock{Path: path}, empty)
+	if err != nil {
+		t.Fatalf("BuildQueryURL: %v", err)
+	}
+	if want := "https://1337x.to/cat/Movies/1/"; got != want {
+		t.Errorf("browse URL = %q, want %q", got, want)
+	}
+}

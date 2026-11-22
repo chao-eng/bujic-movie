@@ -86,6 +86,24 @@ func renderSelector(src string, config, result map[string]string) string {
 	return strings.TrimSpace(rendered)
 }
 
+// filterTemplates runs a filter chain with the instance config and the row's
+// already extracted values available to templated arguments.
+func filterTemplates(value string, filters []FilterBlock, config, result map[string]string) string {
+	if len(filters) == 0 {
+		return value
+	}
+	ctx := NewTemplateContext("", nil, nil, config)
+	ctx.Result = result
+	if ctx.Result == nil {
+		ctx.Result = map[string]string{}
+	}
+	filtered, err := ApplyFiltersWithContext(value, filters, ctx)
+	if err != nil {
+		return value
+	}
+	return filtered
+}
+
 func detectResponseType(declared string, raw []byte) string {
 	switch strings.ToLower(strings.TrimSpace(declared)) {
 	case "json":
@@ -174,9 +192,7 @@ func extractHTMLField(row *goquery.Selection, sel SelectorBlock, config, result 
 	if sel.Text != "" && !strings.Contains(sel.Text, "{{") && !strings.Contains(value, sel.Text) {
 		value = ""
 	}
-	if filtered, err := ApplyFilters(value, sel.Filters); err == nil {
-		value = filtered
-	}
+	value = filterTemplates(value, sel.Filters, config, result)
 	if value == "" && sel.Default != "" {
 		return sel.Default
 	}
@@ -184,42 +200,67 @@ func extractHTMLField(row *goquery.Selection, sel SelectorBlock, config, result 
 }
 
 func extractJSON(def *Definition, raw []byte, config map[string]string) ([]Release, error) {
-	rowsPath := jsonPath(renderSelector(def.Search.Rows.Selector, config, nil))
+	rowsBlock := def.Search.Rows
+	rowsPath := jsonPath(renderSelector(rowsBlock.Selector, config, nil))
 	if rowsPath == "" {
 		return nil, &ExtractionError{Field: "rows.selector", Reason: "JSON 定义缺少路径"}
 	}
-	rows := gjson.GetBytes(raw, rowsPath)
-	// A single-object body is treated as a one-element array so `rows` selectors
-	// written for arrays (e.g. SubsPlease-style envelopes) still work.
-	if !rows.IsArray() && rows.IsObject() && rowsPath == "@this" {
-		releases := make([]Release, 0, 1)
-		row := rows
-		values := map[string]string{}
-		for _, entry := range def.Search.Fields.Entries {
-			values[entry.Name] = extractJSONField(row, entry.Selector, config, values)
+	// A count selector can report "no results" before anything is walked.
+	if rowsBlock.Count != nil && rowsBlock.Count.Selector != "" {
+		countPath := jsonPath(renderSelector(rowsBlock.Count.Selector, config, nil))
+		if count := gjson.GetBytes(raw, countPath); count.Exists() && count.Int() < 1 {
+			return nil, nil
 		}
-		if rel, err := buildRelease(def, values); err == nil && rel.Title != "" {
-			releases = append(releases, rel)
-		}
-		return releases, nil
 	}
+	rows := gjson.GetBytes(raw, rowsPath)
 	if !rows.Exists() {
 		return nil, nil
 	}
+	// A single-object body is treated as a one-element array so `rows` selectors
+	// written for arrays (e.g. SubsPlease-style envelopes) still work.
+	if !rows.IsArray() && rows.IsObject() && rowsPath == "@this" {
+		return collectJSONRows(def, []gjson.Result{rows}, config), nil
+	}
+	return collectJSONRows(def, rows.Array(), config), nil
+}
 
-	releases := make([]Release, 0, len(rows.Array()))
-	rows.ForEach(func(_, row gjson.Result) bool {
-		values := map[string]string{}
-		for _, entry := range def.Search.Fields.Entries {
-			values[entry.Name] = extractJSONField(row, entry.Selector, config, values)
+// collectJSONRows walks the row objects of a JSON response. A row may point at
+// a nested array (`rows.attribute`) and emit one release per element
+// (`rows.multiple`); YTS lists movies and their torrents that way. Field
+// selectors starting with `..` always resolve against the enclosing row rather
+// than the expanded element.
+func collectJSONRows(def *Definition, rows []gjson.Result, config map[string]string) []Release {
+	releases := make([]Release, 0, len(rows))
+	rowsBlock := def.Search.Rows
+	for _, row := range rows {
+		element := row
+		if rowsBlock.Attribute != "" {
+			path := jsonPath(renderSelector(rowsBlock.Attribute, config, nil))
+			element = row.Get(path)
+			if !element.Exists() {
+				// A row without the attribute contributes nothing.
+				continue
+			}
 		}
-		rel, err := buildRelease(def, values)
-		if err == nil && rel.Title != "" {
-			releases = append(releases, rel)
+		elements := []gjson.Result{element}
+		if rowsBlock.Multiple {
+			if !element.IsArray() {
+				continue
+			}
+			elements = element.Array()
 		}
-		return true
-	})
-	return releases, nil
+		for _, item := range elements {
+			values := map[string]string{}
+			for _, entry := range def.Search.Fields.Entries {
+				values[entry.Name] = extractJSONFieldScoped(row, item, entry.Selector, config, values)
+			}
+			rel, err := buildRelease(def, values)
+			if err == nil && rel.Title != "" {
+				releases = append(releases, rel)
+			}
+		}
+	}
+	return releases
 }
 
 // jsonPath converts a Cardigann/JSONPath selector into a gjson path.
@@ -291,18 +332,51 @@ func extractXML(def *Definition, raw []byte) ([]Release, error) {
 
 // extractJSONField reads one field from a JSON row.
 func extractJSONField(row gjson.Result, sel SelectorBlock, config, result map[string]string) string {
+	return extractJSONFieldScoped(row, row, sel, config, result)
+}
+
+// extractJSONFieldScoped reads one field, resolving a selector that starts with
+// `..` against the enclosing row instead of the expanded element.
+func extractJSONFieldScoped(row, element gjson.Result, sel SelectorBlock, config, result map[string]string) string {
 	if sel.Selector == "" && sel.Text != "" {
 		return renderSelector(sel.Text, config, result)
 	}
-	selector := renderSelector(sel.Selector, config, result)
+	selector := strings.TrimSpace(renderSelector(sel.Selector, config, result))
+	// Cardigann lets a definition reach the parent row with a leading `..`.
+	scope := element
+	if strings.HasPrefix(selector, "..") {
+		scope = row
+		selector = strings.TrimPrefix(selector, "..")
+		if selector != "" && !strings.HasPrefix(selector, ".") {
+			selector = "." + selector
+		}
+	}
 	if selector == "" {
 		return ""
 	}
-	value := row.Get(jsonPath(selector)).String()
-	if filtered, err := ApplyFilters(value, sel.Filters); err == nil {
-		value = filtered
-	}
+	value := scope.Get(jsonPath(selector)).String()
+	value = applyJSONCase(value, sel.Case, config, result)
+	value = filterTemplates(value, sel.Filters, config, result)
 	return strings.TrimSpace(value)
+}
+
+// applyJSONCase maps a field value through its declared `case` table. Entries are
+// matched exactly first, then "*"; a template value is rendered. YTS turns its
+// quality string into a Newznab category id this way.
+func applyJSONCase(value string, cases map[string]string, config, result map[string]string) string {
+	if len(cases) == 0 {
+		return value
+	}
+	for key, mapped := range cases {
+		if key == "*" || !strings.EqualFold(strings.TrimSpace(value), key) {
+			continue
+		}
+		return renderSelector(mapped, config, result)
+	}
+	if fallback, ok := cases["*"]; ok {
+		return renderSelector(fallback, config, result)
+	}
+	return value
 }
 
 func buildRelease(def *Definition, values map[string]string) (Release, error) {

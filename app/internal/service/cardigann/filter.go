@@ -34,11 +34,24 @@ var KnownFilters = map[string]bool{
 // nowFn is replaceable so date filters are deterministic in tests.
 var nowFn = time.Now
 
-// ApplyFilters runs a filter chain over an input value.
+// ApplyFilters runs a filter chain over an input value without a template
+// context, so placeholder arguments are used literally.
 func ApplyFilters(input string, filters []FilterBlock) (string, error) {
+	return applyFilterChain(input, filters, nil)
+}
+
+// ApplyFiltersWithContext runs a filter chain and renders template placeholders
+// inside the arguments that definitions write as templates. Upstream Cardigann
+// expands `append`/`prepend` values and the replacement of
+// `replace`/`re_replace`; YTS builds its whole title suffix this way.
+func ApplyFiltersWithContext(input string, filters []FilterBlock, ctx TemplateContext) (string, error) {
+	return applyFilterChain(input, filters, &ctx)
+}
+
+func applyFilterChain(input string, filters []FilterBlock, ctx *TemplateContext) (string, error) {
 	value := input
 	for _, f := range filters {
-		next, err := applyFilter(value, f)
+		next, err := applyFilter(value, f, ctx)
 		if err != nil {
 			return value, fmt.Errorf("filter %s: %w", f.Name, err)
 		}
@@ -47,7 +60,40 @@ func ApplyFilters(input string, filters []FilterBlock) (string, error) {
 	return value, nil
 }
 
-func applyFilter(in string, f FilterBlock) (string, error) {
+// renderFilterArgs expands templates in a filter argument value. An argument
+// without a placeholder is returned unchanged, and a broken template leaves the
+// literal text in place rather than dropping the value silently.
+func renderFilterArgs(v any, ctx *TemplateContext) any {
+	if ctx == nil {
+		return v
+	}
+	switch t := v.(type) {
+	case string:
+		if !strings.Contains(t, "{{") {
+			return t
+		}
+		rendered, err := Render(t, *ctx)
+		if err != nil {
+			return t
+		}
+		return rendered
+	case []any:
+		out := make([]any, len(t))
+		for i, item := range t {
+			out[i] = renderFilterArgs(item, ctx)
+		}
+		return out
+	case []string:
+		out := make([]string, len(t))
+		for i, item := range t {
+			out[i] = asString(renderFilterArgs(item, ctx))
+		}
+		return out
+	}
+	return v
+}
+
+func applyFilter(in string, f FilterBlock, ctx *TemplateContext) (string, error) {
 	name := strings.ToLower(strings.TrimSpace(f.Name))
 	if !KnownFilters[name] {
 		return in, fmt.Errorf("%w: %s", ErrUnknownFilter, f.Name)
@@ -61,15 +107,15 @@ func applyFilter(in string, f FilterBlock) (string, error) {
 	case "toupper":
 		return strings.ToUpper(in), nil
 	case "prepend":
-		return asString(f.Args) + in, nil
+		return asString(renderFilterArgs(f.Args, ctx)) + in, nil
 	case "append":
-		return in + asString(f.Args), nil
+		return in + asString(renderFilterArgs(f.Args, ctx)), nil
 	case "replace":
 		args := argsList(f.Args)
 		if len(args) != 2 {
 			return in, fmt.Errorf("replace needs 2 args")
 		}
-		return strings.ReplaceAll(in, args[0], args[1]), nil
+		return strings.ReplaceAll(in, args[0], asString(renderFilterArgs(args[1], ctx))), nil
 	case "re_replace":
 		args := argsList(f.Args)
 		if len(args) != 2 {
@@ -79,7 +125,7 @@ func applyFilter(in string, f FilterBlock) (string, error) {
 		if err != nil {
 			return in, err
 		}
-		return re.ReplaceAllString(in, args[1]), nil
+		return re.ReplaceAllString(in, asString(renderFilterArgs(args[1], ctx))), nil
 	case "regexp":
 		args := argsList(f.Args)
 		if len(args) == 0 {
@@ -250,20 +296,54 @@ func applyValidate(in string, raw any) (string, error) {
 	if len(args) == 0 {
 		return in, nil
 	}
-	re, err := regexp.Compile(normaliseRegex(args[0]))
-	if err != nil {
-		return in, err
-	}
-	if args[1] == "in" {
-		if re.MatchString(in) {
+	// Two arguments mean the regexp form some definitions use: the second is
+	// "in" (keep when matched) or anything else (keep when unmatched).
+	if len(args) >= 2 {
+		re, err := regexp.Compile(normaliseRegex(args[0]))
+		if err != nil {
+			return in, err
+		}
+		matched := re.MatchString(in)
+		if (args[1] == "in") == matched {
 			return in, nil
 		}
 		return "", nil
 	}
-	if re.MatchString(in) {
-		return "", nil
+	// One argument is Cardigann's list form: keep the tokens of the input that
+	// also appear in the argument list, joined by ", ". Genre fields rely on it
+	// (Cathode Ray Tube, TorrentLeech and friends pass a comma separated list).
+	allowed := map[string]bool{}
+	for _, token := range splitValidateTokens(args[0]) {
+		allowed[token] = true
 	}
-	return in, nil
+	var kept []string
+	seen := map[string]bool{}
+	for _, token := range splitValidateTokens(in) {
+		if allowed[token] && !seen[token] {
+			seen[token] = true
+			kept = append(kept, token)
+		}
+	}
+	return strings.Join(kept, ", "), nil
+}
+
+// validateDelimiters mirrors upstream's token separators for the list form of
+// the validate filter.
+func splitValidateTokens(s string) []string {
+	fields := strings.FieldsFunc(strings.ToLower(s), func(r rune) bool {
+		switch r {
+		case ',', ' ', '/', ')', '(', '.', ';', '[', ']', '"', '|', ':':
+			return true
+		}
+		return false
+	})
+	out := make([]string, 0, len(fields))
+	for _, f := range fields {
+		if f = strings.TrimSpace(f); f != "" {
+			out = append(out, f)
+		}
+	}
+	return out
 }
 
 func applyBoolCombine(in, name string, raw any) (string, error) {
