@@ -1,9 +1,10 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
-import { Search as SearchIcon, Download, ChevronDown, ChevronUp, AlertTriangle, ExternalLink, Languages as LanguagesIcon, Wand2 } from 'lucide-vue-next'
+import { Search as SearchIcon, Download, ChevronDown, ChevronUp, AlertTriangle, ExternalLink, Languages as LanguagesIcon, Wand2, Clock as ClockIcon } from 'lucide-vue-next'
 import { toast } from 'vue-sonner'
 import { trackSearch } from '@/api/track'
 import { RequestGate } from '@/lib/searchRequest'
+import { formatAge, formatCount, seedHealth } from '@/lib/torrentHealth'
 import { EMPTY_SELECT_VALUE, fromSelectValue, toSelectValue } from '@/lib/utils'
 import {
   searchApi,
@@ -165,7 +166,10 @@ const filtered = computed(() => {
       ),
     )
   }
-  if (filters.value.minSeeders > 0) list = list.filter((item) => item.seeders >= filters.value.minSeeders)
+  if (filters.value.minSeeders > 0) {
+    // 站点没给做种数的条目不该被「最小做种」筛掉：那是缺数据，不是 0 做种。
+    list = list.filter((item) => item.seeders_known === false || item.seeders >= filters.value.minSeeders)
+  }
   if (filters.value.minSizeGB > 0) list = list.filter((item) => item.size_bytes === 0 || item.size_bytes >= filters.value.minSizeGB * 1024 ** 3)
   if (filters.value.maxSizeGB > 0) list = list.filter((item) => item.size_bytes === 0 || item.size_bytes <= filters.value.maxSizeGB * 1024 ** 3)
 
@@ -174,13 +178,18 @@ const filtered = computed(() => {
       list.sort((a, b) => b.size_bytes - a.size_bytes)
       break
     case 'date':
-      list.sort((a, b) => (b.publish_date ?? '').localeCompare(a.publish_date ?? ''))
+      // 发布时间在部分站点是文本（“now”“3 hours ago”），用解析后的时间戳排序，
+      // 解析不出来的排到后面而不是当成最新。
+      list.sort((a, b) => publishStamp(b.publish_date) - publishStamp(a.publish_date))
       break
     case 'indexer':
       list.sort((a, b) => a.indexer_name.localeCompare(b.indexer_name))
       break
     default:
       list.sort((a, b) => {
+        const aKnown = a.seeders_known ?? true
+        const bKnown = b.seeders_known ?? true
+        if (aKnown !== bKnown) return aKnown ? -1 : 1
         if ((a.seeders === 0) !== (b.seeders === 0)) return a.seeders === 0 ? 1 : -1
         return b.seeders - a.seeders
       })
@@ -188,11 +197,69 @@ const filtered = computed(() => {
   return list
 })
 
+/** publishStamp 把发布时间文本换成可比较的时间戳；无法解析返回 0。 */
+const publishStamp = (raw: string): number => {
+  const text = (raw ?? '').trim().toLowerCase()
+  if (!text) return 0
+  if (text === 'now' || text === 'today') return Date.now()
+  const stamp = new Date(raw).getTime()
+  return Number.isNaN(stamp) ? 0 : stamp
+}
+
 const itemLabels = (item: SearchItem): string[] => {
   const fromServer = item.category_labels ?? []
   if (fromServer.length) return fromServer
   return (item.categories ?? []).map(newznabLabel)
 }
+
+// 热度徽章的样式与文案：做种数单独一个数字看不出「有没有速度」，所以按档位
+// 给颜色，并补上下载中人数、完成数与发布至今的时间。
+interface SeedView {
+  variant: 'outline' | 'secondary'
+  tone: string
+  text: string
+  label: string
+  hint: string
+}
+
+const seedBadge = (seeders: number, known = true): SeedView => {
+  const health = seedHealth(seeders, known)
+  const variant = health.tone === 'muted' || health.tone === 'error' ? 'outline' : 'secondary'
+  const tone =
+    health.tone === 'success'
+      ? 'text-success'
+      : health.tone === 'warning'
+        ? 'text-warning'
+        : health.tone === 'error'
+          ? 'text-destructive'
+          : 'text-muted-foreground'
+  return {
+    variant: variant as 'outline' | 'secondary',
+    tone,
+    text: known ? `做种 ${formatCount(seeders)}` : '做种未知',
+    // 未知时徽章本身已说明情况，再补一句标签只是重复。
+    label: known ? health.label : '',
+    hint: health.hint,
+  }
+}
+
+const peerHint = (item: SearchItem): string => {
+  if (!item.peers) return '站点未提供下载中人数'
+  return `还有 ${item.peers} 人正在下载这个种子`
+}
+
+const grabHint = (grabs: number): string => `历史上已有 ${formatCount(grabs)} 次下载完成`
+
+const ageOf = (item: SearchItem): string => formatAge(item.publish_date)
+
+// 逐条派生展示字段，避免模板里反复调用同一个函数。
+const displayed = computed(() =>
+  filtered.value.map((item) => ({
+    item,
+    seed: seedBadge(item.seeders, item.seeders_known ?? true),
+    age: formatAge(item.publish_date),
+  })),
+)
 
 // resolveTitles 单独请求片名识别，命中后立刻渲染，不等种子站。
 // 返回解析结果供后续搜索复用，避免后端重复问 TMDB。
@@ -749,46 +816,62 @@ loadLanguageFacets()
     </Empty>
 
     <div v-else-if="filtered.length" class="border-border divide-border divide-y overflow-hidden rounded-lg border">
-      <div v-for="item in filtered" :key="item.fingerprint" class="hover:bg-muted/50 p-3 transition-colors">
+      <div v-for="row in displayed" :key="row.item.fingerprint" class="hover:bg-muted/50 p-3 transition-colors">
         <div class="flex items-start justify-between gap-3">
           <div class="min-w-0 flex-1">
-            <p class="truncate text-sm" :title="item.title">{{ item.title }}</p>
+            <p class="truncate text-sm" :title="row.item.title">{{ row.item.title }}</p>
             <div class="text-muted-foreground mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs">
-              <span class="text-primary/90">{{ item.indexer_name }}</span>
-              <span>{{ formatBytes(item.size_bytes) }}</span>
-              <Badge v-if="item.seeders > 0" variant="secondary" class="text-success">做种 {{ item.seeders }}</Badge>
-              <Badge v-else variant="outline">做种 0</Badge>
-              <Badge v-if="(item.sources?.length ?? 0) > 1" variant="secondary"> {{ item.sources?.length }} 个来源 </Badge>
-              <Badge v-for="label in itemLabels(item)" :key="label" variant="outline" class="text-[11px]">
+              <span class="text-primary/90">{{ row.item.indexer_name }}</span>
+              <span>{{ formatBytes(row.item.size_bytes) }}</span>
+              <span class="flex items-center gap-1" :title="row.seed.hint">
+                <Badge :variant="row.seed.variant" :class="row.seed.tone">{{ row.seed.text }}</Badge>
+                <span v-if="row.seed.label" class="text-[11px]">{{ row.seed.label }}</span>
+              </span>
+              <span v-if="row.item.peers > 0" class="text-info" :title="peerHint(row.item)">
+                下载中 {{ formatCount(row.item.peers) }}
+              </span>
+              <span v-if="row.item.grabs > 0" :title="grabHint(row.item.grabs)">
+                完成 {{ formatCount(row.item.grabs) }}
+              </span>
+              <span v-if="row.age" class="flex items-center gap-1" :title="row.item.publish_date">
+                <ClockIcon class="size-3" />
+                {{ row.age }}
+              </span>
+              <Badge v-if="(row.item.sources?.length ?? 0) > 1" variant="secondary"> {{ row.item.sources?.length }} 个来源 </Badge>
+              <Badge v-for="label in itemLabels(row.item)" :key="label" variant="outline" class="text-[11px]">
                 {{ label }}
               </Badge>
             </div>
           </div>
           <div class="flex shrink-0 items-center gap-1">
-            <Button v-if="item.details_url" variant="ghost" size="xs" @click="openDetails(item)">
+            <Button v-if="row.item.details_url" variant="ghost" size="xs" @click="openDetails(row.item)">
               <ExternalLink data-icon="inline-start" />
               详情
             </Button>
-            <Button v-if="(item.sources?.length ?? 0) > 1" variant="ghost" size="xs" @click="toggleSources(item.fingerprint)">
+            <Button v-if="(row.item.sources?.length ?? 0) > 1" variant="ghost" size="xs" @click="toggleSources(row.item.fingerprint)">
               来源
             </Button>
-            <Button size="sm" @click="openGrab(item)">
+            <Button size="sm" @click="openGrab(row.item)">
               <Download data-icon="inline-start" />
               下载
             </Button>
           </div>
         </div>
 
-        <div v-if="expandedSources[item.fingerprint] && item.sources" class="border-border mt-2 flex flex-col gap-1 border-t pt-2 text-xs">
+        <div v-if="expandedSources[row.item.fingerprint] && row.item.sources" class="border-border mt-2 flex flex-col gap-1 border-t pt-2 text-xs">
           <div
-            v-for="source in item.sources"
+            v-for="source in row.item.sources"
             :key="source.indexer_id + source.download_url"
             class="bg-muted/40 flex items-center justify-between gap-2 rounded px-2 py-1"
           >
             <span>{{ source.indexer_name }}</span>
             <span class="text-muted-foreground flex items-center gap-3">
               <span>{{ formatBytes(source.size_bytes) }}</span>
-              <span>做种 {{ source.seeders }}</span>
+              <span :title="seedBadge(source.seeders, source.seeders_known ?? true).hint">
+                做种 {{ source.seeders_known === false ? '未知' : formatCount(source.seeders) }}
+              </span>
+              <span v-if="source.peers">下载中 {{ formatCount(source.peers) }}</span>
+              <span v-if="source.grabs">完成 {{ formatCount(source.grabs) }}</span>
               <a
                 v-if="source.details_url"
                 :href="source.details_url"
@@ -796,7 +879,7 @@ loadLanguageFacets()
                 rel="noopener noreferrer"
                 class="text-info hover:underline"
               >详情</a>
-              <Button variant="link" size="xs" @click="openGrabFromSource(item, source)">用此来源下载</Button>
+              <Button variant="link" size="xs" @click="openGrabFromSource(row.item, source)">用此来源下载</Button>
             </span>
           </div>
         </div>
@@ -823,6 +906,20 @@ loadLanguageFacets()
           <span class="text-muted-foreground">大小</span>
           <span>{{ formatBytes(grabTarget.size_bytes) }}</span>
         </div>
+        <div class="flex items-start justify-between gap-3">
+          <span class="text-muted-foreground">热度</span>
+          <span class="flex flex-wrap items-center justify-end gap-2">
+            <Badge :variant="seedBadge(grabTarget.seeders, grabTarget.seeders_known ?? true).variant" :class="seedBadge(grabTarget.seeders, grabTarget.seeders_known ?? true).tone">
+              {{ seedBadge(grabTarget.seeders, grabTarget.seeders_known ?? true).text }}
+            </Badge>
+            <span v-if="grabTarget.peers > 0" class="text-info">下载中 {{ formatCount(grabTarget.peers) }}</span>
+            <span v-if="grabTarget.grabs > 0">完成 {{ formatCount(grabTarget.grabs) }}</span>
+            <span v-if="ageOf(grabTarget)" class="text-muted-foreground">发布于 {{ ageOf(grabTarget) }}</span>
+          </span>
+        </div>
+        <p v-if="seedHealth(grabTarget.seeders, grabTarget.seeders_known ?? true).tone === 'error'" class="text-warning text-xs">
+          该种子当前没有做种者，下载可能一直停在 0%。建议换一个来源（展开列表里的「来源」看其他站点）。
+        </p>
         <Separator />
         <div class="flex items-start justify-between gap-3">
           <span class="text-muted-foreground pt-1.5">下载器</span>

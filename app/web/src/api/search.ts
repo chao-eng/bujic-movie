@@ -95,6 +95,12 @@ export interface SearchSource {
   download_url: string
   info_hash: string
   seeders: number
+  /** 下载中（非做种）的人数；0 可能表示站点没给。 */
+  peers?: number
+  /** 完成数/历史下载次数，站点给才有。 */
+  grabs?: number
+  /** 站点是否提供了做种数。 */
+  seeders_known?: boolean
   size_bytes: number
   details_url: string
 }
@@ -109,7 +115,10 @@ export interface SearchItem {
   size_bytes: number
   publish_date: string
   seeders: number
+  /** 站点是否提供了做种数；false 时不能把 0 解读为「没人做种」。 */
+  seeders_known?: boolean
   peers: number
+  grabs: number
   download_type: string
   download_url: string
   info_hash: string
@@ -223,6 +232,10 @@ export interface TaskItem {
   state: string
   eta_seconds: number
   category: string
+  /** 已连接做种者数量：长期为 0 说明没有速度。 */
+  connected_seeds: number
+  /** 该种子在 swarm 里的做种者总数。 */
+  available_seeds: number
 }
 
 export interface TaskGroup {

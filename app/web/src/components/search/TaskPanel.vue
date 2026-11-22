@@ -160,6 +160,14 @@ onUnmounted(() => {
                 <Badge variant="outline">{{ stateLabel(task.state) }}</Badge>
                 <span>{{ formatBytes(task.size_bytes) }}</span>
                 <span v-if="task.speed_bps > 0">{{ formatSpeed(task.speed_bps) }}</span>
+                <!-- 有速度之外还要看有没有连上做种者：0 连接就是「卡住没速度」的直接证据。 -->
+                <span
+                  v-if="task.state.startsWith('downloading') || task.state.startsWith('stalled')"
+                  :class="(task.connected_seeds ?? 0) > 0 ? 'text-success' : 'text-warning'"
+                  :title="`已连接 ${task.connected_seeds ?? 0} 个做种者，swarm 中共 ${task.available_seeds ?? 0} 个`"
+                >
+                  做种 {{ task.connected_seeds ?? 0 }}/{{ task.available_seeds ?? 0 }}
+                </span>
                 <span class="flex items-center gap-1">
                   <ClockIcon class="size-3" />
                   {{ formatETA(task.eta_seconds) }}
