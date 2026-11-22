@@ -1,0 +1,711 @@
+---
+import BaseLayout from '@/layouts/BaseLayout.astro'
+import PreviewGallery from '@/components/site/PreviewGallery.vue'
+import CodeBlock from '@/components/site/CodeBlock.astro'
+import Screenshot from '@/components/site/Screenshot.astro'
+import { docsNav } from '@/data/nav'
+import {
+  ArrowRight,
+  Sparkles,
+  Search,
+  Film,
+  Gauge,
+  HardDriveDownload,
+  FolderTree,
+  Captions,
+  ShieldCheck,
+  Server,
+  Blocks,
+  Terminal,
+  Layers,
+  Bell,
+  Database,
+  KeyRound,
+  CloudOff,
+  Play,
+} from 'lucide-vue-next'
+
+const stats = [
+  { value: '1', label: '个 Go 二进制', hint: '前端通过 go:embed 打进可执行文件' },
+  { value: '4', label: '种转移模式', hint: 'copy / move / link / symlink' },
+  { value: '500+', label: '个站点模板', hint: 'Cardigann 定义库，可按需同步' },
+  { value: '0', label: '额外运维', hint: 'SQLite 零配置，随二进制启动' },
+]
+
+const problems = [
+  {
+    icon: FolderTree,
+    title: '下载完就堆在下载目录',
+    body: '文件名千奇百怪，季集散落各处，播放器识别不出来，手动改名要花一晚上。',
+  },
+  {
+    icon: Film,
+    title: '海报和简介永远是空白',
+    body: 'Emby / Jellyfin 里全是灰底占位图，因为没有人写 NFO，也没有人下海报。',
+  },
+  {
+    icon: Search,
+    title: '找资源要开一堆标签页',
+    body: '十几个站点轮流搜，同一个种子在不同站重复出现，还得手动复制磁力链接。',
+  },
+  {
+    icon: Captions,
+    title: '字幕永远缺一份中文',
+    body: '内嵌英文轨提取麻烦，简繁转换靠手工，下载和改名全靠人记命名规则。',
+  },
+]
+
+const pipeline = [
+  {
+    step: '01',
+    title: '搜索并交给下载器',
+    body: '聚合多个索引器，按种子指纹跨站去重，点「下载」只把分类名交给 qBittorrent。',
+    href: '/docs/search/',
+  },
+  {
+    step: '02',
+    title: '整理成媒体库规范',
+    body: '目录监听或手动提交，重命名成 Emby / Jellyfin / Plex 认得的电影与剧集结构。',
+    href: '/docs/transfer/',
+  },
+  {
+    step: '03',
+    title: '刮削元数据与海报',
+    body: '文件名解析 → TMDB 匹配 → 生成 NFO、海报、背景图，支持锁定 NFO 防止被改。',
+    href: '/docs/scrape/',
+  },
+  {
+    step: '04',
+    title: '通知媒体服务器刷新',
+    body: '整理刮削完成后增量刷新绑定的 Emby / Jellyfin / Plex 媒体库，同时推送通知。',
+    href: '/docs/settings/',
+  },
+]
+
+const features = [
+  {
+    icon: Sparkles,
+    title: '智能刮削',
+    points: [
+      '文件名解析识别片名、年份、分辨率、季集',
+      'TMDB 多语言元数据，优先简体中文',
+      '生成 nfo + poster + fanart + 剧集缩略图',
+      '可选写入演职人员、锁定 NFO',
+    ],
+    href: '/docs/scrape/',
+  },
+  {
+    icon: HardDriveDownload,
+    title: '文件整理引擎',
+    points: [
+      'copy / move / hardlink / symlink 四种模式',
+      'size / never / always / latest 四种冲突策略',
+      'BDMV 蓝光目录结构保护',
+      '最小文件体积过滤，跳过样本与广告',
+    ],
+    href: '/docs/transfer/',
+  },
+  {
+    icon: FolderTree,
+    title: '目录监听',
+    points: [
+      '每个媒体卡独立监听下载目录',
+      '递归监听子目录，启动时补扫存量',
+      '下载完成即自动整理，无需人工点',
+      '整理完成自动触发刮削与刷新',
+    ],
+    href: '/docs/transfer/',
+  },
+  {
+    icon: Captions,
+    title: '字幕管理',
+    points: [
+      '外挂字幕扫描 + 内嵌轨道 ffprobe 探测',
+      'srt / ass / ssa 内嵌轨提取',
+      '一键繁转简，批量上传整季字幕',
+      '同时通过 REST 与 MCP 暴露给 Agent',
+    ],
+    href: '/docs/library/',
+  },
+  {
+    icon: Search,
+    title: '搜索下载',
+    points: [
+      'Cardigann 定义 + Torznab / Newznab',
+      '中文片名先解析成原名与各地别名',
+      '跨站同种子合并，按分类/做种/体积筛选',
+      '站点健康、冷却与失败自动降级',
+    ],
+    href: '/docs/search/',
+  },
+  {
+    icon: Blocks,
+    title: 'MCP / Agent',
+    points: [
+      'Streamable HTTP MCP 端点，API Key 鉴权',
+      '六个工具覆盖媒体列表、字幕读写',
+      '调用记录审计，入参自动脱敏',
+      '配套字幕翻译 Skill，可端到端闭环',
+    ],
+    href: '/docs/mcp/',
+  },
+  {
+    icon: Bell,
+    title: '通知与联动',
+    points: [
+      '企业微信、钉钉、飞书、Bark、ntfy 等十一种渠道',
+      '刮削完成推送标题与海报',
+      '绑定媒体服务器后自动增量刷新',
+      '自定义 Webhook 可接任意自动化',
+    ],
+    href: '/docs/settings/',
+  },
+  {
+    icon: ShieldCheck,
+    title: '安全与自托管',
+    points: [
+      '登录密码前端 AES-GCM 加密后提交',
+      'JWT 会话，站点凭据 AES-256-GCM 落库',
+      '读接口只回掩码，明文永不回显',
+      'MCP 与后台双通道隔离，互不接受对方凭证',
+    ],
+    href: '/docs/architecture/',
+  },
+]
+
+
+
+const quickStart = `services:
+  bujic-movie:
+    image: crpi-a1liy20beodq2bdl.cn-beijing.personal.cr.aliyuncs.com/bujic/bujic-movie:latest
+    container_name: bujic-movie
+    restart: unless-stopped
+    ports:
+      - "8080:8080"
+    volumes:
+      - ./data:/app/data                # 配置 + SQLite 数据库
+      - /path/to/media:/media           # 媒体库（与 Emby 保持同一容器路径）
+      - /path/to/downloads:/downloads   # 下载目录
+    environment:
+      - TZ=Asia/Shanghai
+      - BUJIC_SERVER_SECRET_KEY=change_me_to_something_secure`
+
+const deployOptions = [
+  {
+    icon: Layers,
+    title: 'Docker Compose',
+    tag: '推荐',
+    body: '多架构镜像（amd64 / arm64），挂载数据、媒体、下载三个目录即可跑起来。',
+    href: '/docs/deploy/#docker-compose',
+  },
+  {
+    icon: Terminal,
+    title: '单可执行文件',
+    tag: '极简',
+    body: 'make build 产出带前端的 bujic-movie 二进制，放到任何 Linux 机器直接执行。',
+    href: '/docs/deploy/#binary',
+  },
+  {
+    icon: Server,
+    title: '反向代理 + HTTPS',
+    tag: '生产',
+    body: 'Nginx / Caddy 反代、SSE 免缓冲配置与安全响应头，附完整示例。',
+    href: '/docs/deploy/#reverse-proxy',
+  },
+]
+
+const stack = [
+  { label: 'Go 1.26', detail: 'Gin + GORM' },
+  { label: 'SQLite', detail: '纯 Go 驱动，无 CGO' },
+  { label: 'Vue 3', detail: 'Vite + TypeScript' },
+  { label: 'shadcn-vue', detail: 'Tailwind CSS v4' },
+  { label: 'go:embed', detail: '前端打进二进制' },
+  { label: 'SSE', detail: '实时日志与队列' },
+]
+---
+
+<BaseLayout description="布吉影库（Bujic Movie）：自托管的媒体库管家。自动刮削 TMDB 元数据、按 Emby/Jellyfin/Plex 规范整理文件、聚合多站点搜索并一键推送到 qBittorrent，单个 Go 二进制即可部署。">
+  <!-- ============ Hero ============ -->
+  <section class="relative overflow-hidden">
+    <div class="grid-bg pointer-events-none absolute inset-0" aria-hidden="true"></div>
+    <div class="hero-glow pointer-events-none absolute inset-x-0 top-0 h-[36rem]" aria-hidden="true"></div>
+
+    <div class="relative mx-auto max-w-7xl px-4 pt-14 pb-10 sm:px-6 sm:pt-20">
+      <div class="flex flex-col items-center text-center">
+        <a
+          href="/docs/deploy/"
+          class="ring-foreground/10 bg-card/70 text-muted-foreground hover:text-foreground inline-flex items-center gap-2 rounded-full px-3 py-1 text-xs ring-1 backdrop-blur transition-colors"
+        >
+          <span class="bg-success size-1.5 rounded-full"></span>
+          自托管 · 单二进制 · 数据不出内网
+          <ArrowRight class="size-3" />
+        </a>
+
+        <h1 class="mt-5 max-w-4xl text-4xl font-extrabold tracking-tight text-balance sm:text-5xl lg:text-[3.4rem] lg:leading-[1.1]">
+          把你的影视库
+          <span class="text-primary">从一堆文件</span>
+          变成一座图书馆
+        </h1>
+
+        <p class="text-muted-foreground mt-5 max-w-2xl text-base leading-7 text-pretty sm:text-lg">
+          布吉影库是自托管的媒体文件管理器：搜资源、下载、重命名、刮削 TMDB 元数据、生成海报与
+          NFO、刷新 Emby / Jellyfin / Plex，一条流水线跑完。对外还开了一个 MCP 端点，让 Agent
+          直接读写你的媒体库与字幕。
+        </p>
+
+        <div class="mt-7 flex flex-col items-center gap-2.5 sm:flex-row">
+          <a
+            href="/docs/deploy/"
+            class="bg-primary text-primary-foreground hover:bg-primary/90 inline-flex h-10 items-center gap-2 rounded-lg px-5 text-sm font-medium transition-colors"
+          >
+            <Play class="size-4" /> 5 分钟部署
+          </a>
+          <a
+            href="/docs/"
+            class="ring-foreground/15 hover:bg-muted/60 inline-flex h-10 items-center gap-2 rounded-lg px-5 text-sm font-medium ring-1 transition-colors"
+          >
+            阅读完整文档 <ArrowRight class="size-4" />
+          </a>
+        </div>
+
+        <div class="text-muted-foreground mt-4 flex flex-wrap items-center justify-center gap-x-4 gap-y-1 text-xs">
+          <span class="inline-flex items-center gap-1"><CloudOff class="size-3.5" /> 无云端依赖</span>
+          <span class="inline-flex items-center gap-1"><Database class="size-3.5" /> SQLite 单文件</span>
+          <span class="inline-flex items-center gap-1"><KeyRound class="size-3.5" /> 凭据加密落库</span>
+        </div>
+      </div>
+
+      <div class="relative mx-auto mt-12 max-w-6xl">
+        <Screenshot
+          src="/screenshots/dashboard.webp"
+          alt="布吉影库仪表盘：电影与剧集统计、待整理文件、整理成功率与后台实时日志"
+          label="布吉影库 · 仪表盘"
+          eager={true}
+        />
+        <div
+          class="from-background pointer-events-none absolute inset-x-0 -bottom-1 h-24 bg-gradient-to-t to-transparent"
+          aria-hidden="true"
+        >
+        </div>
+      </div>
+
+      <dl class="mt-10 grid grid-cols-2 gap-3 sm:grid-cols-4">
+        {
+          stats.map((stat) => (
+            <div class="ring-foreground/10 bg-card/60 rounded-lg px-4 py-3 ring-1">
+              <dt class="text-2xl font-bold tracking-tight">{stat.value}</dt>
+              <dd class="text-sm font-medium">{stat.label}</dd>
+              <p class="text-muted-foreground mt-0.5 text-xs leading-5">{stat.hint}</p>
+            </div>
+          ))
+        }
+      </dl>
+    </div>
+  </section>
+
+  <!-- ============ 它解决什么 ============ -->
+  <section class="mx-auto max-w-7xl px-4 py-16 sm:px-6 sm:py-20" id="why">
+    <div class="max-w-2xl">
+      <div class="text-primary text-xs font-semibold tracking-wider uppercase">它解决什么</div>
+      <h2 class="mt-2 text-2xl font-bold tracking-tight sm:text-3xl">媒体库管理真正耗时的，是这四件事</h2>
+      <p class="text-muted-foreground mt-3 text-base leading-7">
+        下载只是开始。文件要改名、要归位、要有元数据、要有字幕，最后还要让媒体服务器知道有新东西。
+        布吉影库把这四步串成一条自动流水线。
+      </p>
+    </div>
+
+    <div class="mt-8 grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
+      {
+        problems.map((item) => (
+          <div class="ring-foreground/10 bg-card rounded-xl p-5 ring-1">
+            <item.icon class="text-muted-foreground size-5" />
+            <h3 class="mt-3 text-sm font-semibold">{item.title}</h3>
+            <p class="text-muted-foreground mt-1.5 text-sm leading-6">{item.body}</p>
+          </div>
+        ))
+      }
+    </div>
+  </section>
+
+  <!-- ============ 流水线 ============ -->
+  <section class="border-border/70 bg-muted/25 border-y" id="pipeline">
+    <div class="mx-auto max-w-7xl px-4 py-16 sm:px-6 sm:py-20">
+      <div class="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
+        <div class="max-w-2xl">
+          <div class="text-primary text-xs font-semibold tracking-wider uppercase">工作流</div>
+          <h2 class="mt-2 text-2xl font-bold tracking-tight sm:text-3xl">一条从磁力链接到海报墙的流水线</h2>
+          <p class="text-muted-foreground mt-3 text-base leading-7">
+            四步可以全自动，也可以任选一步手动触发。每一步的产物都落在你自己的磁盘上，随时可以接手。
+          </p>
+        </div>
+        <a
+          href="/docs/"
+          class="text-primary inline-flex items-center gap-1 text-sm font-medium hover:underline"
+        >
+          看每一步的细节 <ArrowRight class="size-3.5" />
+        </a>
+      </div>
+
+      <ol class="mt-8 grid gap-3 lg:grid-cols-4">
+        {
+          pipeline.map((item) => (
+            <li class="ring-foreground/10 bg-background relative rounded-xl p-5 ring-1">
+              <div class="text-primary/70 font-mono text-xs font-semibold">{item.step}</div>
+              <h3 class="mt-1 text-sm font-semibold">{item.title}</h3>
+              <p class="text-muted-foreground mt-1.5 text-sm leading-6">{item.body}</p>
+              <a href={item.href} class="text-primary mt-3 inline-flex items-center gap-1 text-xs font-medium hover:underline">
+                细节 <ArrowRight class="size-3" />
+              </a>
+            </li>
+          ))
+        }
+      </ol>
+    </div>
+  </section>
+
+  <!-- ============ 功能矩阵 ============ -->
+  <section class="mx-auto max-w-7xl px-4 py-16 sm:px-6 sm:py-20" id="features">
+    <div class="max-w-2xl">
+      <div class="text-primary text-xs font-semibold tracking-wider uppercase">能力</div>
+      <h2 class="mt-2 text-2xl font-bold tracking-tight sm:text-3xl">八个模块，覆盖媒体库的完整生命周期</h2>
+      <p class="text-muted-foreground mt-3 text-base leading-7">
+        模块之间是解耦的：只用刮削、只用整理、只用搜索下载都能独立工作，组合起来才是完整流水线。
+      </p>
+    </div>
+
+    <div class="mt-8 grid grid-cols-1 gap-3 md:grid-cols-2">
+      {
+        features.map((feature) => (
+          <div class="ring-foreground/10 bg-card group rounded-xl p-5 ring-1 transition-shadow hover:shadow-sm">
+            <div class="flex items-start gap-3">
+              <div class="bg-accent/60 text-primary ring-primary/10 flex size-9 shrink-0 items-center justify-center rounded-lg ring-1">
+                <feature.icon class="size-[1.1rem]" />
+              </div>
+              <div class="min-w-0">
+                <h3 class="text-[0.95rem] font-semibold">{feature.title}</h3>
+                <ul class="mt-2 flex flex-col gap-1.5">
+                  {feature.points.map((point) => (
+                    <li class="text-muted-foreground flex gap-2 text-sm leading-6">
+                      <span class="bg-primary/40 mt-2.5 size-1 shrink-0 rounded-full" />
+                      {point}
+                    </li>
+                  ))}
+                </ul>
+                <a
+                  href={feature.href}
+                  class="text-primary mt-3 inline-flex items-center gap-1 text-xs font-medium hover:underline"
+                >
+                  了解详情 <ArrowRight class="size-3" />
+                </a>
+              </div>
+            </div>
+          </div>
+        ))
+      }
+    </div>
+  </section>
+
+  <!-- ============ 界面预览 ============ -->
+  <section class="border-border/70 bg-muted/25 border-y" id="preview">
+    <div class="mx-auto max-w-7xl px-4 py-16 sm:px-6 sm:py-20">
+      <div class="max-w-2xl">
+        <div class="text-primary text-xs font-semibold tracking-wider uppercase">界面预览</div>
+        <h2 class="mt-2 text-2xl font-bold tracking-tight sm:text-3xl">真实运行中的界面，不是效果图</h2>
+        <p class="text-muted-foreground mt-3 text-base leading-7">
+          下面每一张都是运行实例的截图。切换标签看不同模块，点小图可以看原图。
+        </p>
+      </div>
+      <div class="mt-8">
+        <PreviewGallery client:visible />
+      </div>
+    </div>
+  </section>
+
+  <!-- ============ 深挖：搜索下载 ============ -->
+  <section class="mx-auto max-w-7xl px-4 py-16 sm:px-6 sm:py-20" id="search">
+    <div class="grid grid-cols-1 items-start gap-10 lg:grid-cols-2">
+      <div>
+        <div class="text-primary text-xs font-semibold tracking-wider uppercase">搜索下载</div>
+        <h2 class="mt-2 text-2xl font-bold tracking-tight sm:text-3xl">中文片名，也能搜到英文站的资源</h2>
+        <p class="text-muted-foreground mt-3 text-base leading-7">
+          直接拿「纸牌屋」去查英文站，结果是零。布吉影库会先让 TMDB 把这个名字解析成原名
+          <code class="bg-muted rounded px-1 py-0.5 font-mono text-[0.8em]">House of Cards</code>
+          和各地别名，再按站点语言选择检索词，每个站点只发一次请求；相关性判定接受全部别名，
+          不会把整批英文结果误判成无关内容。
+        </p>
+
+        <ul class="mt-5 flex flex-col gap-2.5">
+          {
+            [
+              ['两类接入方式', 'Cardigann YAML 定义（兼容 Prowlarr 定义库）与通用 Torznab / Newznab。'],
+              ['跨站去重', '按种子指纹合并，同一资源不会在不同站点重复出现。'],
+              ['只传分类名', '落盘位置由 qBittorrent 的分类规则决定，不和下载器的路径约定打架。'],
+              ['健康可见', '最近成功、平均耗时、连续失败、冷却时间，可单个或全部测试。'],
+            ].map(([title, body]) => (
+              <li class="flex gap-3">
+                <span class="bg-primary mt-2 size-1.5 shrink-0 rounded-full" />
+                <div>
+                  <span class="text-sm font-medium">{title}</span>
+                  <span class="text-muted-foreground text-sm leading-6">：{body}</span>
+                </div>
+              </li>
+            ))
+          }
+        </ul>
+
+        <div class="mt-6 flex flex-wrap gap-2">
+          <a
+            href="/docs/search/"
+            class="bg-primary text-primary-foreground hover:bg-primary/90 inline-flex h-9 items-center gap-2 rounded-lg px-4 text-sm font-medium transition-colors"
+          >
+            搜索下载完整指南 <ArrowRight class="size-3.5" />
+          </a>
+          <a
+            href="/docs/faq/#search"
+            class="ring-foreground/15 hover:bg-muted/60 inline-flex h-9 items-center gap-2 rounded-lg px-4 text-sm font-medium ring-1 transition-colors"
+          >
+            站点搜不到怎么办
+          </a>
+        </div>
+      </div>
+
+      <div class="flex flex-col gap-3">
+        <Screenshot
+          src="/screenshots/search-titles.webp"
+          alt="片名识别面板：中文片名解析出的原名与各地别名候选"
+          label="搜索下载 · 片名识别"
+        />
+        <div class="grid grid-cols-2 gap-3">
+          <Screenshot src="/screenshots/search-indexers.webp" alt="已添加站点列表与健康状态" label="已添加站点" />
+          <Screenshot src="/screenshots/search-tasks.webp" alt="下载任务进度" label="下载任务" />
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============ MCP ============ -->
+  <section class="border-border/70 bg-muted/25 border-y" id="mcp">
+    <div class="mx-auto max-w-7xl px-4 py-16 sm:px-6 sm:py-20">
+      <div class="grid grid-cols-1 items-start gap-10 lg:grid-cols-[minmax(0,1.05fr)_minmax(0,1fr)]">
+        <div class="min-w-0">
+          <div class="text-primary text-xs font-semibold tracking-wider uppercase">Agent 接口</div>
+          <h2 class="mt-2 text-2xl font-bold tracking-tight sm:text-3xl">让 Agent 直接管你的字幕</h2>
+          <p class="text-muted-foreground mt-3 text-base leading-7">
+            内置 MCP（Model Context Protocol）Streamable HTTP 端点，Claude Code、OpenCode 等支持 MCP
+            的运行时可以直接查媒体库、读字幕、传字幕。配合仓库里的字幕 Skill，能跑通
+            「查列表 → 取英文字幕 → 翻译 → 上传中文字幕」的完整闭环。
+          </p>
+
+          <div class="table-wrap mt-5">
+            <table class="w-full text-sm">
+              <thead>
+                <tr class="border-border border-b">
+                  <th class="px-2 py-2 text-left text-xs font-semibold tracking-wide">工具</th>
+                  <th class="px-2 py-2 text-left text-xs font-semibold tracking-wide">作用</th>
+                </tr>
+              </thead>
+              <tbody class="text-muted-foreground">
+                {
+                  [
+                    ['mcp_ping', '连通性与鉴权自测，不读业务数据'],
+                    ['list_media_cards', '枚举媒体卡，确定查询范围'],
+                    ['query_media_list', '媒体列表与字幕状态（full / partial / none）'],
+                    ['query_media_subtitles', '单个影片的外挂与内嵌字幕明细'],
+                    ['fetch_subtitle', '获取字幕内容，内嵌轨用 ffmpeg 提取'],
+                    ['upload_subtitle', '上传字幕并落到约定的命名位置'],
+                  ].map(([tool, desc]) => (
+                    <tr class="border-border border-b last:border-0">
+                      <td class="px-2 py-2 font-mono text-xs whitespace-nowrap text-foreground">{tool}</td>
+                      <td class="px-2 py-2 leading-6">{desc}</td>
+                    </tr>
+                  ))
+                }
+              </tbody>
+            </table>
+          </div>
+
+          <div class="mt-5 flex flex-wrap gap-2 text-xs">
+            <span class="ring-foreground/10 rounded-md px-2 py-1 ring-1">仅接受 API Key</span>
+            <span class="ring-foreground/10 rounded-md px-2 py-1 ring-1">调用记录审计</span>
+            <span class="ring-foreground/10 rounded-md px-2 py-1 ring-1">入参自动脱敏</span>
+          </div>
+        </div>
+
+        <div class="flex flex-col gap-3">
+          <CodeBlock
+            label="MCP 客户端配置"
+            lang="json"
+            code={`{
+  "mcpServers": {
+    "bujic-movie": {
+      "type": "http",
+      "url": "http://192.168.1.10:8080/api/v1/mcp",
+      "headers": { "Authorization": "Bearer <API_KEY>" },
+      "toolNames": [
+        "list_media_cards",
+        "query_media_list",
+        "query_media_subtitles",
+        "fetch_subtitle",
+        "upload_subtitle"
+      ]
+    }
+  }
+}`}
+          />
+          <a
+            href="/docs/mcp/"
+            class="text-primary inline-flex items-center gap-1 text-sm font-medium hover:underline"
+          >
+            MCP 接入与字幕 Skill 完整说明 <ArrowRight class="size-3.5" />
+          </a>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============ 部署 ============ -->
+  <section class="mx-auto max-w-7xl px-4 py-16 sm:px-6 sm:py-20" id="deploy">
+    <div class="max-w-2xl">
+      <div class="text-primary text-xs font-semibold tracking-wider uppercase">部署</div>
+      <h2 class="mt-2 text-2xl font-bold tracking-tight sm:text-3xl">三种部署方式，都不需要额外组件</h2>
+      <p class="text-muted-foreground mt-3 text-base leading-7">
+        没有 Redis、没有 PostgreSQL、没有 Node 运行时。跑起来只需要一个进程和一块放媒体的磁盘。
+      </p>
+    </div>
+
+    <div class="mt-8 grid grid-cols-1 gap-3 md:grid-cols-3">
+      {
+        deployOptions.map((option) => (
+          <a
+            href={option.href}
+            class="ring-foreground/10 bg-card hover:bg-muted/40 flex flex-col rounded-xl p-5 ring-1 transition-colors"
+          >
+            <div class="flex items-center justify-between">
+              <option.icon class="text-primary size-5" />
+              <span class="bg-accent/70 text-accent-foreground rounded-full px-2 py-0.5 text-[0.68rem] font-medium">
+                {option.tag}
+              </span>
+            </div>
+            <h3 class="mt-3 text-sm font-semibold">{option.title}</h3>
+            <p class="text-muted-foreground mt-1.5 text-sm leading-6">{option.body}</p>
+            <span class="text-primary mt-3 inline-flex items-center gap-1 text-xs font-medium">
+              查看说明 <ArrowRight class="size-3" />
+            </span>
+          </a>
+        ))
+      }
+    </div>
+
+    <div class="mt-8 grid grid-cols-1 gap-6 lg:grid-cols-[minmax(0,1.15fr)_minmax(0,1fr)] lg:items-start">
+      <CodeBlock label="docker-compose.yml" lang="yaml" code={quickStart} />
+
+      <div class="flex flex-col gap-3">
+        <div class="ring-foreground/10 rounded-xl p-5 ring-1">
+          <h3 class="flex items-center gap-2 text-sm font-semibold"><Gauge class="text-primary size-4" /> 首次启动要做的三件事</h3>
+          <ol class="text-muted-foreground mt-3 flex flex-col gap-2 text-sm leading-6">
+            <li><span class="text-foreground font-medium">1.</span> 打开 <code class="bg-muted rounded px-1 font-mono text-[0.82em]">http://服务器IP:8080</code>，用 <code class="bg-muted rounded px-1 font-mono text-[0.82em]">admin / admin123</code> 登录后立即改密码。</li>
+            <li><span class="text-foreground font-medium">2.</span> 在「设置 → 刮削配置」填入 TMDB API Key，否则海报与 NFO 都出不来。</li>
+            <li><span class="text-foreground font-medium">3.</span> 在「设置 → 目录管理」添加电影和电视剧卡片，指定下载源与归档目录。</li>
+          </ol>
+          <a
+            href="/docs/setup/"
+            class="text-primary mt-3 inline-flex items-center gap-1 text-xs font-medium hover:underline"
+          >
+            首次配置逐项说明 <ArrowRight class="size-3" />
+          </a>
+        </div>
+
+        <div class="bg-warning/10 ring-warning/20 rounded-xl p-5 ring-1">
+          <h3 class="text-sm font-semibold">媒体服务器路径必须一致</h3>
+          <p class="text-muted-foreground mt-1.5 text-sm leading-6">
+            NFO 里的海报与文件引用是绝对路径。Emby / Jellyfin / Plex 容器请把宿主机同一个媒体目录挂到同一个容器路径
+            （例如都挂 <code class="bg-muted rounded px-1 font-mono text-[0.82em]">/media</code>），否则刮削出来的元数据会读不到图。
+          </p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============ 技术栈 ============ -->
+  <section class="border-border/70 bg-muted/25 border-y">
+    <div class="mx-auto max-w-7xl px-4 py-14 sm:px-6">
+      <div class="flex flex-col gap-2 text-center">
+        <div class="text-primary text-xs font-semibold tracking-wider uppercase">技术选型</div>
+        <h2 class="text-xl font-bold tracking-tight sm:text-2xl">刻意选简单的东西，减少运行时要维护的面</h2>
+      </div>
+      <div class="mt-8 grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-6">
+        {
+          stack.map((item) => (
+            <div class="bg-background ring-foreground/10 rounded-lg px-3 py-3 text-center ring-1">
+              <div class="text-sm font-semibold">{item.label}</div>
+              <div class="text-muted-foreground mt-0.5 text-[0.7rem] leading-4">{item.detail}</div>
+            </div>
+          ))
+        }
+      </div>
+      <p class="text-muted-foreground mx-auto mt-6 max-w-3xl text-center text-sm leading-6">
+        出站请求统一走自研执行器（超时、重试、限速、主机白名单、响应体积上限），
+        实时日志用 SSE 而不是 WebSocket——只读流不需要双向通道，断线还能按 Last-Event-ID 续传。
+      </p>
+    </div>
+  </section>
+
+  <!-- ============ 文档入口 ============ -->
+  <section class="mx-auto max-w-7xl px-4 py-16 sm:px-6 sm:py-20" id="docs">
+    <div class="max-w-2xl">
+      <div class="text-primary text-xs font-semibold tracking-wider uppercase">文档</div>
+      <h2 class="mt-2 text-2xl font-bold tracking-tight sm:text-3xl">从部署到排错，都有对应的页面</h2>
+    </div>
+
+    <div class="mt-8 grid grid-cols-1 gap-3 md:grid-cols-3">
+      {
+        docsNav.map((group) => (
+          <div class="ring-foreground/10 bg-card rounded-xl p-5 ring-1">
+            <h3 class="text-muted-foreground text-[0.7rem] font-semibold tracking-wider uppercase">{group.title}</h3>
+            <div class="mt-2 flex flex-col gap-1">
+              {group.items.map((item) => (
+                <a
+                  href={item.href}
+                  class="hover:bg-muted/60 group -mx-2 flex flex-col rounded-md px-2 py-1.5 transition-colors"
+                >
+                  <span class="flex items-center gap-1 text-sm font-medium">
+                    {item.title}
+                    <ArrowRight class="text-muted-foreground group-hover:text-primary size-3 opacity-0 transition-all group-hover:opacity-100" />
+                  </span>
+                  <span class="text-muted-foreground text-xs leading-5">{item.summary}</span>
+                </a>
+              ))}
+            </div>
+          </div>
+        ))
+      }
+    </div>
+  </section>
+
+  <!-- ============ 结尾 CTA ============ -->
+  <section class="mx-auto max-w-7xl px-4 pb-4 sm:px-6">
+    <div class="ring-foreground/10 bg-card relative overflow-hidden rounded-2xl px-6 py-12 text-center ring-1 sm:px-10">
+      <div class="hero-glow pointer-events-none absolute inset-x-0 top-0 h-48" aria-hidden="true"></div>
+      <div class="relative">
+        <h2 class="text-2xl font-bold tracking-tight sm:text-3xl">现在就把下载目录交给它</h2>
+        <p class="text-muted-foreground mx-auto mt-3 max-w-xl text-sm leading-6 sm:text-base">
+          一个 Compose 文件，三个挂载目录。剩下的事情——改名、归档、刮削、刷新——它自己会做。
+        </p>
+        <div class="mt-6 flex flex-col items-center justify-center gap-2.5 sm:flex-row">
+          <a
+            href="/docs/deploy/"
+            class="bg-primary text-primary-foreground hover:bg-primary/90 inline-flex h-10 items-center gap-2 rounded-lg px-5 text-sm font-medium transition-colors"
+          >
+            部署指南 <ArrowRight class="size-4" />
+          </a>
+          <a
+            href="/docs/faq/"
+            class="ring-foreground/15 hover:bg-muted/60 inline-flex h-10 items-center gap-2 rounded-lg px-5 text-sm font-medium ring-1 transition-colors"
+          >
+            先看常见问题
+          </a>
+        </div>
+      </div>
+    </div>
+  </section>
+</BaseLayout>

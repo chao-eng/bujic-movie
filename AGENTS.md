@@ -47,6 +47,7 @@
 | `app/web/` | Vue 前端工程 |
 | `app/web/src/components/ui/` | shadcn-vue 组件源码（随仓库递交，**不要手改**，见 6.2） |
 | `skills/` | Agent 技能目录（唯一副本 `bujic-subtitle`，见第 8 节；本地私有技能不提交） |
+| `web/` | **官网与使用文档**（Astro + Vue 3 + shadcn-vue 静态站点）。面向用户的部署/使用说明写在这里，不是 `doc/` |
 | `tools/bujic-cookie-import/` | Chrome/Edge 扩展：把浏览器已通过的 Cloudflare 会话导入服务端 |
 | `doc/` | 设计/PRD/任务文档，按能力分目录、中文命名（见第 10 节） |
 
@@ -76,6 +77,19 @@ go run ./cmd/defcheck <definitions-dir>
 
 # 其它 Makefile 目标：clean
 ```
+
+### 官网（`web/`，与 `app/` 无关）
+
+```bash
+cd web
+npm install         # 需要 Node >= 22.23（Astro 7 要求）
+npm run dev         # http://localhost:4321
+npm run build       # 静态产物输出到 web/dist
+npm run check       # astro check（Astro + TS 类型检查）
+```
+
+官网与产品前端共享同一套语义 token 与 `components/ui` 组件源码：改配色时两边同步，不要引入第二套设计语言。
+面向用户的部署/使用文档写在 `web/src/pages/docs/`，目录清单的唯一来源是 `web/src/data/nav.ts`。
 
 ### 测试清单
 

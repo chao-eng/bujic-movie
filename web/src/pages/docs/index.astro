@@ -1,0 +1,184 @@
+---
+import DocsLayout from '@/layouts/DocsLayout.astro'
+import CodeBlock from '@/components/site/CodeBlock.astro'
+import Screenshot from '@/components/site/Screenshot.astro'
+---
+
+<DocsLayout
+  title="项目概览"
+  description="布吉影库是什么、由哪些能力组成、一次完整的整理流程长什么样。"
+>
+  <p>
+    布吉影库（Bujic Movie）是一个<strong>自托管</strong>的媒体文件管理器。它不负责播放，也不替代
+    Emby / Jellyfin / Plex；它负责那些播放器不做的事——把下载下来的文件改名归位、补上元数据和海报、
+    让你在一个界面里搜资源并推给下载器。
+  </p>
+
+  <p>
+    整套系统是<strong>一个 Go 可执行文件</strong>：前端构建产物用 <code>go:embed</code> 打进去，
+    数据库是 SQLite，没有 Redis、没有消息队列、没有独立的 Node 运行时。放在 NAS、小主机、
+    甚至一台常开的树莓派上都能跑。
+  </p>
+
+  <h2 id="capabilities">它由哪些能力组成</h2>
+
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr>
+          <th>模块</th>
+          <th>做什么</th>
+          <th>数据落在哪</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td><strong>智能刮削</strong></td>
+          <td>解析文件名 → TMDB 匹配 → 写 NFO、下载海报与背景图、必要时提取媒体流信息</td>
+          <td>媒体目录内的 <code>.nfo</code> 与 <code>.jpg</code></td>
+        </tr>
+        <tr>
+          <td><strong>文件整理</strong></td>
+          <td>按 Emby / Jellyfin / Plex 规范重命名并转移到归档目录，随行处理字幕</td>
+          <td>媒体目录 + <code>transfer_histories</code> 表</td>
+        </tr>
+        <tr>
+          <td><strong>目录监听</strong></td>
+          <td>监听下载目录，新文件落地即自动整理，可绑定卡片逐个开关</td>
+          <td>无（内存中的 fsnotify 订阅）</td>
+        </tr>
+        <tr>
+          <td><strong>媒体库与字幕</strong></td>
+          <td>海报墙浏览、外挂/内嵌字幕明细、上传、删除、繁转简</td>
+          <td>媒体目录内的字幕文件</td>
+        </tr>
+        <tr>
+          <td><strong>搜索下载</strong></td>
+          <td>多站点聚合搜索、片名别名解析、跨站去重、一键推送到 qBittorrent</td>
+          <td><code>search_*</code> 八张表</td>
+        </tr>
+        <tr>
+          <td><strong>通知与联动</strong></td>
+          <td>十一种推送渠道；整理刮削后增量刷新绑定的媒体服务器</td>
+          <td><code>notify_channels</code>、<code>media_libraries</code></td>
+        </tr>
+        <tr>
+          <td><strong>MCP / Agent</strong></td>
+          <td>通过 Streamable HTTP 端点向 Agent 开放媒体库查询与字幕读写</td>
+          <td><code>mcp_api_keys</code>、<code>mcp_call_records</code></td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+
+  <h2 id="flow">一次完整的流程</h2>
+
+  <p>
+    下面这条链路是「全自动」形态。每一步也都能在界面上手动触发，产物始终落在你自己的磁盘上。
+  </p>
+
+  <ol>
+    <li>
+      <strong>搜索</strong>：在「搜索下载」页输入片名，系统先经 TMDB 解析出原名与各地别名，
+      再向所有启用的站点各发一次请求，结果按种子指纹跨站合并。
+    </li>
+    <li>
+      <strong>推送</strong>：点「下载」，系统把磁力链接和<em>分类名</em>交给 qBittorrent。
+      不传保存路径——落盘位置由 qBittorrent 自己的分类规则决定。
+    </li>
+    <li>
+      <strong>监听</strong>：卡片开启了「目录监听」时，fsnotify 会在下载目录里发现新文件，
+      等写入稳定后提交整理任务。
+    </li>
+    <li>
+      <strong>整理</strong>：解析文件名得到片名、年份、季集、分辨率，按命名规范算出目标路径，
+      用硬链接（默认）或移动/复制/symlink 落到归档目录，字幕随行改名。
+    </li>
+    <li>
+      <strong>刮削</strong>：整理完成且开启了「整理后自动触发刮削」时，从 TMDB 拉取详情，
+      写 <code>movie.nfo</code> / <code>tvshow.nfo</code> / 分集 nfo，下载 poster 与 backdrop。
+    </li>
+    <li>
+      <strong>刷新</strong>：卡片绑定了媒体服务器时，5 秒防抖后对该库发起增量刷新；
+      同时向已启用的通知渠道推送「刮削完成」。
+    </li>
+  </ol>
+
+  <Screenshot
+    src="/screenshots/dashboard.webp"
+    alt="仪表盘：统计卡片与后台实时日志"
+    label="仪表盘 · 实时日志走 SSE"
+  />
+
+  <h2 id="stack">技术栈与取舍</h2>
+
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr>
+          <th>层级</th>
+          <th>选型</th>
+          <th>为什么</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td>后端</td>
+          <td>Go + Gin</td>
+          <td>单二进制、交叉编译简单、并发模型适合「一个请求扇出多个站点」</td>
+        </tr>
+        <tr>
+          <td>数据库</td>
+          <td>SQLite + GORM（纯 Go 驱动）</td>
+          <td>零配置、单文件备份；纯 Go 实现意味着无 CGO，交叉编译不受限</td>
+        </tr>
+        <tr>
+          <td>前端</td>
+          <td>Vue 3 + Vite + TypeScript</td>
+          <td>组件模型清晰，构建产物小，适合嵌进二进制</td>
+        </tr>
+        <tr>
+          <td>UI</td>
+          <td>shadcn-vue + Tailwind CSS v4</td>
+          <td>组件源码在仓库内，样式走语义 token，亮暗主题共用一套变量</td>
+        </tr>
+        <tr>
+          <td>实时日志</td>
+          <td>SSE</td>
+          <td>只读流不需要双向通道；带自增 id，断线可按 Last-Event-ID 续传</td>
+        </tr>
+        <tr>
+          <td>出站请求</td>
+          <td>自研执行器</td>
+          <td>统一超时、重试、限速、主机白名单、响应体积上限，代理可按链路开关</td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+
+  <h2 id="requirements">运行要求</h2>
+
+  <ul>
+    <li><strong>操作系统</strong>：Linux（推荐）、macOS、Windows 均可；Docker 镜像为 linux/amd64 与 linux/arm64。</li>
+    <li><strong>ffmpeg / ffprobe</strong>：官方镜像已内置。手动部署时需要自行安装，否则内嵌字幕提取与媒体流信息会缺失（<code>streamdetails</code> 为空）。</li>
+    <li><strong>磁盘</strong>：程序本身约 40 MB；媒体占用取决于你的库。数据库默认在 <code>data/bujic-movie.db</code>。</li>
+    <li><strong>网络</strong>：刮削需要访问 <code>api.themoviedb.org</code> 与 <code>image.tmdb.org</code>；索引器站点按你的网络环境可能需要代理。</li>
+    <li><strong>TMDB API Key</strong>：必需。免费注册后在「设置 → 刮削配置」填入即可。</li>
+  </ul>
+
+  <h2 id="next">接下来</h2>
+
+  <p>
+    第一次使用建议按这个顺序读：<a href="/docs/deploy/">部署安装</a> →
+    <a href="/docs/setup/">首次配置</a> → 按需看各功能页。已经跑起来了想查问题，直接去
+    <a href="/docs/faq/">常见问题</a>。
+  </p>
+
+  <CodeBlock
+    label="最快验证它是否跑起来了"
+    lang="bash"
+    code={`# 健康检查不需要登录
+curl -s http://localhost:8080/api/v1/health
+# {"code":0,"msg":"success","data":{"status":"ok"}}`}
+  />
+</DocsLayout>

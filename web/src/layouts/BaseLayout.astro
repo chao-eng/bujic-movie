@@ -1,0 +1,74 @@
+---
+import '@/styles/global.css'
+import SiteHeader from '@/components/site/SiteHeader.astro'
+import SiteFooter from '@/components/site/SiteFooter.astro'
+
+export interface Props {
+  title?: string
+  description?: string
+  /** 页面类型，仅用于 data-page 标记与少量样式差异 */
+  wide?: boolean
+}
+
+const {
+  title = '布吉影库 Bujic Movie — 自托管的媒体库管家',
+  description = '布吉影库（Bujic Movie）自动刮削影视元数据、按媒体库规范整理文件、聚合多站点搜索并一键推送到 qBittorrent，单个 Go 二进制即可部署。',
+  wide = false,
+} = Astro.props
+
+const canonical = new URL(Astro.url.pathname, Astro.site ?? 'https://bujic.movie')
+---
+
+<!doctype html>
+<html lang="zh-CN" class="scroll-smooth">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>{title}</title>
+    <meta name="description" content={description} />
+    <link rel="canonical" href={canonical.href} />
+    <link rel="icon" type="image/png" href="/favicon.png" />
+    <link rel="apple-touch-icon" href="/favicon.png" />
+    <meta name="theme-color" content="#fafaf9" media="(prefers-color-scheme: light)" />
+    <meta name="theme-color" content="#0a0a0a" media="(prefers-color-scheme: dark)" />
+
+    <meta property="og:type" content="website" />
+    <meta property="og:title" content={title} />
+    <meta property="og:description" content={description} />
+    <meta property="og:url" content={canonical.href} />
+    <meta property="og:image" content="/screenshots/dashboard.webp" />
+    <meta name="twitter:card" content="summary_large_image" />
+
+    <!--
+      首帧主题：在样式表加载前就把 .dark 打到 <html> 上，
+      否则暗色用户会先看到一帧白屏。与 ThemeToggle 的存储键保持一致。
+    -->
+    <script is:inline>
+      ;(() => {
+        try {
+          const stored = localStorage.getItem('theme')
+          const mode = stored === 'light' || stored === 'dark' || stored === 'system' ? stored : 'system'
+          const dark = mode === 'dark' || (mode === 'system' && window.matchMedia('(prefers-color-scheme: dark)').matches)
+          document.documentElement.classList.toggle('dark', dark)
+          document.documentElement.dataset.themeMode = mode
+          document.documentElement.style.colorScheme = dark ? 'dark' : 'light'
+        } catch {
+          /* localStorage 不可用时按亮色渲染 */
+        }
+      })()
+    </script>
+  </head>
+  <body class="bg-background text-foreground min-h-screen">
+    <a
+      href="#main"
+      class="bg-primary text-primary-foreground focus-visible:ring-ring sr-only rounded-md px-3 py-2 text-sm focus:not-sr-only focus:absolute focus:top-3 focus:left-3 focus:z-50"
+    >
+      跳到正文
+    </a>
+    <SiteHeader />
+    <main id="main" class={wide ? '' : ''}>
+      <slot />
+    </main>
+    <SiteFooter />
+  </body>
+</html>

@@ -1,0 +1,268 @@
+---
+import DocsLayout from '@/layouts/DocsLayout.astro'
+import CodeBlock from '@/components/site/CodeBlock.astro'
+import Screenshot from '@/components/site/Screenshot.astro'
+import NoteBox from '@/components/site/NoteBox.astro'
+---
+
+<DocsLayout
+  title="MCP / Agent"
+  description="创建 API Key、配置 MCP 客户端、六个工具的用法，以及字幕翻译 Skill 的完整闭环。"
+>
+  <p>
+    布吉影库内置一个 MCP（Model Context Protocol）端点，走 <strong>Streamable HTTP</strong>。
+    支持 MCP 的运行时（Claude Code、OpenCode、Codex 等）可以直接查媒体库、读字幕、传字幕。
+    这一层是只读查询 + 有限的写入（字幕），不暴露任何配置类操作。
+  </p>
+
+  <h2 id="key">第一步：创建 API Key</h2>
+
+  <p>路径：「系统设置 → MCP / API Key」。</p>
+
+  <Screenshot src="/screenshots/settings-mcp.webp" alt="MCP / API Key 设置页：端点地址、创建 Key、已有 Key 列表" label="设置 · MCP / API Key" />
+
+  <ul>
+    <li>填一个用途备注（例如「Claude Code 字幕助手」），点「创建」。</li>
+    <li>密钥明文<strong>只在创建响应里出现一次</strong>，务必当场复制保存。</li>
+    <li>每个 Key 可以单独禁用/启用，也可以删除。</li>
+    <li>页面上可以直接看到该 Key 的调用记录与全文调用记录。</li>
+  </ul>
+
+  <NoteBox title="Key 存的是哈希">
+    <p class="text-muted-foreground mt-2 text-sm leading-6">
+      数据库里只保存「盐:哈希」，不保存明文。所以忘记之后没法找回，只能新建一个。
+      列表里显示的 <code class="bg-muted rounded px-1 font-mono text-[0.85em]">bmk_…</code>
+      前缀只是标识，不是可用密钥。
+    </p>
+  </NoteBox>
+
+  <h2 id="endpoint">端点与鉴权</h2>
+
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr>
+          <th>项</th>
+          <th>值</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td>端点</td>
+          <td><code>{'<SERVER_URL>'}/api/v1/mcp</code></td>
+        </tr>
+        <tr>
+          <td>协议</td>
+          <td>MCP Streamable HTTP（不是 SSE 传输，也不需要单独起进程）</td>
+        </tr>
+        <tr>
+          <td>鉴权</td>
+          <td><code>Authorization: Bearer &lt;API_KEY&gt;</code></td>
+        </tr>
+        <tr>
+          <td>不接受</td>
+          <td>网页登录 JWT。MCP 端点只认 API Key，两条通道完全隔离</td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+
+  <p>
+    <code>SERVER_URL</code> 是包含 scheme、host、port 的完整地址，例如
+    <code>http://192.168.1.10:8080</code>。不要漏掉端口，也不要只写域名。
+  </p>
+
+  <h2 id="client">第二步：配置 MCP 客户端</h2>
+
+  <CodeBlock
+    label="通用 MCP 客户端配置"
+    lang="json"
+    code={`{
+  "mcpServers": {
+    "bujic-movie": {
+      "type": "http",
+      "url": "http://192.168.1.10:8080/api/v1/mcp",
+      "headers": { "Authorization": "Bearer <API_KEY>" },
+      "toolNames": [
+        "list_media_cards",
+        "query_media_list",
+        "query_media_subtitles",
+        "fetch_subtitle",
+        "upload_subtitle"
+      ]
+    }
+  }
+}`}
+  />
+
+  <p>
+    Claude Code 用 <code>claude_desktop_config.json</code> 或 <code>claude mcp add</code>；
+    OpenCode 用 <code>.mcp.json</code> 或项目配置。字段名以客户端实际文档为准，
+    但上面的 <code>type</code> / <code>url</code> / <code>headers</code> 是常见形态。
+  </p>
+
+  <h3 id="ping">先验证连通性</h3>
+
+  <p>
+    配好之后让 Agent 调一次 <code>mcp_ping</code>。它返回服务端时间与版本，
+    <strong>不读业务数据、不写调用记录</strong>，是最安全的第一次调用。
+  </p>
+
+  <CodeBlock
+    label="直接用 curl 验证（跳过客户端）"
+    lang="bash"
+    code={`curl -s -X POST http://localhost:8080/api/v1/mcp \\
+  -H "Authorization: Bearer <API_KEY>" \\
+  -H "Content-Type: application/json" \\
+  -H "Accept: application/json, text/event-stream" \\
+  -d '{
+    "jsonrpc": "2.0",
+    "id": 1,
+    "method": "tools/list"
+  }' | head -c 400`}
+  />
+
+  <h2 id="tools">六个工具</h2>
+
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr>
+          <th>工具</th>
+          <th>参数</th>
+          <th>返回</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td><code>mcp_ping</code></td>
+          <td>无</td>
+          <td>服务端时间与版本，不落记录</td>
+        </tr>
+        <tr>
+          <td><code>list_media_cards</code></td>
+          <td>无</td>
+          <td>每张卡的 id / name / media_type / archive_path / download_path / is_default / watch_directory</td>
+        </tr>
+        <tr>
+          <td><code>query_media_list</code></td>
+          <td><code>media_type</code>、<code>query</code>、<code>media_card_id</code>、<code>page</code>、<code>limit</code></td>
+          <td>media_id / title / type / path / has_subtitle / subtitle_status / languages / missing_subtitles</td>
+        </tr>
+        <tr>
+          <td><code>query_media_subtitles</code></td>
+          <td><code>media_id</code> 或 <code>path</code>、<code>media_card_id</code>、<code>include_internal</code></td>
+          <td>该媒体（或整季各集）的外挂与内嵌字幕明细</td>
+        </tr>
+        <tr>
+          <td><code>fetch_subtitle</code></td>
+          <td><code>path</code>（外挂）或 <code>video_path</code> + <code>internal_index</code>（内嵌）</td>
+          <td>字幕文本；图像字幕返回 base64 并标 <code>is_image=true</code></td>
+        </tr>
+        <tr>
+          <td><code>upload_subtitle</code></td>
+          <td><code>video_path</code>、<code>subtitle_content</code> 或 <code>subtitle_base64</code>、<code>format</code>、<code>language</code></td>
+          <td>写入结果与新文件路径</td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+
+  <h3 id="scope">media_card_id 的语义</h3>
+
+  <p>
+    这个参数在三个查询类工具里都有，规则一致：<strong>省略或 0 = 全部媒体卡</strong>，
+    <strong>&gt;0 = 限定这张卡</strong>。Agent 的正确做法是先调 <code>list_media_cards</code>
+    枚举，再决定查哪张——否则在同时有电影库和剧集库的实例上会混在一起。
+  </p>
+
+  <h2 id="skill">字幕 Agent 的完整闭环</h2>
+
+  <p>
+    仓库里的 <code>skills/bujic-subtitle/SKILL.md</code> 定义了一个可直接安装的 Skill，
+    把五个工具编排成「查列表 → 取英文字幕 → 翻译 → 上传」的流程，
+    并附了一套专业的字幕翻译规范。
+  </p>
+
+  <CodeBlock
+    label="典型对话"
+    lang="text"
+    code={`你：帮我把《纸牌屋》第六季补上简体中文字幕
+
+Agent（按 Skill 编排）：
+  1. query_media_list  query="纸牌屋"           → 找到 6 集，状态 partial（只有英文）
+  2. query_media_subtitles path=<第 8 集季目录>  → 拿到 6 条内嵌英文轨
+  3. fetch_subtitle     video_path=… internal_index=0
+  4. 按字幕规范逐条翻译（保持时间轴、序号、格式）
+  5. upload_subtitle    video_path=… language="zh-CN" format="srt"
+  6. 再次 query_media_list 确认状态变成 full`}
+  />
+
+  <p>翻译质量的几条硬约束（Skill 里写得更细）：</p>
+
+  <ul>
+    <li>时间轴、序号、样式标记原样保留，只改文本</li>
+    <li>一句一行，不合并、不拆行，避免与画面不同步</li>
+    <li>人名与专有名词全片统一，首次出现保留原文</li>
+    <li>口语化，不做书面语润色，长度尽量贴近原文</li>
+  </ul>
+
+  <h2 id="audit">调用记录与脱敏</h2>
+
+  <p>
+    「查看调用记录」里能看到每次调用的工具名、耗时、结果大小、成功与否。
+    入参是<strong>脱敏后</strong>记录的：不含字幕正文、不含 base64、不含完整原始路径。
+    所以审计日志既能用来排查「Agent 到底干了什么」，又不会把字幕内容复制一份到数据库里。
+  </p>
+
+  <p>
+    记录有容量上限（有界缓冲），不会无限增长；Key 也有 180 天的清理策略。
+  </p>
+
+  <h2 id="security">安全边界</h2>
+
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr>
+          <th>规则</th>
+          <th>说明</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td>MCP 端点不接受 JWT</td>
+          <td>即使带着有效的网页登录令牌也进不来，必须用 API Key</td>
+        </tr>
+        <tr>
+          <td>管理 REST 不接受 API Key</td>
+          <td>API Key 不能改配置、不能建站点，只能读写媒体库与字幕</td>
+        </tr>
+        <tr>
+          <td>路径白名单</td>
+          <td>所有按路径读写都要落在媒体卡的归档目录前缀下，禁止目录穿越</td>
+        </tr>
+        <tr>
+          <td>不明文回显</td>
+          <td>Key 只存哈希；站点凭据、代理密码只回掩码</td>
+        </tr>
+        <tr>
+          <td>并发上限</td>
+          <td>工具执行有信号量限制，避免 Agent 并发打爆 ffprobe</td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+
+  <NoteBox title="把 MCP 端点暴露到公网要谨慎">
+    <p class="text-muted-foreground mt-2 text-sm leading-6">
+      API Key 泄露等于把媒体库目录结构和字幕读写权限交出去。建议只在局域网开放，
+      或至少在反向代理层加 IP 白名单 / 额外认证。不要在公开的 MCP 目录里注册你的实例地址。
+    </p>
+  </NoteBox>
+
+  <p>
+    想了解实现层的分层与数据表，看<a href="/docs/architecture/">架构与接口</a>；
+    想了解全站设置项，看<a href="/docs/settings/">系统设置详解</a>。
+  </p>
+</DocsLayout>

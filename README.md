@@ -229,6 +229,7 @@ services:
 
 | 文档 | 说明 |
 | :--- | :--- |
+| [`web/`](web/) | **官网与完整使用文档**（Astro + Vue 3），`cd web && npm install && npm run dev` |
 | [`doc/文档索引.md`](doc/文档索引.md) | 全部需求 / 设计 / 测试文档的分类索引 |
 | [`AGENTS.md`](AGENTS.md) | 面向编码 Agent 的仓库导览、架构要点、改动约定与发版经验 |
 | [`doc/搜索下载能力/01-需求文档.md`](doc/搜索下载能力/01-需求文档.md) | 搜索下载能力的 PRD（业务规则权威来源） |

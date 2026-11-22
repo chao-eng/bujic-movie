@@ -1,0 +1,364 @@
+---
+import DocsLayout from '@/layouts/DocsLayout.astro'
+import CodeBlock from '@/components/site/CodeBlock.astro'
+import Screenshot from '@/components/site/Screenshot.astro'
+import NoteBox from '@/components/site/NoteBox.astro'
+---
+
+<DocsLayout
+  title="搜索下载"
+  description="索引器接入、片名别名解析、聚合搜索与去重、分类映射、推送到 qBittorrent、站点健康与 Cloudflare 处理。"
+>
+  <p>
+    这一页是整个系统里操作路径最长的一块。界面分五个标签：
+    <strong>搜索</strong>、<strong>站点列表</strong>、<strong>已添加站点</strong>、
+    <strong>下载任务</strong>、<strong>状态</strong>。按这个顺序用就不会迷路。
+  </p>
+
+  <Screenshot src="/screenshots/search.webp" alt="搜索下载页的搜索标签" label="搜索下载" />
+
+  <h2 id="prereq">开始之前要准备的两样东西</h2>
+
+  <ol>
+    <li>
+      <strong>一个下载器</strong>：目前支持 qBittorrent 4.6 / 5.x。
+      在「设置 → 下载器」填地址、账号密码，点「测试」确认能连上。
+    </li>
+    <li>
+      <strong>至少一个站点</strong>：在「站点列表」里挑一个模板添加，或手动配置 Torznab。
+    </li>
+  </ol>
+
+  <Screenshot src="/screenshots/settings-downloader.webp" alt="设置页的下载器分区：qBittorrent 已启用" label="设置 · 下载器" />
+
+  <NoteBox title="为什么这里没有「保存路径」">
+    <p class="text-muted-foreground mt-2 text-sm leading-6">
+      推送只带<strong>分类名</strong>，落盘位置完全由 qBittorrent 的分类规则决定。
+      这样不会出现「布吉影库以为文件在 A，qBittorrent 实际存到 B」的路径分裂。
+      你需要先在 qBittorrent 里给分类配好保存目录。
+    </p>
+  </NoteBox>
+
+  <h2 id="indexers">站点接入的两种方式</h2>
+
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr>
+          <th>方式</th>
+          <th>适合</th>
+          <th>需要什么</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td><strong>Cardigann 定义</strong></td>
+          <td>绝大多数 PT / BT 站点</td>
+          <td>从定义库选一个模板，填站点地址与账号（或 Cookie）</td>
+        </tr>
+        <tr>
+          <td><strong>Torznab / Newznab</strong></td>
+          <td>自建索引器、支持标准协议的服务</td>
+          <td>站点提供的 API 地址与 API Key</td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+
+  <h3 id="templates">从模板库添加</h3>
+
+  <p>
+    「站点列表」页内置模板库（当前同步版本为 500 余个，来自 Prowlarr 定义库的第 12 版）。
+    每个模板会标注兼容性、是否需要账号、支持的语言与分类。
+  </p>
+
+  <Screenshot src="/screenshots/search-templates.webp" alt="站点模板库：兼容性、分类与语言筛选" label="站点列表 · 模板库" />
+
+  <ul>
+    <li>点某个模板的「添加」，只需填名字（多数站点还要填地址和账号）。</li>
+    <li>「全部添加」可以批量添加所有完全兼容的公开站点，适合快速起步。</li>
+    <li>「导入 YAML」可以上传本地定义文件；「更新模板库」重新从上游同步。</li>
+  </ul>
+
+  <NoteBox title="定义是快照">
+    <p class="text-muted-foreground mt-2 text-sm leading-6">
+      添加站点那一刻的定义会被保存下来，之后模板库更新<strong>不会自动改变</strong>已添加的站点。
+      站点改版导致失效时，在「已添加站点」里点「刷新定义」才会切换到新版本。
+      这是刻意的：一次上游变更不应该悄悄改掉所有正在工作的站点。
+    </p>
+  </NoteBox>
+
+  <h3 id="torznab">手动添加 Torznab</h3>
+
+  <p>
+    在「已添加站点」右上角点「手动配置」，选择 <code>Torznab</code>，
+    填 API 地址（通常形如 <code>https://example.com/api</code>）与 API Key。
+    如果该服务有分类映射需求，再按下方「分类映射」一节配置。
+  </p>
+
+  <h2 id="config">站点配置项</h2>
+
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr>
+          <th>字段</th>
+          <th>作用</th>
+          <th>默认</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td>优先级</td>
+          <td>多站点同时返回结果时的排序参考</td>
+          <td>50</td>
+        </tr>
+        <tr>
+          <td>最小请求间隔</td>
+          <td>同一站点的两次请求之间的最小间隔，避免触发风控</td>
+          <td>2000 ms</td>
+        </tr>
+        <tr>
+          <td>检索语言</td>
+          <td>该站点用哪种语言的检索词；可多选（如中文 + 英文），每个语言各发一次</td>
+          <td>跟随定义</td>
+        </tr>
+        <tr>
+          <td>代理</td>
+          <td>站点级代理，覆盖全局「搜索走代理」开关</td>
+          <td>跟随全局</td>
+        </tr>
+        <tr>
+          <td>绑定下载器</td>
+          <td>该站点的结果推到哪个下载器；为空则用默认下载器</td>
+          <td>默认下载器</td>
+        </tr>
+        <tr>
+          <td>额外 Cookie / UA</td>
+          <td>需要登录或过 Cloudflare 时使用</td>
+          <td>空</td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+
+  <h2 id="title">片名识别：中文片名怎么搜到英文站</h2>
+
+  <p>
+    这是搜索质量的关键。直接拿「纸牌屋」查英文站会得到零结果，因为站点索引里存的是
+    <code>House of Cards</code>。所以搜索前会先做一次 TMDB 解析：
+  </p>
+
+  <ol>
+    <li>用你输入的片名查 TMDB，得到候选条目。</li>
+    <li>取选中条目的<strong>原名</strong>与<strong>各地别名</strong>（<code>alternative_titles</code>）。</li>
+    <li>把这些名字缓存到 <code>search_title_aliases</code> 表，下次直接复用。</li>
+    <li>按站点配置的语言挑选检索词：中文站用中文名，日/韩站用当地文字，其余优先拉丁名。</li>
+    <li><strong>每个站点仍然只发一次请求</strong>——多语言不是多请求。</li>
+  </ol>
+
+  <Screenshot
+    src="/screenshots/search-titles.webp"
+    alt="片名识别面板：显示实际检索词与 TMDB 候选条目"
+    label="搜索 · 片名识别"
+  />
+
+  <p>
+    识别结果不确定时会让你确认：面板里列出候选条目，选中的那一条决定后续所有检索词。
+    确认过的映射会长期复用，不需要每次都选。
+  </p>
+
+  <p>
+    相关性判定同样接受全部别名——否则一批英文站的合法结果会被当成「与关键词无关」整批丢弃，
+    表现为「明明站点有这个资源，却一条都不显示」。
+  </p>
+
+  <h2 id="dedupe">跨站去重与筛选</h2>
+
+  <p>
+    同一个种子常被多个站点索引。系统按<strong>种子指纹</strong>合并结果，
+    同一条资源只出现一次，并保留来源站点列表。合并后的列表可以按：
+  </p>
+
+  <ul>
+    <li>分类（电影 / 剧集 / 音乐 / 书籍…，用标准 Newznab 分类号）</li>
+    <li>做种数 / 下载数</li>
+    <li>体积</li>
+  </ul>
+
+  <p>排序后点「下载」即推送。推送前会有一个预览确认，显示将要提交给下载器的分类与标签。</p>
+
+  <h2 id="categories">分类映射</h2>
+
+  <p>
+    站点用标准分类号（如 <code>2040</code> 电影/HD、<code>5040</code> 剧集/HD），
+    qBittorrent 用你自己的分类名（如 <code>movies</code>、<code>tv</code>）。
+    映射表把前者翻译成后者：
+  </p>
+
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr>
+          <th>源分类</th>
+          <th>含义</th>
+          <th>映射到 qBittorrent 分类</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr><td><code>2000</code></td><td>电影（含全部子类）</td><td>movies</td></tr>
+        <tr><td><code>2045</code></td><td>电影 / 4K</td><td>movies-4k</td></tr>
+        <tr><td><code>5000</code></td><td>剧集（含全部子类）</td><td>tv</td></tr>
+        <tr><td><code>5045</code></td><td>剧集 / 4K</td><td>tv-4k</td></tr>
+        <tr><td><code>5070</code></td><td>剧集 / 动画</td><td>anime</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <p>
+    下载器编辑表单里会<strong>实时读取</strong> qBittorrent 上已有的分类列表，
+    所以映射目标是从真实分类里挑，而不是手打猜一个名字。
+  </p>
+
+  <h2 id="health">站点健康与降级</h2>
+
+  <p>每个站点都维护一份健康档案：</p>
+
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr>
+          <th>字段</th>
+          <th>含义</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr><td>最近成功</td><td>上一次成功返回结果的时间</td></tr>
+        <tr><td>平均耗时</td><td>最近若干次请求的滑动平均，用于判断站点是否变慢</td></tr>
+        <tr><td>连续失败</td><td>连续失败次数，达到阈值后站点进入降级</td></tr>
+        <tr><td>冷却至</td><td>降级期间跳过该站点，到期自动恢复探测</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <p>
+    降级的意义是：一个挂掉的站点不应该拖慢整次搜索。搜索有全局并发上限与总时限，
+    慢站点会被跳过而不是让所有人在那里等。
+  </p>
+
+  <Screenshot src="/screenshots/search-indexers.webp" alt="已添加站点：健康状态、测试与刷新定义" label="已添加站点" />
+
+  <h2 id="downloads">下载任务</h2>
+
+  <p>
+    「下载任务」页按下载器分组列出当前任务：进度、速度、状态、分类。
+    支持暂停、继续、删除。这里的操作直接作用在 qBittorrent 上，不是本地的假状态。
+  </p>
+
+  <Screenshot src="/screenshots/search-tasks.webp" alt="下载任务：按下载器分组的任务列表" label="下载任务" />
+
+  <p>
+    下载完成后，如果媒体卡监听了对应目录，会自动进入整理流程——两个模块在这里交接。
+  </p>
+
+  <h2 id="cloudflare">需要登录或有 Cloudflare 的站点</h2>
+
+  <p>
+    本系统<strong>不做人机验证破解</strong>。站点返回
+    <code>cf-mitigated: challenge</code> 时会归类成「需要验证」，错误码 <code>42204</code>。
+    解决方式是把你浏览器里已经通过验证的会话导入进来。
+  </p>
+
+  <h3 id="import-form">方式一：站点表单里粘贴</h3>
+
+  <p>
+    编辑站点时填「额外 Cookie」（至少包含 <code>cf_clearance</code>）与<strong>同一浏览器的
+    User-Agent</strong>。两者必须来自同一次会话。
+  </p>
+
+  <h3 id="import-extension">方式二：浏览器扩展一键导入</h3>
+
+  <p>
+    仓库里的 <code>tools/bujic-cookie-import/</code> 是一个 Chrome / Edge 扩展。
+    在你自己的浏览器里完成验证后，点扩展图标即可把 Cookie 与 UA 推到服务端，
+    服务端按域名匹配到对应站点并更新。
+  </p>
+
+  <CodeBlock
+    label="安装扩展"
+    lang="bash"
+    code={`# 1. 打开 chrome://extensions
+# 2. 右上角打开「开发者模式」
+# 3. 点「加载已解压的扩展程序」，选择仓库里的 tools/bujic-cookie-import/
+# 4. 在扩展选项里填服务端地址与 JWT`}
+  />
+
+  <NoteBox title="cf_clearance 绑定出口 IP + User-Agent">
+    <p class="text-muted-foreground mt-2 text-sm leading-6">
+      Cloudflare 的通行证同时校验 IP 与 UA。如果布吉影库走代理而你的浏览器直连，
+      这个 Cookie 一定不生效。要么让两边走同一出口，要么在站点配置里把代理填成与浏览器一致的地址。
+    </p>
+  </NoteBox>
+
+  <p>
+    另外，<code>cf_clearance</code> 常常是 <strong>HttpOnly 且分区（CHIPS）</strong>的 Cookie，
+    扩展为此提供了三条读取路径：分区查询、从真实请求头读 <code>Cookie</code>、
+    以及普通 <code>chrome.cookies</code> 查询。扩展的探测面板会列出每一步结果，
+    排查时先看它。
+  </p>
+
+  <h2 id="errors">错误码约定</h2>
+
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr>
+          <th>HTTP</th>
+          <th>code</th>
+          <th>含义</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td>422</td>
+          <td><code>40102</code></td>
+          <td>目标站点认证失败（账号密码/Cookie 不对）。<strong>不要</strong>把它当成会话失效去登出</td>
+        </tr>
+        <tr>
+          <td>422</td>
+          <td><code>42204</code></td>
+          <td>站点要求人机验证，需要导入浏览器会话</td>
+        </tr>
+        <tr>
+          <td>404</td>
+          <td><code>40401</code></td>
+          <td>搜索下载模块被关闭（<code>search.enabled=false</code>）</td>
+        </tr>
+        <tr>
+          <td>409</td>
+          <td><code>40902</code> / <code>40903</code></td>
+          <td>推送或下载器状态冲突（重复推送、下载器不可用等）</td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+
+  <h2 id="pipeline">和整理链路怎么衔接</h2>
+
+  <p>
+    搜索下载模块与整理/刮削是<strong>解耦</strong>的：它不读媒体卡、不写下载目录、不触发 watcher。
+    它只负责把种子交给 qBittorrent。之后的流程由 qBittorrent 落盘 + 目录监听接手：
+  </p>
+
+  <CodeBlock
+    label="衔接方式"
+    lang="text"
+    code={`索引器（布吉影库） → qBittorrent（按分类规则落盘）
+                              ↓
+                   下载目录（媒体卡的下载源）
+                              ↓  目录监听发现新文件
+                   整理 → 刮削 → 刷新媒体服务器`}
+  />
+
+  <p>如果你不想用目录监听，也可以在下载完成后手动到「文件整理」页提交。</p>
+</DocsLayout>

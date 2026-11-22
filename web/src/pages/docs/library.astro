@@ -1,0 +1,210 @@
+---
+import DocsLayout from '@/layouts/DocsLayout.astro'
+import CodeBlock from '@/components/site/CodeBlock.astro'
+import Screenshot from '@/components/site/Screenshot.astro'
+import NoteBox from '@/components/site/NoteBox.astro'
+---
+
+<DocsLayout
+  title="媒体库与字幕"
+  description="海报墙浏览、字幕状态判定、外挂与内嵌字幕的读取、上传、删除与简繁转换。"
+>
+  <p>
+    「媒体库」页把数据库里的分散记录聚合成卡片形态：电影按 TMDB ID 归并，剧集按季目录归并。
+    每张卡片都能进入字幕管理——这是本系统里唯一<strong>同时以网页和 MCP 工具</strong>两种形式
+    暴露的能力。
+  </p>
+
+  <Screenshot src="/screenshots/library.webp" alt="媒体库海报墙，按卡片聚合" label="媒体库" />
+
+  <h2 id="group">卡片是怎么聚合出来的</h2>
+
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr>
+          <th>类型</th>
+          <th>聚合键</th>
+          <th>卡片上显示的 path</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td>电影</td>
+          <td>TMDB ID</td>
+          <td>视频文件所在目录</td>
+        </tr>
+        <tr>
+          <td>电视剧</td>
+          <td>季目录（<code>剧名 (年份)/Season 01</code>）</td>
+          <td>季目录路径，点进去是该季所有集</td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+
+  <p>
+    所以同一部剧的第 1 季和第 6 季是两张卡片，各自独立管理字幕——这符合实际使用：
+    我们通常是一季一季下载、一季一季配字幕。
+  </p>
+
+  <h2 id="status">字幕状态三态</h2>
+
+  <p>每张卡片的字幕状态由外挂与内嵌字幕的语言集合共同决定：</p>
+
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr>
+          <th>状态</th>
+          <th>含义</th>
+          <th>典型场景</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td><code>full</code> 完整</td>
+          <td>已具备中文字幕</td>
+          <td>外挂 <code>.zh-CN.srt</code>，或内嵌中文轨</td>
+        </tr>
+        <tr>
+          <td><code>partial</code> 部分</td>
+          <td>有字幕但不是中文</td>
+          <td>只有英文外挂或英文内嵌轨，需要翻译</td>
+        </tr>
+        <tr>
+          <td><code>none</code> 缺失</td>
+          <td>没有任何字幕</td>
+          <td>生肉，需要下载或翻译</td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+
+  <p>
+    判定使用的语言标签是<strong>规范化后</strong>的 IETF tag：内嵌轨的 <code>chi</code> /
+    <code>zho</code> / <code>chs</code> / <code>简中</code> 都会归到 <code>zh-CN</code>，
+    <code>cht</code> / <code>big5</code> / <code>繁中</code> 归到 <code>zh-TW</code>。
+    所以不会出现「明明有中文字幕却显示缺失」的情况。
+  </p>
+
+  <h2 id="subtitle-panel">字幕管理面板</h2>
+
+  <p>点卡片上的「字幕管理」打开面板，可以逐集查看字幕并上传。</p>
+
+  <Screenshot
+    src="/screenshots/library-subtitle.webp"
+    alt="字幕管理面板：整季批量上传与逐集字幕明细"
+    label="字幕管理"
+  />
+
+  <p>面板里能看到：</p>
+
+  <ul>
+    <li>每一集的视频绝对路径</li>
+    <li>已有的外挂字幕（文件名、语言、格式、体积）</li>
+    <li>内嵌字幕轨（需要 ffprobe；图像字幕会标记为不可编辑）</li>
+    <li>整季批量上传入口</li>
+  </ul>
+
+  <h2 id="naming">外挂字幕的命名约定</h2>
+
+  <p>系统通过文件名识别外挂字幕的语言与格式，约定是：</p>
+
+  <CodeBlock
+    label="命名格式"
+    lang="text"
+    code={`<视频主名>.<语言>.<扩展名>
+例如：
+  纸牌屋 (2013) - S06E08 - 第 8 集.zh-CN.srt
+  纸牌屋 (2013) - S06E08 - 第 8 集.zh-TW.ass
+  纸牌屋 (2013) - S06E08 - 第 8 集.en.srt
+
+也接受不带语言段（会被视为 unknown）：
+  纸牌屋 (2013) - S06E08 - 第 8 集.srt`}
+  />
+
+  <p>
+    支持的扩展名：<code>.srt</code>、<code>.ass</code>、<code>.ssa</code>、<code>.vtt</code>、
+    <code>.sub</code>。整理阶段会自动按这个约定重命名字幕，所以正常流程下不需要手动改名。
+  </p>
+
+  <h2 id="upload">上传字幕</h2>
+
+  <p>
+    网页上传：在字幕面板里点某集的「上传字幕」，选择文件即可。上传会走路径白名单校验——
+    只有落在媒体卡归档目录下的视频才允许写入，因此不存在「通过上传接口写到系统任意位置」的风险。
+  </p>
+
+  <p>Agent 上传：通过 MCP 的 <code>upload_subtitle</code> 工具，参数是目标视频的绝对路径加字幕内容。</p>
+
+  <CodeBlock
+    label="MCP 上传示例（Agent 侧）"
+    lang="json"
+    code={`{
+  "tool": "upload_subtitle",
+  "arguments": {
+    "video_path": "/media/tv/纸牌屋 (2013)/Season 06/纸牌屋 (2013) - S06E08 - 第 8 集.mkv",
+    "subtitle_content": "1\\n00:00:01,000 --> 00:00:03,000\\n翻译好的第一句\\n",
+    "format": "srt",
+    "language": "zh-CN"
+  }
+}`}
+  />
+
+  <h2 id="convert">简繁转换</h2>
+
+  <p>
+    已有繁体字幕想转成简体时，使用「繁转简」。转换是本地字符集映射，不调用外部服务：
+  </p>
+
+  <ul>
+    <li>保留原时间轴与序号，只替换文本内容</li>
+    <li><code>.srt</code> 与 <code>.ass</code> 都支持；ASS 会避开样式与特效行</li>
+    <li>转换目标文件按 <code>zh-CN</code> 命名，不会覆盖原繁中字幕</li>
+  </ul>
+
+  <NoteBox title="转换能力边界">
+    <p class="text-muted-foreground mt-2 text-sm leading-6">
+      简繁映射是<strong>字符级</strong>的，处理不了「台湾用语 → 大陆用语」这类词汇差异
+      （例如「影片」不会因为转换就变成「视频」）。需要本地化表达时，
+      用 Agent 走翻译流程更合适，参考 <a href="/docs/mcp/">MCP / Agent</a>。
+    </p>
+  </NoteBox>
+
+  <h2 id="internal">内嵌字幕</h2>
+
+  <p>
+    内嵌轨（常见于 mkv 的 <code>subrip</code> / <code>ass</code> 轨）需要 ffprobe 才能看到。
+    面板里会列出轨道的序号、编码、语言。取用方式有两种：
+  </p>
+
+  <ul>
+    <li><strong>网页</strong>：点「下载」时若选中内嵌轨，服务端用 ffmpeg 提取成临时文件再返回。</li>
+    <li><strong>MCP</strong>：<code>fetch_subtitle</code> 传 <code>video_path</code> 与 <code>internal_index</code>。</li>
+  </ul>
+
+  <p>
+    图像字幕（PGS、VobSub）也能探测到，但提取出来是图片，不能直接编辑或转换，
+    返回时会标记 <code>is_image=true</code>。需要文本字幕的场景只能另找外挂源。
+  </p>
+
+  <h2 id="performance">性能与缓存</h2>
+
+  <p>
+    字幕扫描不是每次都跑 ffprobe：如果 NFO 里已经有可信的
+    <code>&lt;streamdetails&gt;</code>（也就是刮削时记录过），就直接读 NFO；
+    否则才回退到探测视频。这就是为什么<strong>刮削时最好让 ffprobe 可用</strong>——
+    后续每一次字幕状态查询都会更快。
+  </p>
+
+  <h2 id="reset">重建媒体库记录</h2>
+
+  <p>
+    如果媒体库页显示的内容与实际磁盘不一致（比如手动删了文件、或者手动搬了目录），
+    可以在媒体库页点「刷新」。它会重新扫描各卡片的归档目录并同步 <code>medias</code> 表。
+    这个动作<strong>只读磁盘、不改文件</strong>。
+  </p>
+
+  <p>接下来是 <a href="/docs/search/">搜索下载</a>——把资源获取这一步也接进同一条流水线。</p>
+</DocsLayout>

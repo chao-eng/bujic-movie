@@ -1,0 +1,240 @@
+---
+import DocsLayout from '@/layouts/DocsLayout.astro'
+import CodeBlock from '@/components/site/CodeBlock.astro'
+import Screenshot from '@/components/site/Screenshot.astro'
+import NoteBox from '@/components/site/NoteBox.astro'
+---
+
+<DocsLayout
+  title="智能刮削"
+  description="文件名解析规则、TMDB 匹配、NFO 与海报生成、剧集与蓝光原盘的特殊处理。"
+>
+  <p>
+    刮削的输入是磁盘上的一个文件或目录，输出是一组媒体服务器认得的元数据文件。
+    中间有两步都是「猜」：先猜文件名里的片名与季集，再猜 TMDB 里对应哪一部。
+    理解这两步的规则，能让你在识别错误时知道该改哪里。
+  </p>
+
+  <h2 id="entry">入口</h2>
+
+  <p>
+    「智能刮削」页左侧是内置文件浏览器，可以从卡片根目录逐级进入。选中电影文件、剧集目录、
+    整部剧的根目录或蓝光原盘目录都可以。
+  </p>
+
+  <Screenshot src="/screenshots/scrape.webp" alt="智能刮削：文件浏览器与刮削设置" label="智能刮削" />
+
+  <p>右侧有三个关键选项：</p>
+
+  <ul>
+    <li>
+      <strong>媒体类型</strong>：默认是「自动识别」。如果目录结构不典型（比如剧集目录里混了花絮），
+      手动指定「电视剧」或「电影」可以避免识别错误。
+    </li>
+    <li>
+      <strong>覆盖已存在的元数据</strong>：关闭时，已存在且内容合法的 NFO 会被跳过；
+      开启则强制重写并重新下载图片。
+    </li>
+    <li>
+      <strong>目标路径</strong>：通常由文件浏览器带入，也可以直接粘贴绝对路径。
+    </li>
+  </ul>
+
+  <h2 id="parse">第一步：文件名解析</h2>
+
+  <p>
+    解析器把文件名切成 token，按已知的发布组约定识别年份、季集、分辨率、来源、编码。
+    下面这些形式都能正确识别：
+  </p>
+
+  <CodeBlock
+    label="常见命名"
+    lang="text"
+    code={`The.Matrix.1999.1080p.BluRay.x264-GROUP.mkv
+   → 片名 The Matrix / 年份 1999 / 分辨率 1080p / 电影
+
+纸牌屋.House.of.Cards.S06E08.1080p.WEB-DL.mkv
+   → 片名 纸牌屋 / 季 6 / 集 8 / 分辨率 1080p / 电视剧
+
+[诸神字幕组] 进击的巨人 第二季 第05话 [1080P][简繁外挂].mkv
+   → 中文季集识别：第二季 / 第05话 / 电视剧
+
+游戏.指环王.2021.S01E03.2160p.WEB-DL.HEVC.mkv
+   → 中文标题保留 / 季 1 / 集 3 / 4K
+
+Movie.2020.2160p.UHD.BluRay.REMUX.HDR.mkv
+   → 分辨率 2160p / 支持 UHD / REMUX / HDR 标记`}
+  />
+
+  <p>解析器会处理这些情况：</p>
+
+  <ul>
+    <li>中文的「第 N 季 / 第 N 话」与阿拉伯数字混写</li>
+    <li>季集写法的多种变体：<code>S01E02</code>、<code>1x02</code>、<code>S01E01E02</code>（多集连播）</li>
+    <li>中文片名与英文片名并存时，取有意义的那个</li>
+    <li>发布组、站点标签、<code>[</code> 方括号内容</li>
+    <li>识别的分辨率会带进目标文件名，例如 <code>片名 (2020) [2160p].mkv</code></li>
+  </ul>
+
+  <NoteBox title="解析错了怎么办">
+    <p class="text-muted-foreground mt-2 text-sm leading-6">
+      改文件名是最直接的办法——把片名和年份放到最前面，后面跟季集标记。
+      目录名同样参与解析，剧集根目录应该叫 <code class="bg-muted rounded px-1 font-mono text-[0.85em]">剧名 (年份)</code>，
+      季目录叫 <code class="bg-muted rounded px-1 font-mono text-[0.85em]">Season 01</code>
+      （或 <code class="bg-muted rounded px-1 font-mono text-[0.85em]">S01</code>、
+      <code class="bg-muted rounded px-1 font-mono text-[0.85em]">第一季</code>）。
+    </p>
+  </NoteBox>
+
+  <h2 id="match">第二步：TMDB 匹配</h2>
+
+  <p>
+    片名与年份会拿去 TMDB 搜索，取最匹配的一条详情。年份接近、名称完全匹配的优先；
+    剧集按 <code>tv</code> 端点搜，电影按 <code>movie</code> 端点搜。
+  </p>
+
+  <p>匹配失败通常有三种原因：</p>
+
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr>
+          <th>现象</th>
+          <th>原因</th>
+          <th>处理</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td>刮削完成但没有内容</td>
+          <td>片名解析成了发布组名字或无意义字符串</td>
+          <td>重命名文件后重试</td>
+        </tr>
+        <tr>
+          <td>抓到了别的片子</td>
+          <td>同名作品太多（翻拍、不同年份）</td>
+          <td>文件名里带上准确年份；或在界面上手动指定媒体类型</td>
+        </tr>
+        <tr>
+          <td>请求超时</td>
+          <td>TMDB 不可达</td>
+          <td>在「代理配置」里打开「刮削走代理」</td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+
+  <h2 id="output">会产出哪些文件</h2>
+
+  <h3 id="output-movie">电影</h3>
+
+  <CodeBlock
+    label="整理后的电影目录"
+    lang="text"
+    code={`/media/movies/
+└── 奥德赛 (2026)/
+    ├── 奥德赛 (2026) [1080p].mp4          # 视频（整理阶段生成）
+    ├── 奥德赛 (2026) [1080p].nfo          # 单文件 NFO
+    ├── movie.nfo                          # 兼容电影级 NFO
+    ├── poster.jpg                         # 海报
+    ├── folder.jpg                         # poster 的别名，兼容部分播放器
+    ├── backdrop.jpg                       # 背景图
+    ├── fanart.jpg                         # backdrop 的别名
+    └── 奥德赛 (2026) [1080p).zh-CN.srt    # 随行字幕（如有）`}
+  />
+
+  <p>
+    NFO 里包含标题、原名、年份、上映日期、评分、类型、简介、
+    <code>&lt;uniqueid type="tmdb"&gt;</code>、可选的演职人员与导演，
+    以及从 ffprobe 探测到的 <code>&lt;streamdetails&gt;</code>（分辨率、编码、音频、内嵌字幕轨）。
+  </p>
+
+  <h3 id="output-tv">电视剧</h3>
+
+  <CodeBlock
+    label="整理后的剧集目录"
+    lang="text"
+    code={`/media/tv/
+└── 翠鸟谋杀案 (2026)/
+    ├── tvshow.nfo                        # 整剧 NFO
+    ├── poster.jpg / fanart.jpg
+    └── Season 01/
+        ├── season.nfo                    # 季 NFO
+        ├── poster.jpg                    # 季海报
+        ├── 翠鸟谋杀案 (2026) - S01E01 - 大理石厅的邀请.mkv
+        ├── 翠鸟谋杀案 (2026) - S01E01 - 大理石厅的邀请.nfo
+        ├── 翠鸟谋杀案 (2026) - S01E01 - 大理石厅的邀请-thumb.jpg
+        └── … 其余集`}
+  />
+
+  <p>
+    每一集都会写自己的 NFO，并从 TMDB 的季详情里下载该集剧照（<code>-thumb.jpg</code>）。
+    集标题来自 TMDB 的本地化数据，所以中文库里看到的是中文集名。
+  </p>
+
+  <h2 id="lock">锁定 NFO</h2>
+
+  <p>
+    媒体服务器（尤其是 Jellyfin）在扫描时会重写自己认为过时的 NFO。开启「锁定 NFO 文件」后，
+    生成的 NFO 里会写入：
+  </p>
+
+  <CodeBlock label="movie.nfo 片段" lang="xml" code={`<lockdata>true</lockdata>`} />
+
+  <p>
+    这样媒体服务器只读不写。代价是当你手动改了 TMDB 数据想同步时，需要先在布吉影库里
+    重新刮削（覆盖模式），而不是让媒体服务器去更新。
+  </p>
+
+  <h2 id="bluray">蓝光原盘目录</h2>
+
+  <p>
+    <code>BDMV</code> 结构（<code>BDMV/STREAM/*.m2ts</code> 加上 <code>CERTIFICATE</code> 等目录）
+    不能按普通文件处理——拆开或改名会让原盘报废。整理与刮削都对此做了单独处理：
+  </p>
+
+  <ul>
+    <li>检测到 <code>BDMV</code> 时整目录按原结构搬运，不重命名内部文件。</li>
+    <li>目标位置使用规范化的剧集/电影目录，主播放列表指向的文件保持不变。</li>
+    <li>刮削在目录级写 NFO 与图片，而不是逐文件写。</li>
+  </ul>
+
+  <h2 id="auto">自动刮削的触发条件</h2>
+
+  <p>刮削可以在三个时机发生：</p>
+
+  <ul>
+    <li><strong>整理之后</strong>：「整理后自动触发刮削」开启（默认开启）时，整理成功即刮削。</li>
+    <li><strong>目录监听</strong>：卡片开启了监听时，新文件自动整理后同样会触发刮削。</li>
+    <li><strong>手动</strong>：在「智能刮削」页选路径提交。</li>
+  </ul>
+
+  <p>
+    刮削完成后会向已启用的通知渠道推送一条消息（标题 + 海报），并对卡片绑定的媒体库发起刷新。
+  </p>
+
+  <h2 id="ffprobe">ffprobe 依赖</h2>
+
+  <p>
+    NFO 里的 <code>&lt;streamdetails&gt;</code> 与内嵌字幕探测都依赖 <code>ffprobe</code>。
+    官方 Docker 镜像已经装了 ffmpeg（含 ffprobe）。手动部署时如果没有装，刮削本身仍然成功，
+    只是：
+  </p>
+
+  <ul>
+    <li>NFO 里没有分辨率/编码/音轨信息（媒体服务器可能显示为「未知」）</li>
+    <li>「字幕管理」里看不到内嵌字幕轨，只能看到外挂字幕</li>
+  </ul>
+
+  <CodeBlock
+    label="确认 ffprobe 可用"
+    tabs={[
+      { label: '宿主机', lang: 'bash', code: `ffprobe -version | head -1
+# ffprobe version 6.1.1 ...` },
+      { label: 'Docker', lang: 'bash', code: `docker compose exec bujic-movie ffprobe -version | head -1` },
+      { label: 'Debian/Ubuntu 安装', lang: 'bash', code: `sudo apt update && sudo apt install -y ffmpeg` },
+    ]}
+  />
+
+  <p>刮削细节看完，接着看<a href="/docs/transfer/">文件整理</a>——两者在自动化链路里是连在一起的。</p>
+</DocsLayout>

@@ -1,0 +1,36 @@
+---
+export interface Props {
+  src: string
+  alt: string
+  /** 标签，作为浏览器窗口标题 */
+  label?: string
+  width?: number
+  height?: number
+  /** 首屏图不懒加载，其余默认 lazy */
+  eager?: boolean
+  class?: string
+}
+
+const { src, alt, label = '布吉影库', width = 2000, height = 1250, eager = false, class: className = '' } = Astro.props
+---
+
+<figure class:list={['browser-frame', className]}>
+  <div class="border-border/70 flex items-center gap-2 border-b px-3 py-2">
+    <span class="flex gap-1.5" aria-hidden="true">
+      <span class="bg-muted-foreground/25 size-2.5 rounded-full"></span>
+      <span class="bg-muted-foreground/25 size-2.5 rounded-full"></span>
+      <span class="bg-muted-foreground/25 size-2.5 rounded-full"></span>
+    </span>
+    <span class="text-muted-foreground ml-1 truncate font-mono text-[0.7rem]">{label}</span>
+    <span class="bg-success/70 ml-auto size-1.5 rounded-full" aria-hidden="true"></span>
+  </div>
+  <img
+    src={src}
+    alt={alt}
+    width={width}
+    height={height}
+    loading={eager ? 'eager' : 'lazy'}
+    decoding="async"
+    class="bg-muted/40 block h-auto w-full"
+  />
+</figure>

@@ -1,0 +1,15 @@
+---
+export interface Props {
+  title: string
+  /** 可选的一行说明；正文用插槽 */
+  description?: string
+}
+
+const { title, description } = Astro.props
+---
+
+<div class="bg-muted/40 ring-foreground/10 rounded-lg px-4 py-3 ring-1">
+  <div class="text-sm font-medium">{title}</div>
+  {description && <p class="text-muted-foreground mt-1 text-sm leading-6">{description}</p>}
+  <slot />
+</div>

@@ -1,0 +1,274 @@
+---
+import DocsLayout from '@/layouts/DocsLayout.astro'
+import Screenshot from '@/components/site/Screenshot.astro'
+import NoteBox from '@/components/site/NoteBox.astro'
+---
+
+<DocsLayout
+  title="首次配置"
+  description="登录、改密码、填写 TMDB 密钥、建立媒体卡、绑定媒体服务器——从零到第一次成功刮削。"
+>
+  <p>
+    服务启动后打开 <code>http://服务器IP:8080</code> 会看到登录页。默认账号是
+    <code>admin</code>，默认密码 <code>admin123</code>。
+  </p>
+
+  <Screenshot src="/screenshots/login.webp" alt="布吉影库登录页" label="登录页" width={1200} height={800} />
+
+  <NoteBox title="密码在传输前就加密了">
+    <p class="text-muted-foreground mt-2 text-sm leading-6">
+      登录不是直接把密码发出去：前端先取一次性挑战密钥，用 AES-GCM 在浏览器里加密密码，
+      服务端解密后校验并签发 JWT（有效期 24 小时）。反向代理即使没上 HTTPS，密码也不会明文出现在请求体里。
+      但这不代表可以不用 HTTPS——JWT 本身还是要保护的。
+    </p>
+  </NoteBox>
+
+  <h2 id="first-steps">按顺序做完这五步</h2>
+
+  <h3 id="step-password">1. 修改登录密码</h3>
+
+  <p>
+    路径：「系统设置 → 安全」。填入当前密码、新密码、确认新密码，点「修改密码」。
+    新密码同样会在前端加密后提交。
+  </p>
+
+  <Screenshot src="/screenshots/settings-security.webp" alt="设置页的安全分区：修改登录密码" label="系统设置 · 安全" />
+
+  <h3 id="step-tmdb">2. 填写 TMDB API Key</h3>
+
+  <p>
+    这是让刮削工作的<strong>前置条件</strong>。没有密钥，按钮点下去只会报错，一张海报都不会有。
+    TMDB 的密钥免费申请：
+  </p>
+
+  <ol>
+    <li>注册并登录 <a href="https://www.themoviedb.org/" target="_blank" rel="noreferrer">themoviedb.org</a>。</li>
+    <li>进入 Settings → API，申请一个 Developer 用途的密钥。</li>
+    <li>复制 <strong>API Key（v3 auth）</strong> 那一串，粘贴到「设置 → 刮削配置 → TMDB API Key」。</li>
+    <li>同一个分区里可以选择刮削语言，默认已经是<strong>简体中文（zh-CN）</strong>。</li>
+  </ol>
+
+  <Screenshot
+    src="/screenshots/settings-mediaserver.webp"
+    alt="设置页：媒体服务器列表"
+    label="系统设置 · 媒体服务器"
+  />
+
+  <NoteBox title="访问不了 TMDB？">
+    <p class="text-muted-foreground mt-2 text-sm leading-6">
+      刮削走的是 <code class="bg-muted rounded px-1 font-mono text-[0.85em]">network.proxy</code>，
+      只有「刮削走代理」开关打开时才生效。国内网络通常需要打开它，并在「设置 → 代理配置」填一个可用代理。
+      索引器与刮削的代理开关是独立的，因为两者常需要不同的出口。
+    </p>
+  </NoteBox>
+
+  <h3 id="step-cards">3. 建立媒体卡</h3>
+
+  <p>
+    「媒体卡」是本系统组织媒体库的核心概念：一张卡片 = <strong>一个下载源目录 + 一个归档目录 + 一种媒体类型</strong>。
+    典型配置是两张卡：电影一张、电视剧一张。
+  </p>
+
+  <p>路径：「系统设置 → 目录管理 → 添加目录」。</p>
+
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr>
+          <th>字段</th>
+          <th>填什么</th>
+          <th>说明</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td>名称</td>
+          <td>电视剧整理 / 电影整理</td>
+          <td>只用于界面显示与 MCP 查询范围</td>
+        </tr>
+        <tr>
+          <td>媒体类型</td>
+          <td>电影 或 电视剧</td>
+          <td>决定命名规则与刮削方式</td>
+        </tr>
+        <tr>
+          <td>下载源</td>
+          <td><code>/downloads/tv</code></td>
+          <td>qBittorrent 的保存目录（容器内路径）</td>
+        </tr>
+        <tr>
+          <td>归档到</td>
+          <td><code>/media/tv</code></td>
+          <td>整理后的最终位置，Emby 从这里读</td>
+        </tr>
+        <tr>
+          <td>目录监听</td>
+          <td>开 / 关</td>
+          <td>开启后新文件落地即自动整理；不需要自动化的可以关掉</td>
+        </tr>
+        <tr>
+          <td>绑定媒体服务器</td>
+          <td>Jellyfin-电视剧</td>
+          <td>整理刮削完成后自动刷新这个库；不绑就不刷新</td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+
+  <p>其中一张需要设为「默认」——文件浏览器与整理任务的初始目录取自默认卡。</p>
+
+  <Screenshot src="/screenshots/settings-cards.webp" alt="目录管理：电视剧与电影两张媒体卡" label="系统设置 · 目录管理" />
+
+  <h3 id="step-transfer">4. 选整理策略</h3>
+
+  <p>路径：「系统设置 → 刮削配置 → 整理与刮削规则」。四项配置决定了后面的行为：</p>
+
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr>
+          <th>配置</th>
+          <th>推荐值</th>
+          <th>含义</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td>转移模式</td>
+          <td>硬链接（Link）</td>
+          <td>
+            <code>link</code> 不占额外空间、下载目录与媒体库可各自删除；<code>copy</code> 占双倍空间；
+            <code>move</code> 会移走源文件（做种会失败）；<code>softlink</code> 是符号链接，
+            媒体服务器可能不跟随。
+          </td>
+        </tr>
+        <tr>
+          <td>覆盖冲突模式</td>
+          <td>大文件覆盖小文件（Size）</td>
+          <td>
+            目标已存在时比较体积，只有源更大才覆盖。另有 <code>never</code> / <code>always</code> /
+            <code>latest</code>（只覆盖视频，保留字幕）。
+          </td>
+        </tr>
+        <tr>
+          <td>整理后自动触发刮削</td>
+          <td>开</td>
+          <td>整理完成立即刮削，否则需要手动去「智能刮削」页跑一遍</td>
+        </tr>
+        <tr>
+          <td>锁定 NFO 文件</td>
+          <td>看情况</td>
+          <td>
+            开启后 NFO 里写 <code>&lt;lockdata&gt;true&lt;/lockdata&gt;</code>，
+            媒体服务器扫描时不会覆盖你刮削的结果。
+          </td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+
+  <NoteBox title="硬链接有个前提">
+    <p class="text-muted-foreground mt-2 text-sm leading-6">
+      硬链接要求<strong>下载目录与媒体库目录在同一个文件系统</strong>。跨磁盘、跨挂载点（比如一个是
+      NFS 挂载、一个是本地盘）时硬链接会失败，需要改用 <code class="bg-muted rounded px-1 font-mono text-[0.85em]">copy</code>
+      或 <code class="bg-muted rounded px-1 font-mono text-[0.85em]">move</code>。
+    </p>
+  </NoteBox>
+
+  <h3 id="step-mediaserver">5. 绑定媒体服务器（可选但强烈建议）</h3>
+
+  <p>
+    路径：「系统设置 → 媒体服务器 → 添加媒体服务器」。支持 Emby、Jellyfin、Plex 三种。
+    填地址与 API Key 之后可以先「探测」，系统会列出该服务器上的媒体库，选一个作为刷新目标。
+  </p>
+
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr>
+          <th>服务器</th>
+          <th>地址示例</th>
+          <th>API Key 从哪拿</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td>Emby</td>
+          <td><code>http://192.168.1.10:8096</code></td>
+          <td>控制台 → 高级 → API 密钥</td>
+        </tr>
+        <tr>
+          <td>Jellyfin</td>
+          <td><code>http://192.168.1.10:8096</code></td>
+          <td>控制台 → 高级 → API 密钥</td>
+        </tr>
+        <tr>
+          <td>Plex</td>
+          <td><code>http://192.168.1.10:32400</code></td>
+          <td>需要一个 X-Plex-Token</td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+
+  <p>
+    刷新是<strong>防抖的</strong>：同一张卡 5 秒内的多次整理只发一次刷新请求，避免批量整理时把
+    媒体服务器打满。
+  </p>
+
+  <h2 id="first-run">第一次跑一遍，确认都通了</h2>
+
+  <p>做完上面五步，用一次手动整理来验证整条链路：</p>
+
+  <ol>
+    <li>把一部影片放进卡片的下载源目录（也可以用现有文件测试）。</li>
+    <li>打开「文件整理」页，在文件浏览器里选中它，右侧确认「媒体类型」和转移方式，点「提交整理任务」。</li>
+    <li>看下方的队列——进度会实时刷新，日志在「仪表盘」页同步滚动。</li>
+    <li>整理成功后去「媒体库」页，应该能看到海报；看不到就说明 TMDB 密钥或代理有问题。</li>
+  </ol>
+
+  <Screenshot src="/screenshots/transfer.webp" alt="文件整理页：文件浏览器、整理选项与队列" label="文件整理" />
+
+  <h2 id="checklist">配置检查清单</h2>
+
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr>
+          <th>检查项</th>
+          <th>在哪看</th>
+          <th>不对时的症状</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td>容器路径与设置里填的一致</td>
+          <td>设置 → 目录管理</td>
+          <td>文件浏览器打开是空的 / 整理报路径不存在</td>
+        </tr>
+        <tr>
+          <td>TMDB 密钥有效</td>
+          <td>设置 → 刮削配置</td>
+          <td>刮削失败、无海报</td>
+        </tr>
+        <tr>
+          <td>刮削出口能到 TMDB</td>
+          <td>设置 → 代理配置</td>
+          <td>日志里出现 <code>timeout</code> / <code>dial tcp</code></td>
+        </tr>
+        <tr>
+          <td>硬链接在同一文件系统</td>
+          <td>整理日志</td>
+          <td><code>invalid cross-device link</code></td>
+        </tr>
+        <tr>
+          <td>媒体服务器容器路径一致</td>
+          <td>Emby 里看海报</td>
+          <td>能看到标题和简介，图片全空</td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+
+  <p>下一步：<a href="/docs/scrape/">智能刮削</a> 讲清楚 NFO 与海报具体是怎么生成的。</p>
+</DocsLayout>

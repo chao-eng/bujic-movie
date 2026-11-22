@@ -1,0 +1,322 @@
+---
+import DocsLayout from '@/layouts/DocsLayout.astro'
+import CodeBlock from '@/components/site/CodeBlock.astro'
+import Screenshot from '@/components/site/Screenshot.astro'
+import NoteBox from '@/components/site/NoteBox.astro'
+
+// Webhook 模板里的花括号写在 frontmatter 里：放进模板表达式会被 Astro 的
+// 花括号匹配误判成表达式结束。
+const webhookSample = '{"title": "{title}", "body": "{text}"}'
+---
+
+<DocsLayout
+  title="系统设置详解"
+  description="九个设置分区逐项说明：刮削、目录、媒体服务器、下载器、通知、安全、MCP、搜索、代理。"
+>
+  <p>
+    所有业务配置都在网页里改，保存后写进 SQLite 并在内存中立刻生效——不需要重启，也不需要编辑文件。
+    配置优先级是：<strong>数据库设置 &gt; 环境变量 &gt; 内置默认值</strong>。
+  </p>
+
+  <Screenshot src="/screenshots/settings-search.webp" alt="系统设置的搜索下载分区" label="系统设置" />
+
+  <h2 id="scrape">刮削配置</h2>
+
+  <p>包含 TMDB 密钥、刮削语言与整理/刮削规则。</p>
+
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr>
+          <th>项</th>
+          <th>说明</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td>TMDB API Key</td>
+          <td>必需。用于搜索条目、拉取详情、下载图片</td>
+        </tr>
+        <tr>
+          <td>刮削首选语言</td>
+          <td>默认 <code>zh-CN</code>。决定片名、简介、集标题的语言</td>
+        </tr>
+        <tr>
+          <td>转移模式</td>
+          <td><code>link</code>（默认）/ <code>copy</code> / <code>move</code> / <code>softlink</code></td>
+        </tr>
+        <tr>
+          <td>覆盖冲突模式</td>
+          <td><code>size</code>（默认）/ <code>never</code> / <code>always</code> / <code>latest</code></td>
+        </tr>
+        <tr>
+          <td>整理后自动触发刮削</td>
+          <td>默认开。关闭后需要手动去「智能刮削」页提交</td>
+        </tr>
+        <tr>
+          <td>启用演职人员刮削</td>
+          <td>开启后 NFO 的 <code>&lt;actor&gt;</code> 段会写入主要演员（电影/剧集均生效）</td>
+        </tr>
+        <tr>
+          <td>锁定 NFO 文件</td>
+          <td>写入 <code>&lt;lockdata&gt;true&lt;/lockdata&gt;</code>，防止媒体服务器改写</td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+
+  <h2 id="cards">目录管理</h2>
+
+  <p>
+    管理「媒体卡」。每张卡是一个下载源 + 归档目录 + 媒体类型的组合，可以绑定媒体服务器、
+    开启目录监听。其中一张需要设为默认。
+  </p>
+
+  <Screenshot src="/screenshots/settings-cards.webp" alt="目录管理：两张卡片与绑定状态" label="目录管理" />
+
+  <p>
+    卡片同时是 MCP 查询的范围单位——<code>list_media_cards</code> 返回的就是这里配置的卡片。
+    所以命名的含义应该清晰（比如「电影整理」「电视剧整理」而不是「卡片1」）。
+  </p>
+
+  <h2 id="mediaserver">媒体服务器</h2>
+
+  <p>支持 Emby、Jellyfin、Plex。整理并刮削完成后，会对卡片绑定的库发起增量刷新。</p>
+
+  <Screenshot src="/screenshots/settings-mediaserver.webp" alt="媒体服务器：两台 Jellyfin 分别绑定电视剧与电影" label="媒体服务器" />
+
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr>
+          <th>项</th>
+          <th>说明</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td>类型</td>
+          <td><code>emby</code> / <code>jellyfin</code> / <code>plex</code></td>
+        </tr>
+        <tr>
+          <td>地址</td>
+          <td>带协议与端口，如 <code>http://10.0.8.2:8096</code></td>
+        </tr>
+        <tr>
+          <td>API Key / Token</td>
+          <td>加密落库，读取时只回掩码</td>
+        </tr>
+        <tr>
+          <td>刷新范围</td>
+          <td>选具体媒体库；留空表示刷新服务器的全部库</td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+
+  <p>
+    刷新是异步的，且按库做 5 秒防抖：批量整理 100 集只会触发少数几次刷新，
+    不会把媒体服务器压垮。
+  </p>
+
+  <h2 id="downloader">下载器</h2>
+
+  <p>
+    配置 qBittorrent 连接与分类映射。多个下载器可以并存，按优先级与可用性选择。
+  </p>
+
+  <Screenshot src="/screenshots/settings-downloader.webp" alt="下载器：qBittorrent 已启用" label="下载器" />
+
+  <ul>
+    <li>支持 qBittorrent 4.6 与 5.x 的登录协议差异。</li>
+    <li>分类列表是从 qBittorrent 实时读取的，映射目标不会填错。</li>
+    <li>连续失败会进入短暂的不可用状态（页面上会显示剩余毫秒），到期自动恢复。</li>
+    <li>下载器请求始终直连，不走代理。</li>
+  </ul>
+
+  <h2 id="notify">通知配置</h2>
+
+  <p>
+    十一种推送渠道，可按需启用多个。刮削完成时推送标题与海报；每个渠道都能单独发测试消息。
+  </p>
+
+  <Screenshot src="/screenshots/settings-notify.webp" alt="通知配置：渠道列表与新建" label="通知配置" />
+
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr>
+          <th>渠道</th>
+          <th>需要填</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr><td>企业微信机器人</td><td>机器人 Key（webhook 里的 key 参数）</td></tr>
+        <tr><td>钉钉机器人</td><td>Webhook 与加签密钥</td></tr>
+        <tr><td>飞书机器人</td><td>Webhook 地址</td></tr>
+        <tr><td>Server 酱 / Server 酱 3</td><td>SendKey</td></tr>
+        <tr><td>Bark</td><td>设备地址与 Key（支持自建服务器）</td></tr>
+        <tr><td>PushPlus</td><td>Token</td></tr>
+        <tr><td>PushDeer</td><td>服务器地址与 Key</td></tr>
+        <tr><td>Gotify</td><td>服务器地址与 App Token</td></tr>
+        <tr><td>ntfy</td><td>服务器地址与 Topic（支持自建）</td></tr>
+        <tr><td>自定义 Webhook</td><td>URL、方法、可自定义的 JSON 模板</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <p>
+    自定义 Webhook 的 URL 与请求体都支持两个占位变量：<code>&#123;title&#125;</code>（媒体标题）
+    与 <code>&#123;text&#125;</code>（正文）。
+  </p>
+
+  <CodeBlock
+    label="自定义 Webhook 请求体示例"
+    lang="json"
+    code={webhookSample}
+  />
+
+  <h2 id="security">安全</h2>
+
+  <p>
+    只做一件事：改登录密码。填当前密码、新密码、确认新密码。三个字段都会在前端加密后提交，
+    服务端校验旧密码通过才更新。
+  </p>
+
+  <p>
+    账号本身（用户名）由 <code>server.username</code> 决定，默认 <code>admin</code>，
+    可通过环境变量修改。
+  </p>
+
+  <h2 id="mcp">MCP / API Key</h2>
+
+  <p>
+    创建与管理部门 API Key，查看调用记录。这一页的细节在<a href="/docs/mcp/">MCP / Agent</a> 里展开。
+  </p>
+
+  <ul>
+    <li>端点地址直接显示在页面上，可复制。</li>
+    <li>明文密钥只在创建响应里出现一次。</li>
+    <li>支持禁用/启用、删除、按 Key 查看调用记录。</li>
+  </ul>
+
+  <h2 id="search">搜索下载</h2>
+
+  <p>控制搜索模块的开关与上游定义源。</p>
+
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr>
+          <th>项</th>
+          <th>说明</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td>启用搜索下载</td>
+          <td>关闭后除 <code>/search/status</code> 外所有搜索接口返回 404（UI 会提示原因）</td>
+        </tr>
+        <tr>
+          <td>定义源</td>
+          <td>默认 <code>https://indexers.prowlarr.com</code></td>
+        </tr>
+        <tr>
+          <td>定义版本</td>
+          <td>默认 <code>12</code>，与上游目录结构对应</td>
+        </tr>
+        <tr>
+          <td>自动同步</td>
+          <td>开启时启动后按需同步定义库；失败会保留本地已有定义</td>
+        </tr>
+        <tr>
+          <td>片名别名解析</td>
+          <td>开启后中文片名会先经 TMDB 解析成原名与别名再检索</td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+
+  <NoteBox title="定义库不在仓库里">
+    <p class="text-muted-foreground mt-2 text-sm leading-6">
+      上游定义文件是 GPL 授权的独立作品。本仓库只实现了解释器，运行时才从定义源同步，
+      或者由你导入本地 YAML。所以离线环境下需要自己准备定义文件。
+    </p>
+  </NoteBox>
+
+  <h2 id="proxy">代理配置</h2>
+
+  <p>
+    一个地址 + 两个开关。这样设计是因为刮削和搜索常常需要不同的出口：
+    TMDB 可能需要代理，而某些 PT 站点反而必须直连（它们校验来源 IP）。
+  </p>
+
+  <Screenshot src="/screenshots/settings-proxy.webp" alt="代理配置：全局地址与两个独立开关" label="代理配置" />
+
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr>
+          <th>项</th>
+          <th>默认</th>
+          <th>说明</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td>代理地址</td>
+          <td>空</td>
+          <td>
+            支持 <code>http://</code>、<code>https://</code>、<code>socks5://</code>、
+            <code>socks5h://</code>。留空直连
+          </td>
+        </tr>
+        <tr>
+          <td>刮削走代理</td>
+          <td>关</td>
+          <td>TMDB 元数据与海报/背景图下载</td>
+        </tr>
+        <tr>
+          <td>搜索走代理</td>
+          <td>开</td>
+          <td>定义源同步与站点搜索；单个站点仍可单独覆盖</td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+
+  <p>
+    保存即生效：每次出站请求都读当前的实时值，不需要重启。「保存并测试代理」会通过该代理
+    访问一次定义源，用来确认代理可用。
+  </p>
+
+  <NoteBox title="socks5h 与 socks5 的区别">
+    <p class="text-muted-foreground mt-2 text-sm leading-6">
+      <code class="bg-muted rounded px-1 font-mono text-[0.85em]">socks5</code> 在本机解析域名，
+      <code class="bg-muted rounded px-1 font-mono text-[0.85em]">socks5h</code> 把域名交给代理解析。
+      索引站常被 DNS 污染，用 <code class="bg-muted rounded px-1 font-mono text-[0.85em]">socks5h</code> 更稳。
+    </p>
+  </NoteBox>
+
+  <h2 id="hot">哪些配置需要重启</h2>
+
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr>
+          <th>配置</th>
+          <th>保存即生效</th>
+          <th>需要重启</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr><td>TMDB 密钥、语言</td><td>✅</td><td>—</td></tr>
+        <tr><td>转移模式、覆盖策略</td><td>✅（下一个任务生效）</td><td>—</td></tr>
+        <tr><td>媒体卡、媒体服务器、通知渠道</td><td>✅</td><td>—</td></tr>
+        <tr><td>代理地址与两个开关</td><td>✅</td><td>—</td></tr>
+        <tr><td>搜索定义源与开关</td><td>✅</td><td>—</td></tr>
+        <tr><td>监听端口、密钥、数据库路径</td><td>—</td><td>✅ 环境变量</td></tr>
+      </tbody>
+    </table>
+  </div>
+</DocsLayout>

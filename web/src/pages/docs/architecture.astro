@@ -1,0 +1,284 @@
+---
+import DocsLayout from '@/layouts/DocsLayout.astro'
+import CodeBlock from '@/components/site/CodeBlock.astro'
+import NoteBox from '@/components/site/NoteBox.astro'
+---
+
+<DocsLayout
+  title="架构与接口"
+  description="分层结构、数据表、REST 接口、MCP 工具、凭据加密与实时日志通道。"
+>
+  <p>
+    这一页面向想二次开发、写自动化脚本、或者排查异常行为的读者。日常使用不需要看这里。
+  </p>
+
+  <h2 id="layers">分层</h2>
+
+  <CodeBlock
+    label="调用方向"
+    lang="text"
+    code={`Controller (Gin handlers)
+      ↓
+Service (transfer / scrape / search / subtitle / notify …)
+      ↓
+Repository (GORM on SQLite)
+      ↓
+Storage 抽象（本地实现，可扩展到其它后端）
+      ↓
+pkg/*（tmdb / nfo / parser / mediaserver / notify / mediainfo）`}
+  />
+
+  <p>
+    依赖装配是<strong>手工 DI</strong>，全部集中在 <code>internal/router/router.go</code> 的
+    <code>SetupRouter</code>。读代码从这里开始，能一次看清有哪些仓储、服务、控制器。
+  </p>
+
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr>
+          <th>目录</th>
+          <th>内容</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr><td><code>internal/controller/</code></td><td>HTTP 控制器（REST、日志 SSE、MCP Key 管理）</td></tr>
+        <tr><td><code>internal/service/</code></td><td>业务服务；搜索相关在 <code>search/</code>、<code>connector/</code>、<code>cardigann/</code></td></tr>
+        <tr><td><code>internal/repository/</code></td><td>GORM 仓储，各自 AutoMigrate 自己的实体</td></tr>
+        <tr><td><code>internal/model/entity/</code></td><td>实体定义</td></tr>
+        <tr><td><code>internal/mediautil/</code></td><td>REST 与 MCP 共享的字幕/聚合/路径白名单逻辑</td></tr>
+        <tr><td><code>internal/storage/</code></td><td>存储抽象 + 本地实现</td></tr>
+        <tr><td><code>internal/mcp/</code></td><td>MCP 网关：工具注册、鉴权、调用记录</td></tr>
+        <tr><td><code>pkg/</code></td><td>可复用包：tmdb、nfo、parser、fileutil、mediainfo、mediaserver、notify、sat</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <h2 id="tables">数据表</h2>
+
+  <p>
+    迁移是分散式的：每个仓储构造时对自己的实体执行 AutoMigrate。新增能力应当<strong>只加新表</strong>，
+    不改既有表——搜索模块的八张 <code>search_*</code> 表就是全新增。
+  </p>
+
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr>
+          <th>表</th>
+          <th>内容</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr><td><code>medias</code></td><td>已刮削的媒体记录（标题、TMDB ID、路径、海报路径、类型）</td></tr>
+        <tr><td><code>media_cards</code></td><td>媒体卡：下载源、归档目录、类型、是否监听、绑定库</td></tr>
+        <tr><td><code>media_libraries</code></td><td>媒体服务器：类型、地址、加密 API Key、刷新范围</td></tr>
+        <tr><td><code>transfer_histories</code></td><td>整理历史：源/目标路径、状态、体积、说明</td></tr>
+        <tr><td><code>system_settings</code></td><td>键值配置（网页里保存的就是这里）</td></tr>
+        <tr><td><code>notify_channels</code></td><td>通知渠道与配置 JSON</td></tr>
+        <tr><td><code>mcp_api_keys</code></td><td>API Key（盐:哈希）、备注、启停、最近使用时间</td></tr>
+        <tr><td><code>mcp_call_records</code></td><td>调用记录（有界缓冲）、脱敏入参、耗时、结果大小</td></tr>
+        <tr><td><code>search_indexer_definitions</code></td><td>同步或导入的 Cardigann 定义（含原始 YAML 与哈希）</td></tr>
+        <tr><td><code>search_indexers</code></td><td>已添加站点：连接器类型、加密凭据、语言、代理、优先级</td></tr>
+        <tr><td><code>search_indexer_status</code></td><td>站点健康：最近成功、连续失败、冷却、平均耗时</td></tr>
+        <tr><td><code>search_indexer_sessions</code></td><td>站点登录会话 Cookie（加密）</td></tr>
+        <tr><td><code>search_download_clients</code></td><td>下载器配置（加密凭据、分类、策略）</td></tr>
+        <tr><td><code>search_client_categories</code></td><td>源分类 → 下载器分类的映射</td></tr>
+        <tr><td><code>search_download_records</code></td><td>推送记录（固化当时的站点与下载器名称）</td></tr>
+        <tr><td><code>search_title_aliases</code></td><td>片名别名缓存（原名 + 各地别名 + 确认状态）</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <h2 id="auth">鉴权</h2>
+
+  <h3 id="human">人：JWT</h3>
+
+  <ol>
+    <li><code>GET /api/v1/auth/login-key</code> 取一次性挑战 key 与 key_id。</li>
+    <li>前端用 AES-GCM 在浏览器里加密密码。</li>
+    <li><code>POST /api/v1/auth/login</code> 提交用户名、加密后的密码、<code>key_id</code> 与 <code>iv</code>。</li>
+    <li>服务端解密校验，签发 24 小时 JWT。</li>
+  </ol>
+
+  <p>
+    公开路由只有 <code>/health</code>、<code>/auth/*</code> 与 <code>/mcp</code>；
+    其余全部在 <code>AuthRequired()</code> 之后，包括 <code>/logs/stream</code>——
+    日志里会出现服务器绝对路径和影片名，不能裸奔。JWT 也接受
+    <code>?token=</code> 查询参数，便于脚本调用，但不要把 token 拼进
+    <code>&lt;img src&gt;</code> 这类 URL。
+  </p>
+
+  <h3 id="agent">Agent：API Key</h3>
+
+  <p>
+    MCP 端点只接受 <code>Authorization: Bearer &lt;API_KEY&gt;</code>，网关内部校验，
+    不参与 JWT 中间件。管理 REST 反过来不接受 API Key。两条通道隔离是硬性规则。
+  </p>
+
+  <h2 id="rest">REST 接口速查</h2>
+
+  <p>统一响应结构：</p>
+
+  <CodeBlock
+    label="响应"
+    lang="json"
+    code={`{ "code": 0, "msg": "success", "data": { } }
+{ "code": 40001, "msg": "Path is required" }`}
+  />
+
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr>
+          <th>方法</th>
+          <th>路径</th>
+          <th>说明</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr><td>GET</td><td><code>/api/v1/health</code></td><td>健康检查（公开）</td></tr>
+        <tr><td>GET</td><td><code>/api/v1/dashboard/stats</code></td><td>仪表盘统计</td></tr>
+        <tr><td>GET</td><td><code>/api/v1/logs/stream</code></td><td>SSE 日志流（支持 Last-Event-ID 续传）</td></tr>
+        <tr><td>GET</td><td><code>/api/v1/logs/recent</code></td><td>最近日志快照</td></tr>
+        <tr><td>POST</td><td><code>/api/v1/scrape</code></td><td>提交刮削任务</td></tr>
+        <tr><td>POST</td><td><code>/api/v1/transfer</code></td><td>提交整理任务</td></tr>
+        <tr><td>GET</td><td><code>/api/v1/transfer/queue</code></td><td>当前队列</td></tr>
+        <tr><td>GET</td><td><code>/api/v1/transfer/history</code></td><td>整理历史（分页）</td></tr>
+        <tr><td>GET</td><td><code>/api/v1/media</code></td><td>媒体列表（按卡片聚合）</td></tr>
+        <tr><td>GET</td><td><code>/api/v1/media/subtitles</code></td><td>某视频的字幕明细</td></tr>
+        <tr><td>GET</td><td><code>/api/v1/media/episodes</code></td><td>某季的集列表</td></tr>
+        <tr><td>POST</td><td><code>/api/v1/subtitles/upload</code></td><td>上传字幕</td></tr>
+        <tr><td>GET</td><td><code>/api/v1/media/image</code></td><td>读取本地海报（需 Authorization 头）</td></tr>
+        <tr><td>GET</td><td><code>/api/v1/settings</code></td><td>读取设置</td></tr>
+        <tr><td>PUT</td><td><code>/api/v1/settings</code></td><td>保存设置</td></tr>
+        <tr><td>PUT</td><td><code>/api/v1/settings/password</code></td><td>改密码</td></tr>
+        <tr><td>GET/POST/PUT/DELETE</td><td><code>/api/v1/cards</code></td><td>媒体卡 CRUD，<code>/cards/default</code> 取默认卡</td></tr>
+        <tr><td>GET/POST/PUT/DELETE</td><td><code>/api/v1/libraries</code></td><td>媒体服务器 CRUD，含 <code>/probe</code>、<code>/test</code>、<code>/refresh</code></td></tr>
+        <tr><td>GET/POST/PUT/DELETE</td><td><code>/api/v1/notify-channels</code></td><td>通知渠道 CRUD，含 <code>/types</code> 与 <code>/test</code></td></tr>
+        <tr><td>GET/POST/PUT</td><td><code>/api/v1/mcp/api-keys</code></td><td>API Key 管理（JWT）</td></tr>
+        <tr><td>GET</td><td><code>/api/v1/mcp/call-records</code></td><td>全部调用记录</td></tr>
+        <tr><td>GET</td><td><code>/api/v1/files</code></td><td>文件浏览器（列目录）</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <p>搜索模块的接口都挂在 <code>/api/v1/search/*</code> 下，模块关闭时除 <code>/status</code> 外返回 404。</p>
+
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr>
+          <th>路径</th>
+          <th>说明</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr><td><code>GET /search/status</code></td><td>模块状态（关闭时也能访问，用来解释原因）</td></tr>
+        <tr><td><code>GET /search/definitions</code></td><td>模板库列表</td></tr>
+        <tr><td><code>POST /search/definitions/sync</code></td><td>从上游同步定义</td></tr>
+        <tr><td><code>POST /search/definitions/import</code></td><td>导入本地 YAML</td></tr>
+        <tr><td><code>GET /search/indexers</code></td><td>已添加站点</td></tr>
+        <tr><td><code>POST /search/indexers</code></td><td>添加站点</td></tr>
+        <tr><td><code>POST /search/indexers/:id/test</code></td><td>测试单个站点</td></tr>
+        <tr><td><code>POST /search/indexers/test-all</code></td><td>测试全部</td></tr>
+        <tr><td><code>POST /search/indexers/:id/refresh-definition</code></td><td>刷新该站点的定义快照</td></tr>
+        <tr><td><code>POST /search/query</code></td><td>聚合搜索</td></tr>
+        <tr><td><code>POST /search/title-candidates</code></td><td>片名候选（TMDB）</td></tr>
+        <tr><td><code>POST /search/title-confirm</code></td><td>确认片名映射</td></tr>
+        <tr><td><code>POST /search/grab</code></td><td>推送到下载器</td></tr>
+        <tr><td><code>GET /search/tasks</code></td><td>下载任务</td></tr>
+        <tr><td><code>GET /search/records</code></td><td>推送记录</td></tr>
+        <tr><td><code>GET /search/health</code></td><td>站点健康汇总</td></tr>
+        <tr><td><code>POST /search/cookie-import</code></td><td>浏览器扩展导入会话</td></tr>
+        <tr><td><code>GET /search/metrics</code></td><td>搜索指标</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <h2 id="sse">实时日志通道</h2>
+
+  <p>
+    用的是 SSE，不是 WebSocket——日志是单向只读流，双向握手只会增加失败面。
+    几个实现细节值得知道：
+  </p>
+
+  <ul>
+    <li>每条消息带自增 <code>id</code>；客户端重连时用 <code>Last-Event-ID</code> 只补断线期间缺失的行。</li>
+    <li>服务端保留最近 200 行用于重放，超出就丢弃最旧的。</li>
+    <li>每 15 秒发一次 <code>heartbeat</code>：既保活，也让客户端能识别「TCP 还在但对端已死」。</li>
+    <li>服务端重启后序号从 1 重来，<code>ready</code> 事件带 <code>last_seq</code> 供客户端判断这种倒退。</li>
+  </ul>
+
+  <p>
+    反向代理必须关掉这个路径的响应缓冲，否则日志会攒着不吐。配置示例见
+    <a href="/docs/deploy/#reverse-proxy">部署 · 反向代理</a>。
+  </p>
+
+  <h2 id="crypto">凭据加密</h2>
+
+  <p>
+    所有敏感值用 AES-256-GCM 加密后落库，密钥由
+    <code>server.secret_key</code> 域分离派生。接口读回时只返回掩码：
+  </p>
+
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr>
+          <th>字段</th>
+          <th>写入</th>
+          <th>读取</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr><td>站点 API Key / 密码</td><td>明文收、加密存</td><td>只回 <code>api_key_mask</code></td></tr>
+        <tr><td>站点额外 Cookie</td><td>加密存</td><td>只回 Cookie 名列表</td></tr>
+        <tr><td>下载器密码</td><td>加密存</td><td>只回 <code>password_mask</code></td></tr>
+        <tr><td>媒体服务器 API Key</td><td>加密存</td><td>只回掩码</td></tr>
+        <tr><td>MCP API Key</td><td>只存盐:哈希</td><td>无明文，仅创建时返回一次</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <p>
+    更新时留空表示「保持原值」，不会把空串写进去；需要清除则显式提交约定的清除标记。
+    这条规则避免了「编辑表单没改动却把密码清空」的误操作。
+  </p>
+
+  <h2 id="budget">并发与超时预算</h2>
+
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr>
+          <th>项</th>
+          <th>默认</th>
+          <th>含义</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr><td>全局并发搜索</td><td>3</td><td>同时进行的搜索请求数</td></tr>
+        <tr><td>单次站点扇出</td><td>40</td><td>一次搜索最多并发查询多少个站点</td></tr>
+        <tr><td>单站点超时</td><td>8s</td><td>超过即算该站点失败</td></tr>
+        <tr><td>全量搜索时限</td><td>15s</td><td>到点就返回已有结果，不等慢站点</td></tr>
+        <tr><td>同站请求间隔</td><td>2s</td><td>默认最小间隔，可按站点调整</td></tr>
+        <tr><td>MCP 工具并发</td><td>8</td><td>信号量控制，避免 ffprobe 被并发打爆</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <p>
+    响应体积上限 20 MB。每一跳重定向都会重新校验主机白名单，防止被重定向到内网地址。
+  </p>
+
+  <NoteBox title="二次开发的约定">
+    <p class="text-muted-foreground mt-2 text-sm leading-6">
+      新增能力按「实体 → 仓储 → 服务 → 控制器 → router 装配」的顺序加；实体 AutoMigrate
+      放在仓储构造器里。出站请求必须走
+      <code class="bg-muted rounded px-1 font-mono text-[0.85em]">internal/service/httpclient</code>，
+      不要裸用 <code class="bg-muted rounded px-1 font-mono text-[0.85em]">http.Client</code>——
+      代理、限速、白名单都在那一层。
+    </p>
+  </NoteBox>
+</DocsLayout>

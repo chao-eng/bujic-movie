@@ -1,0 +1,273 @@
+---
+import DocsLayout from '@/layouts/DocsLayout.astro'
+import CodeBlock from '@/components/site/CodeBlock.astro'
+import Screenshot from '@/components/site/Screenshot.astro'
+import NoteBox from '@/components/site/NoteBox.astro'
+---
+
+<DocsLayout
+  title="文件整理"
+  description="四种转移模式的取舍、冲突策略、字幕随行规则、目录监听与队列。"
+>
+  <p>
+    整理做两件事：把文件<strong>改名</strong>成媒体服务器认得的规范形式，把它<strong>放到</strong>
+    归档目录下正确的位置。这个动作可以是手动的，也可以由目录监听自动触发。
+  </p>
+
+  <Screenshot src="/screenshots/transfer.webp" alt="文件整理页：文件浏览器、整理选项、队列" label="文件整理" />
+
+  <h2 id="modes">四种转移模式</h2>
+
+  <p>模式决定了「归档之后，源文件还在不在、占不占两份空间」。这是最容易出错的一个选择。</p>
+
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr>
+          <th>模式</th>
+          <th>行为</th>
+          <th>空间</th>
+          <th>适合</th>
+          <th>注意</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td><code>copy</code> 复制</td>
+          <td>复制到归档目录，源文件保留</td>
+          <td>双倍</td>
+          <td>想保留做种、或跨磁盘</td>
+          <td>硬盘占用最快翻倍</td>
+        </tr>
+        <tr>
+          <td><code>move</code> 移动</td>
+          <td>重命名到归档目录，源文件消失</td>
+          <td>零额外</td>
+          <td>不需要继续做种的场景</td>
+          <td><strong>qBittorrent 的种子会变成「文件丢失」</strong></td>
+        </tr>
+        <tr>
+          <td><code>link</code> 硬链接</td>
+          <td>同一份数据两个名字</td>
+          <td>零额外</td>
+          <td>默认推荐，需继续做种</td>
+          <td>必须同一文件系统；删任意一个名字另一个仍可读</td>
+        </tr>
+        <tr>
+          <td><code>softlink</code> 软链接</td>
+          <td>建一个指向源文件的符号链接</td>
+          <td>零额外</td>
+          <td>跨磁盘但空间不够</td>
+          <td>部分播放器/媒体服务器不跟随软链；源文件删了就断</td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+
+  <NoteBox title="硬链接为什么是最优解">
+    <p class="text-muted-foreground mt-2 text-sm leading-6">
+      硬链接不复制数据，只是让同一个 inode 多一个目录项。所以媒体库里看到的是独立文件，
+      qBittorrent 那边也仍然有完整的种子文件，两边各删一个都不会影响另一个，
+      而磁盘只占用一份。代价是<strong>必须同一个文件系统</strong>（同一个挂载点，不是同一块盘就够）。
+    </p>
+  </NoteBox>
+
+  <CodeBlock
+    label="验证是否同文件系统"
+    lang="bash"
+    code={`stat -c '%d %n' /downloads /media
+# 两个设备号相同 → 可以硬链接
+# 不同 → 只能 copy / move / softlink`}
+  />
+
+  <h2 id="overwrite">冲突策略</h2>
+
+  <p>
+    目标位置已经有同名文件时，按「覆盖冲突模式」决定。默认是 <code>size</code>。
+  </p>
+
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr>
+          <th>模式</th>
+          <th>规则</th>
+          <th>使用场景</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td><code>size</code></td>
+          <td>源文件体积大于目标才覆盖，否则跳过</td>
+          <td>默认，防止用低码率版本压掉已收藏的高码率</td>
+        </tr>
+        <tr>
+          <td><code>never</code></td>
+          <td>目标存在就报错跳过</td>
+          <td>库已经整理干净，只补充新片</td>
+        </tr>
+        <tr>
+          <td><code>always</code></td>
+          <td>直接删掉目标再写入</td>
+          <td>确定新版本一定更好（比如洗版）</td>
+        </tr>
+        <tr>
+          <td><code>latest</code></td>
+          <td>只覆盖视频文件，字幕和 NFO 等其他文件保留</td>
+          <td>换视频源但想保留已调好的字幕</td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+
+  <h2 id="naming">命名规则</h2>
+
+  <p>目标路径由「片名 + 年份 + 分辨率 + 季集」按固定模板拼出来，不需要你记格式：</p>
+
+  <CodeBlock
+    label="电影"
+    lang="text"
+    code={`归档根/
+└── 奥德赛 (2026)/
+    └── 奥德赛 (2026) [1080p].mp4
+
+# 无年份 → 只留片名
+归档根/
+└── 奥德赛/
+    └── 奥德赛 [1080p].mp4
+
+# 无分辨率 → 去掉方括号部分
+归档根/
+└── 奥德赛 (2026)/
+    └── 奥德赛 (2026).mp4`}
+  />
+
+  <CodeBlock
+    label="电视剧"
+    lang="text"
+    code={`归档根/
+└── 纸牌屋 (2013)/
+    └── Season 01/
+        └── 纸牌屋 (2013) - S01E01 - 第 1 集.mkv
+
+# 季目录固定两位数字：Season 01 … Season 12
+# 集标题来自刮削阶段拿到的 TMDB 集名`}
+  />
+
+  <h2 id="subs">字幕随行</h2>
+
+  <p>
+    整理时会扫描源目录里与视频同名前缀的字幕，按识别出的语言重命名成
+    <code>视频名.语言.格式</code> 的形式：
+  </p>
+
+  <CodeBlock
+    label="字幕重命名"
+    lang="text"
+    code={`源：
+  House.of.Cards.S06E08.1080p.mkv
+  House.of.Cards.S06E08.1080p.chs.srt
+  House.of.Cards.S06E08.1080p.eng.ass
+
+归档：
+  纸牌屋 (2013) - S06E08 - 第 8 集.mkv
+  纸牌屋 (2013) - S06E08 - 第 8 集.zh-CN.srt
+  纸牌屋 (2013) - S06E08 - 第 8 集.en.ass`}
+  />
+
+  <p>
+    语言标签会被规范化成 <code>zh-CN</code>、<code>zh-TW</code>、<code>en</code>、<code>ja</code>
+    这类 IETF 形式；认不出来的保留 <code>unknown</code> 并去掉语言段。
+    这套命名同时是「字幕管理」页面识别外挂字幕的依据。
+  </p>
+
+  <h2 id="filter">小文件过滤</h2>
+
+  <p>
+    目录整理时会跳过小于阈值的视频（默认 50 MB，可在 <code>transfer.min_file_size_mb</code>
+    配置）。这主要用来滤掉样本文件、预告片和下载器生成的占位文件。
+  </p>
+
+  <p>同时会跳过常见的非视频文件与临时文件（下载中的 <code>.!qB</code> 等）。</p>
+
+  <h2 id="watch">目录监听</h2>
+
+  <p>
+    每张媒体卡可以单独开启「目录监听」。开启后：
+  </p>
+
+  <ol>
+    <li>服务启动时递归订阅该卡的下载源目录（含子目录）。</li>
+    <li>启动时会先扫描一遍已有文件，把存量补进队列。</li>
+    <li>新文件写入后有一段<strong>防抖等待</strong>，避免在文件还没写完时就开始整理。</li>
+    <li>整理成功后按配置触发刮削与媒体库刷新。</li>
+  </ol>
+
+  <NoteBox title="监听失败的常见原因">
+    <p class="text-muted-foreground mt-2 text-sm leading-6">
+      fsnotify 在部分网络文件系统（SMB/NFS）上不可靠；Linux 还有 inotify 句柄上限，
+      目录层级特别深时会报 <code class="bg-muted rounded px-1 font-mono text-[0.85em]">too many open files</code>。
+      遇到这类情况建议关掉监听、改用外部工具（如 qBittorrent 的「运行外部程序」）在下载完成时调用整理接口。
+    </p>
+  </NoteBox>
+
+  <h2 id="queue">队列与历史</h2>
+
+  <p>
+    提交的任务进入后台工作池，队列状态实时显示在页面下方。每条任务有
+    <code>queued → running → success / failed</code> 状态与百分比进度；
+    整理日志同时进「仪表盘」页的实时日志流。
+  </p>
+
+  <p>
+    每次成功或失败的整理都会写入 <code>transfer_histories</code> 表，记录源路径、目标路径、
+    结果、体积与说明。仪表盘的「整理成功率」就是从这里统计的。
+  </p>
+
+  <h2 id="bluray">蓝光原盘</h2>
+
+  <p>
+    当源是一个包含 <code>BDMV</code> 的目录时，整理不会拆散它：
+  </p>
+
+  <ul>
+    <li>检测到 <code>BDMV</code> 时整目录搬运，不重命名内部文件（改名会让播放列表失效）。</li>
+    <li>目标位置使用规范化的电影/剧集目录；剧集按 <code>Season XX</code> 组织，盘号目录（<code>Disc 1</code>、<code>D2</code>）统一成 <code>Disc 01</code> 形式。</li>
+    <li>刮削在目录级写 NFO 与图片，而不是逐文件写。</li>
+    <li>
+      转移<b>只区分 move 与其它</b>：<code>move</code> 走整目录移动，其余模式（含 <code>link</code>）
+      实际都是复制——蓝光目录内部文件无法用硬链接表达。
+    </li>
+  </ul>
+
+  <h2 id="api">用接口触发整理</h2>
+
+  <p>自动化场景下可以直接调 REST 接口，用 JWT 鉴权：</p>
+
+  <CodeBlock
+    label="提交整理任务"
+    lang="bash"
+    code={`# 1. 拿 token（登录时密码需要在浏览器端加密，脚本调用建议直接用已知 JWT）
+TOKEN="<你的 JWT>"
+
+# 2. 提交任务（字段是 path，不是 source_path）
+curl -s -X POST http://localhost:8080/api/v1/transfer \\
+  -H "Authorization: Bearer $TOKEN" \\
+  -H "Content-Type: application/json" \\
+  -d '{
+    "path": "/downloads/tv/House.of.Cards.S06",
+    "mode": "link",
+    "overwrite_mode": "size",
+    "media_type": "tv"
+  }'
+
+# 3. 查队列
+curl -s http://localhost:8080/api/v1/transfer/queue \\
+  -H "Authorization: Bearer $TOKEN"`}
+  />
+
+  <p>
+    完整字段与返回结构见<a href="/docs/architecture/#rest">架构与接口</a>。
+    整理之后就是刮削，规则在<a href="/docs/scrape/">智能刮削</a>。
+  </p>
+</DocsLayout>

@@ -1,0 +1,9 @@
+# 构建产物与依赖
+node_modules/
+dist/
+.astro/
+
+# 本地缓存
+.vite/
+*.log
+.DS_Store

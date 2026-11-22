@@ -1,0 +1,399 @@
+---
+import DocsLayout from '@/layouts/DocsLayout.astro'
+import CodeBlock from '@/components/site/CodeBlock.astro'
+import NoteBox from '@/components/site/NoteBox.astro'
+---
+
+<DocsLayout
+  title="部署安装"
+  description="Docker Compose、单可执行文件、反向代理与 HTTPS、数据备份与升级步骤。"
+>
+  <p>
+    布吉影库没有外部依赖：不需要 Redis、不需要独立数据库服务、不需要 Node 运行时。
+    跑起来只有两件事——一个进程，和一块放媒体的磁盘。
+  </p>
+
+  <h2 id="prepare">部署前准备好三件事</h2>
+
+  <ol>
+    <li>
+      <strong>媒体库目录</strong>：一个放归档内容的绝对路径，例如 <code>/vol1/media</code>。
+      里面通常会分成电影和电视剧两个子目录。
+    </li>
+    <li>
+      <strong>下载目录</strong>：qBittorrent 的保存目录，例如 <code>/vol1/downloads</code>。
+      布吉影库会从这里读文件、整理到媒体库目录。
+    </li>
+    <li>
+      <strong>数据目录</strong>：放 SQLite 数据库与配置，例如 <code>./data</code>。
+      备份它等于备份了整个应用配置。
+    </li>
+  </ol>
+
+  <NoteBox title="关键前提：媒体库目录要和 Emby / Jellyfin / Plex 的挂载路径完全一致">
+    <p class="text-muted-foreground mt-2 text-sm leading-6">
+      布吉影库刮削时会往 NFO 与数据库里写入<strong>绝对路径</strong>（包括海报、背景图、
+      剧集缩略图这些图片文件的位置）。如果它看到的媒体目录是
+      <code class="bg-muted rounded px-1 font-mono text-[0.85em]">/media</code>，
+      而 Jellyfin 容器里同一个宿主机目录挂成了
+      <code class="bg-muted rounded px-1 font-mono text-[0.85em]">/mnt/media</code>，
+      那么 NFO 里指向的图片路径在媒体服务器容器内并不存在，结果是
+      <strong>标题和简介能显示、海报背景全是灰底</strong>。
+    </p>
+    <p class="text-muted-foreground mt-2 text-sm leading-6">
+      所以部署前就把路径定下来：<strong>同一个宿主机目录，在所有容器里挂到同一个容器路径</strong>
+      （示例统一用 <code class="bg-muted rounded px-1 font-mono text-[0.85em]">/media</code>），
+      并在布吉影库的「目录管理」里按这个容器路径填写归档目录。已经刮削过的库再改路径，
+      需要重新刮削一遍才能把 NFO 里的图片引用改对。
+    </p>
+  </NoteBox>
+
+  <NoteBox title="强烈建议：三个目录都挂到固定容器路径">
+    <p class="text-muted-foreground mt-2 text-sm leading-6">
+      文档与示例统一使用 <code class="bg-muted rounded px-1 font-mono text-[0.85em]">/media</code>、
+      <code class="bg-muted rounded px-1 font-mono text-[0.85em]">/downloads</code>、
+      <code class="bg-muted rounded px-1 font-mono text-[0.85em]">/app/data</code>。
+      路径一旦在设置里填成宿主机的绝对路径，容器里就不存在；请始终填写<strong>容器内路径</strong>。
+    </p>
+  </NoteBox>
+
+  <h2 id="docker-compose">方式一：Docker Compose（推荐）</h2>
+
+  <p>
+    新建一个目录，把下面的 <code>docker-compose.yml</code> 放进去，按你的实际路径改三个挂载点。
+  </p>
+
+  <CodeBlock
+    label="docker-compose.yml"
+    lang="yaml"
+    code={`services:
+  bujic-movie:
+    image: crpi-a1liy20beodq2bdl.cn-beijing.personal.cr.aliyuncs.com/bujic/bujic-movie:latest
+    container_name: bujic-movie
+    restart: unless-stopped
+    ports:
+      - "8080:8080"
+    volumes:
+      - ./data:/app/data                # 配置 + SQLite 数据库（必须持久化）
+      - /vol1/media:/media              # 媒体库：与 Emby/Jellyfin 保持同一容器路径
+      - /vol1/downloads:/downloads      # 下载目录
+    environment:
+      - TZ=Asia/Shanghai
+      - BUJIC_SERVER_SECRET_KEY=change_me_to_something_secure`}
+  />
+
+  <CodeBlock
+    label="启动与查看日志"
+    lang="bash"
+    code={`docker compose up -d
+docker compose logs -f --tail=100
+
+# 健康检查
+curl -s http://localhost:8080/api/v1/health`}
+  />
+
+  <p>
+    启动后浏览器打开 <code>http://服务器IP:8080</code>，用默认账号
+    <code>admin</code> / <code>admin123</code> 登录。<strong>第一件事是改密码</strong>，
+    路径是「系统设置 → 安全」。
+  </p>
+
+  <h3 id="secret-key">关于 BUJIC_SERVER_SECRET_KEY</h3>
+
+  <p>
+    这个值同时用于两个用途：签发登录 JWT，以及派生站点凭据的 AES-256-GCM 加密密钥。
+    它<strong>必须改成随机长字符串</strong>，并且<strong>改过之后不要再来回切换</strong>——
+    一旦更换，之前保存在数据库里的站点密码、代理凭据、登录 Cookie 都会解不开，需要重新录入。
+    生成一个即可：
+  </p>
+
+  <CodeBlock label="生成一个随机密钥" lang="bash" code={`openssl rand -hex 32`} />
+
+  <h3 id="arm">ARM 设备（群晖、树莓派、Apple Silicon）</h3>
+
+  <p>
+    镜像同时发布 <code>linux/amd64</code> 与 <code>linux/arm64</code>，不需要额外指定
+    <code>platform</code>，Compose 会自动选择匹配的架构。
+  </p>
+
+  <h2 id="binary">方式二：单可执行文件</h2>
+
+  <p>
+    不想用 Docker 时，可以在本地把前端和 Go 一起编译成一个可执行文件。
+    前端产物通过 <code>go:embed</code> 写进二进制，运行时不需要任何静态资源目录。
+  </p>
+
+  <CodeBlock
+    label="从源码构建"
+    tabs={[
+      { label: '构建', lang: 'bash', code: `# 前提：Node.js >= 22、Go >= 1.26
+git clone https://github.com/chao-eng/bujic-movie.git
+cd bujic-movie/app
+
+make build          # = cd web && npm run build; go build -o bujic-movie ./cmd/server
+ls -lh bujic-movie  # 产物在 app/ 目录下` },
+      { label: '运行', lang: 'bash', code: `# 必须把工作目录放在可执行文件所在目录：
+# 默认数据库路径 data/bujic-movie.db 是相对路径。
+cd /opt/bujic-movie
+BUJIC_SERVER_SECRET_KEY=$(openssl rand -hex 32) \\
+BUJIC_SERVER_MODE=release \\
+./bujic-movie` },
+      { label: 'systemd', lang: 'ini', code: `[Unit]
+Description=Bujic Movie
+After=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/bujic-movie
+Environment=BUJIC_SERVER_MODE=release
+Environment=BUJIC_SERVER_SECRET_KEY=换成你的随机密钥
+Environment=BUJIC_DATABASE_DB_PATH=/opt/bujic-movie/data/bujic-movie.db
+ExecStart=/opt/bujic-movie/bujic-movie
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target` },
+    ]}
+  />
+
+  <CodeBlock
+    label="注册 systemd 服务"
+    lang="bash"
+    code={`sudo cp bujic-movie.service /etc/systemd/system/
+sudo systemctl daemon-reload
+sudo systemctl enable --now bujic-movie
+sudo systemctl status bujic-movie --no-pager`}
+  />
+
+  <NoteBox title="embed 需要 app/dist 存在">
+    <p class="text-muted-foreground mt-2 text-sm leading-6">
+      前端产物是编译期依赖。如果 <code class="bg-muted rounded px-1 font-mono text-[0.85em]">app/dist/</code>
+      被清掉，<code class="bg-muted rounded px-1 font-mono text-[0.85em]">go build</code> /
+      <code class="bg-muted rounded px-1 font-mono text-[0.85em]">go run</code> /
+      <code class="bg-muted rounded px-1 font-mono text-[0.85em]">go test</code> 都会失败。
+      先 <code class="bg-muted rounded px-1 font-mono text-[0.85em]">cd app/web &amp;&amp; npm run build</code>
+      恢复即可。
+    </p>
+  </NoteBox>
+
+  <h2 id="reverse-proxy">反向代理与 HTTPS</h2>
+
+  <p>
+    直接用 <code>IP:8080</code> 在内网没问题。要暴露到公网、或者想用域名访问时，建议放在 Nginx
+    或 Caddy 后面并启用 TLS。有两个点必须配置正确：<strong>SSE 日志流不能缓冲</strong>，
+    以及<strong>上传字幕需要放宽请求体大小</strong>。
+  </p>
+
+  <CodeBlock
+    label="Nginx"
+    lang="nginx"
+    code={`server {
+    listen 443 ssl;
+    http2 on;
+    server_name movie.example.com;
+
+    ssl_certificate     /etc/letsencrypt/live/movie.example.com/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/movie.example.com/privkey.pem;
+
+    # 字幕上传走 JSON，单片字幕一般很小，20M 足够
+    client_max_body_size 20m;
+
+    location / {
+        proxy_pass http://127.0.0.1:8080;
+        proxy_http_version 1.1;
+        proxy_set_header Host              $host;
+        proxy_set_header X-Real-IP         $remote_addr;
+        proxy_set_header X-Forwarded-For   $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_read_timeout 300s;
+    }
+
+    # SSE：关掉缓冲，否则日志要攒满一坨才吐出来
+    location /api/v1/logs/stream {
+        proxy_pass http://127.0.0.1:8080;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header Connection '';
+        proxy_buffering off;
+        proxy_cache off;
+        chunked_transfer_encoding on;
+        proxy_read_timeout 24h;
+    }
+}`}
+  />
+
+  <CodeBlock
+    label="Caddy（自动 HTTPS，更省事）"
+    lang="nginx"
+    code={`movie.example.com {
+    encode zstd gzip
+    request_body {
+        max_size 20MB
+    }
+    reverse_proxy 127.0.0.1:8080 {
+        # Caddy 默认就会 flush 流式响应，无需额外配置 SSE
+        flush_interval -1
+    }
+}`}
+  />
+
+  <p>
+    代理层如果是 <strong>Nginx Proxy Manager</strong> 这类带界面的工具，记得在对应 Proxy Host 的
+    Advanced 里把上面 SSE 相关的三行加上，并把 <em>Websockets Support</em> 也打开。
+  </p>
+
+  <h2 id="paths">路径一致性：最容易踩的坑</h2>
+
+  <p>
+    刮削生成的 NFO 与数据库里记录的是<strong>容器内绝对路径</strong>。如果布吉影库把媒体挂到
+    <code>/media</code>，而 Emby 把同一个宿主机目录挂到 <code>/mnt/media</code>，
+    Emby 拿到的 NFO 里指向 <code>/media/…/poster.jpg</code>，这个路径在 Emby 容器里不存在，
+    结果就是<strong>元数据能读到、海报一片空白</strong>。
+  </p>
+
+  <div class="table-wrap my-4">
+    <table>
+      <thead>
+        <tr>
+          <th>宿主机路径</th>
+          <th>布吉影库容器</th>
+          <th>Emby / Jellyfin 容器</th>
+          <th>结果</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td><code>/vol1/media</code></td>
+          <td><code>/media</code></td>
+          <td><code>/media</code></td>
+          <td class="text-success">✅ 海报正常</td>
+        </tr>
+        <tr>
+          <td><code>/vol1/media</code></td>
+          <td><code>/media</code></td>
+          <td><code>/mnt/media</code></td>
+          <td class="text-destructive">❌ 元数据在，图挂了</td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+
+  <p>
+    所以<strong>让所有容器把同一个宿主机目录挂到同一个容器路径</strong>。改路径这件事越早做越好，
+    一旦库里已经有几百条记录，重新对齐就要重新刮削。
+  </p>
+
+  <h2 id="backup">备份与升级</h2>
+
+  <p>需要备份的只有两样东西：数据目录和媒体目录里的 NFO。</p>
+
+  <CodeBlock
+    label="备份"
+    tabs={[
+      { label: '数据目录', lang: 'bash', code: `# 停容器后整目录打包最稳（SQLite 写入时直接拷贝有撕裂风险）
+docker compose stop bujic-movie
+tar czf bujic-data-$(date +%F).tar.gz data/
+docker compose start bujic-movie` },
+      { label: '在线备份', lang: 'bash', code: `# 不想停机就用 SQLite 的在线备份，得到一致的快照
+docker compose exec bujic-movie sh -c \\
+  'command -v sqlite3 >/dev/null && sqlite3 /app/data/bujic-movie.db ".backup /app/data/backup.db"'
+# 镜像里没有 sqlite3 时，退化为停容器备份` },
+      { label: '升级', lang: 'bash', code: `docker compose pull
+docker compose up -d
+
+# 数据库迁移在启动时自动执行（每个仓储 AutoMigrate 自己的实体）
+# 升级后看一眼启动日志有没有迁移或告警
+docker compose logs --tail=80 bujic-movie` },
+    ]}
+  />
+
+  <p>
+    升级前建议先备份 <code>data/</code>。迁移是自动的、只会新增表或列，但降级不回滚——
+    想回到旧版本只能恢复备份。
+  </p>
+
+  <h2 id="env">可用环境变量</h2>
+
+  <p>
+    全部变量以 <code>BUJIC_</code> 为前缀，层级之间用下划线连接（配置项
+    <code>server.port</code> 对应 <code>BUJIC_SERVER_PORT</code>）。绝大多数业务配置不需要
+    环境变量——在网页「系统设置」里改就行，会存进数据库并覆盖环境变量与默认值。
+  </p>
+
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr>
+          <th>变量</th>
+          <th>默认值</th>
+          <th>说明</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td><code>BUJIC_SERVER_PORT</code></td>
+          <td><code>8080</code></td>
+          <td>Web 服务监听端口</td>
+        </tr>
+        <tr>
+          <td><code>BUJIC_SERVER_MODE</code></td>
+          <td><code>debug</code></td>
+          <td><code>release</code> 会关闭 Gin 的调试输出，生产环境应当设置</td>
+        </tr>
+        <tr>
+          <td><code>BUJIC_SERVER_SECRET_KEY</code></td>
+          <td><code>change_me_to_something_secure</code></td>
+          <td>JWT 签名 + 凭据加密密钥派生，<strong>务必修改</strong></td>
+        </tr>
+        <tr>
+          <td><code>BUJIC_DATABASE_DB_PATH</code></td>
+          <td><code>data/bujic-movie.db</code></td>
+          <td>SQLite 文件路径（相对启动目录）</td>
+        </tr>
+        <tr>
+          <td><code>BUJIC_NETWORK_PROXY</code></td>
+          <td>空</td>
+          <td>全局出口代理，支持 <code>http</code> / <code>https</code> / <code>socks5</code> / <code>socks5h</code></td>
+        </tr>
+        <tr>
+          <td><code>BUJIC_NETWORK_SCRAPE_VIA_PROXY</code></td>
+          <td><code>false</code></td>
+          <td>TMDB 与海报下载是否走代理</td>
+        </tr>
+        <tr>
+          <td><code>BUJIC_NETWORK_SEARCH_VIA_PROXY</code></td>
+          <td><code>true</code></td>
+          <td>索引器与定义源是否走代理（站点级配置优先）</td>
+        </tr>
+        <tr>
+          <td><code>BUJIC_SEARCH_ENABLED</code></td>
+          <td><code>true</code></td>
+          <td>关闭后除 <code>/search/status</code> 外搜索相关接口返回 404</td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+
+  <h2 id="unraid">在 NAS 上的放置建议</h2>
+
+  <ul>
+    <li>
+      <strong>群晖 / 威联通</strong>：用 Container Manager 导入上面的 Compose，注意
+      「同一宿主机目录挂同一容器路径」这条规则对 Emby 的套件版不适用（套件直接读宿主机路径），
+      这类情况请在设置里填写套件看到的真实路径。
+    </li>
+    <li>
+      <strong>硬盘休眠</strong>：媒体库目录如果参与了监听，频繁写入会让硬盘无法休眠。
+      不需要自动整理时可以关掉卡片的「目录监听」。
+    </li>
+    <li>
+      <strong>权限</strong>：容器默认以 root 运行；如果媒体目录是 1000:1000，建议先确认读写权限，
+      否则整理会报 <code>permission denied</code>。
+    </li>
+  </ul>
+
+  <p>
+    部署完成后继续看<a href="/docs/setup/">首次配置</a>——不配 TMDB 密钥的话，刮削不会产出任何海报。
+  </p>
+</DocsLayout>

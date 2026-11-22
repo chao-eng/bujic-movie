@@ -1,0 +1,243 @@
+---
+import BaseLayout from '@/layouts/BaseLayout.astro'
+import { docsNav, flatDocs } from '@/data/nav'
+import { ChevronRight, ArrowLeft, ArrowRight, List } from 'lucide-vue-next'
+
+export interface Props {
+  title?: string
+  description?: string
+  /** 右侧目录是否显示 */
+  toc?: boolean
+  /** Markdown / MDX 页面由 Astro 注入 */
+  frontmatter?: Record<string, unknown>
+}
+
+// .mdx 页面把标题写在 frontmatter 里，.astro 页面直接传 props。
+// 两种来源在这里合流，正文与导航只需要一个 title。
+const frontmatter = (Astro.props.frontmatter ?? {}) as Record<string, string>
+const title = Astro.props.title ?? frontmatter.title ?? '文档'
+const description = Astro.props.description ?? frontmatter.description ?? ''
+const toc = Astro.props.toc ?? true
+const path = Astro.url.pathname.replace(/\/+$/, '/')
+const normalized = path.endsWith('/') ? path : `${path}/`
+const index = flatDocs.findIndex((item) => item.href === normalized)
+const prev = index > 0 ? flatDocs[index - 1] : null
+const next = index >= 0 && index < flatDocs.length - 1 ? flatDocs[index + 1] : null
+---
+
+<BaseLayout title={`${title} · 布吉影库文档`} description={description}>
+  <div class="mx-auto max-w-7xl px-4 sm:px-6">
+    <div class="lg:grid lg:grid-cols-[15rem_minmax(0,1fr)] lg:gap-10 xl:grid-cols-[15rem_minmax(0,1fr)_13rem]">
+      <!-- 侧栏 -->
+      <aside class="hidden lg:block">
+        <div class="sticky top-14 max-h-[calc(100vh-3.5rem)] overflow-y-auto py-8 pr-2">
+          <a
+            href="/"
+            class="text-muted-foreground hover:text-foreground mb-4 inline-flex items-center gap-1 text-xs transition-colors"
+          >
+            <ArrowLeft class="size-3.5" /> 返回首页
+          </a>
+          {
+            docsNav.map((group) => (
+              <div class="mb-5">
+                <div class="text-muted-foreground mb-1.5 px-2 text-[0.7rem] font-semibold tracking-wider uppercase">
+                  {group.title}
+                </div>
+                <nav class="flex flex-col gap-0.5">
+                  {group.items.map((item) => (
+                    <a
+                      href={item.href}
+                      class:list={[
+                        'rounded-md px-2 py-1.5 text-sm transition-colors',
+                        item.href === normalized
+                          ? 'bg-muted text-foreground font-medium'
+                          : 'text-muted-foreground hover:text-foreground hover:bg-muted/60',
+                      ]}
+                    >
+                      {item.title}
+                    </a>
+                  ))}
+                </nav>
+              </div>
+            ))
+          }
+        </div>
+      </aside>
+
+      <!-- 正文 -->
+      <div class="min-w-0 py-8">
+        {/* 手机上没有侧栏，用一个折叠块承载完整目录 */}
+        <details class="ring-foreground/10 mb-5 rounded-lg px-3 py-2 ring-1 lg:hidden">
+          <summary class="text-muted-foreground flex cursor-pointer items-center gap-1.5 text-sm">
+            <List class="size-4" /> 文档目录
+          </summary>
+          <nav class="mt-2 flex flex-col gap-0.5" aria-label="文档目录">
+            {
+              docsNav.map((group) => (
+                <div class="mt-2 first:mt-0">
+                  <div class="text-muted-foreground px-1 pb-1 text-[0.7rem] font-semibold tracking-wider uppercase">
+                    {group.title}
+                  </div>
+                  {group.items.map((item) => (
+                    <a
+                      href={item.href}
+                      class:list={[
+                        'block rounded-md px-2 py-1.5 text-sm transition-colors',
+                        item.href === normalized
+                          ? 'bg-muted text-foreground font-medium'
+                          : 'text-muted-foreground hover:text-foreground hover:bg-muted/60',
+                      ]}
+                    >
+                      {item.title}
+                    </a>
+                  ))}
+                </div>
+              ))
+            }
+          </nav>
+        </details>
+
+        <nav class="text-muted-foreground mb-4 flex items-center gap-1 text-xs" aria-label="面包屑">
+          <a href="/" class="hover:text-foreground transition-colors">首页</a>
+          <ChevronRight class="size-3" />
+          <a href="/docs/" class="hover:text-foreground transition-colors">文档</a>
+          <ChevronRight class="size-3" />
+          <span class="text-foreground/70">{title}</span>
+        </nav>
+
+        <h1 class="text-3xl font-bold tracking-tight">{title}</h1>
+        <p class="text-muted-foreground mt-2 text-base leading-7">{description}</p>
+
+        <hr class="border-border my-8" />
+
+        <article class="docs-prose" id="doc-content">
+          <slot />
+        </article>
+
+        <nav class="border-border mt-16 grid gap-3 border-t pt-6 sm:grid-cols-2" aria-label="翻页">
+          {
+            prev ? (
+              <a
+                href={prev.href}
+                class="ring-foreground/10 hover:bg-muted/50 group flex flex-col rounded-lg px-4 py-3 ring-1 transition-colors"
+              >
+                <span class="text-muted-foreground flex items-center gap-1 text-xs">
+                  <ArrowLeft class="size-3.5" /> 上一篇
+                </span>
+                <span class="mt-0.5 text-sm font-medium">{prev.title}</span>
+              </a>
+            ) : (
+              <span />
+            )
+          }
+          {
+            next && (
+              <a
+                href={next.href}
+                class="ring-foreground/10 hover:bg-muted/50 group flex flex-col rounded-lg px-4 py-3 text-right ring-1 transition-colors"
+              >
+                <span class="text-muted-foreground flex items-center justify-end gap-1 text-xs">
+                  下一篇 <ArrowRight class="size-3.5" />
+                </span>
+                <span class="mt-0.5 text-sm font-medium">{next.title}</span>
+              </a>
+            )
+          }
+        </nav>
+
+        <!-- 移动端目录 -->
+        {
+          toc && (
+            <details class="ring-foreground/10 mt-8 rounded-lg px-4 py-3 ring-1 xl:hidden">
+              <summary class="text-muted-foreground flex cursor-pointer items-center gap-1.5 text-sm">
+                <List class="size-4" /> 本页目录
+              </summary>
+              <nav id="toc-mobile" class="mt-2 flex flex-col gap-1 text-sm" />
+            </details>
+          )
+        }
+      </div>
+
+      <!-- 右侧目录 -->
+      {
+        toc && (
+          <aside class="hidden xl:block">
+            <div class="sticky top-14 max-h-[calc(100vh-3.5rem)] overflow-y-auto py-8">
+              <div class="text-muted-foreground mb-2 text-[0.7rem] font-semibold tracking-wider uppercase">本页目录</div>
+              <nav id="toc" class="border-border flex flex-col gap-1 border-l text-sm" />
+            </div>
+          </aside>
+        )
+      }
+    </div>
+  </div>
+</BaseLayout>
+
+<script>
+  // 目录从正文的真实标题生成：标题即唯一来源，不需要手工维护第二份清单。
+  const content = document.getElementById('doc-content')
+  const targets = [document.getElementById('toc'), document.getElementById('toc-mobile')]
+
+  if (content) {
+    const headings = [...content.querySelectorAll<HTMLElement>('h2, h3')]
+
+    const slug = (text: string, index: number) => {
+      const base = text
+        .trim()
+        .toLowerCase()
+        .replace(/[^\p{L}\p{N}]+/gu, '-')
+        .replace(/^-|-$/g, '')
+      return base ? `${base}-${index}` : `section-${index}`
+    }
+
+    const items = headings.map((heading, index) => {
+      if (!heading.id) heading.id = slug(heading.textContent ?? '', index)
+      return { id: heading.id, text: heading.textContent ?? '', level: heading.tagName === 'H3' ? 3 : 2 }
+    })
+
+    targets.forEach((nav) => {
+      if (!nav) return
+      nav.innerHTML = ''
+      items.forEach((item) => {
+        const link = document.createElement('a')
+        link.href = `#${item.id}`
+        link.textContent = item.text
+        link.className =
+          item.level === 3
+            ? 'text-muted-foreground hover:text-foreground border-l border-transparent pl-5 py-0.5 transition-colors'
+            : 'text-muted-foreground hover:text-foreground border-l border-transparent pl-3 py-0.5 transition-colors'
+        nav.appendChild(link)
+      })
+    })
+
+    // 当前章节高亮：IntersectionObserver 只负责「进入视口」，不做滚动位置猜测。
+    const links = new Map<string, HTMLAnchorElement[]>()
+    targets.forEach((nav) => {
+      nav?.querySelectorAll<HTMLAnchorElement>('a').forEach((link) => {
+        const id = link.getAttribute('href')!.slice(1)
+        links.set(id, [...(links.get(id) ?? []), link])
+      })
+    })
+
+    const observer = new IntersectionObserver(
+      (entries) => {
+        entries.forEach((entry) => {
+          if (!entry.isIntersecting) return
+          links.forEach((els) =>
+            els.forEach((el) => {
+              el.classList.remove('text-primary', 'border-primary', 'font-medium')
+              el.classList.add('text-muted-foreground')
+            }),
+          )
+          links.get(entry.target.id)?.forEach((el) => {
+            el.classList.remove('text-muted-foreground')
+            el.classList.add('text-primary', 'border-primary', 'font-medium')
+          })
+        })
+      },
+      { rootMargin: '-80px 0px -70% 0px', threshold: 0 },
+    )
+
+    headings.forEach((heading) => observer.observe(heading))
+  }
+</script>

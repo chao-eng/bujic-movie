@@ -1,0 +1,308 @@
+---
+import DocsLayout from '@/layouts/DocsLayout.astro'
+import CodeBlock from '@/components/site/CodeBlock.astro'
+import NoteBox from '@/components/site/NoteBox.astro'
+---
+
+<DocsLayout
+  title="常见问题"
+  description="部署、刮削、整理、搜索、字幕与 MCP 的排错清单，附定位方法。"
+>
+  <p>
+    排查思路统一是三步：<strong>看日志</strong>（仪表盘的实时日志页）→
+    <strong>看状态</strong>（相关页面的提示）→ <strong>看磁盘</strong>（文件的真实状态）。
+    日志里带中文标签（<code>[整理]</code>、<code>[刮削]</code>、<code>[监控]</code>），比翻代码快。
+  </p>
+
+  <h2 id="deploy">部署</h2>
+
+  <h3 id="q-port">端口打开是 404 或空白页</h3>
+
+  <ul>
+    <li>确认构建时 <code>app/dist/</code> 存在——前端资源是编译期 embed 进去的，缺了就没有静态文件。</li>
+    <li>如果前面挂了反向代理，检查 <code>proxy_pass</code> 是否指到正确的端口，以及是否配了 <code>proxy_set_header Host</code>。</li>
+    <li>用 <code>curl -s http://localhost:8080/api/v1/health</code> 先确认后端本身活着。</li>
+  </ul>
+
+  <h3 id="q-secret">换了 BUJIC_SERVER_SECRET_KEY 之后站点全挂</h3>
+
+  <p>
+    这个密钥既签 JWT 又派生凭据加密密钥。换掉之后，之前加密保存的站点密码、代理凭据、
+    登录 Cookie 都解不开了。表现是「站点明明填了密码，测试却提示认证失败」。
+    解决办法是重新录入这些凭据。所以上线后<strong>不要来回改这个值</strong>。
+  </p>
+
+  <h3 id="q-sse">实时日志不刷新，或者一次刷出一大堆</h3>
+
+  <p>
+    反向代理缓冲了 SSE 响应。在 <code>/api/v1/logs/stream</code> 上关掉
+    <code>proxy_buffering</code> 并调长 <code>proxy_read_timeout</code>，
+    完整的配置片段见<a href="/docs/deploy/#reverse-proxy">部署 · 反向代理</a>。
+  </p>
+
+  <h3 id="q-perm">整理报 permission denied</h3>
+
+  <p>
+    容器用户对媒体目录没有写权限。检查宿主机目录的属主与容器内运行的 UID
+    （官方镜像以 root 运行）。群晖这类系统常见问题是共享文件夹的 ACL 没给容器用户授权。
+  </p>
+
+  <h2 id="scrape">刮削</h2>
+
+  <h3 id="q-noposter">刮削完成但没有海报</h3>
+
+  <ol>
+    <li>确认 TMDB API Key 已填且有效——这是最常见的原因。</li>
+    <li>确认刮削出口能到 <code>api.themoviedb.org</code> 和 <code>image.tmdb.org</code>；需要时在代理配置里打开「刮削走代理」。</li>
+    <li>看日志里有没有 <code>获取电影详情失败</code> 或 <code>timeout</code>。</li>
+  </ol>
+
+  <h3 id="q-wrong">刮到了错误的影片</h3>
+
+  <p>
+    通常是同名作品太多，解析出的年份不对。把文件名改成
+    <code>正确片名.年份.其它信息.mkv</code> 再重新刮削（勾上「覆盖已存在的元数据」）。
+    剧集要确认根目录是 <code>剧名 (年份)</code>、季目录是 <code>Season 01</code>。
+  </p>
+
+  <h3 id="q-nofile">NFO 有了，但媒体服务器里没有演职人员</h3>
+
+  <p>
+    「启用演职人员刮削」默认是关闭的。开启后重新刮削才会写入
+    <code>&lt;actor&gt;</code>。TMDB 的演职人员接口也会影响，网络不通时会跳过并记警告。
+  </p>
+
+  <h3 id="q-poster-path">媒体服务器能看到标题和简介，海报全是灰的</h3>
+
+  <p>
+    这是<strong>容器路径不一致</strong>：NFO 里写的是布吉影库看到的绝对路径，
+    而媒体服务器容器里没有这个路径。让所有容器把同一个宿主机目录挂到同一个容器路径，
+    然后重新刮削（或手动改库的路径映射）。详见
+    <a href="/docs/deploy/#paths">部署 · 路径一致性</a>。
+  </p>
+
+  <h2 id="transfer">整理</h2>
+
+  <h3 id="q-crossdev">invalid cross-device link</h3>
+
+  <p>
+    硬链接要求同一个文件系统。下载目录和媒体库在不同的挂载点（不同分区、一个是网络挂载）
+    时必然失败。三个选择：
+  </p>
+
+  <ul>
+    <li>把两者放到同一个文件系统下（最优）。</li>
+    <li>改用 <code>copy</code>（占双倍空间）或 <code>move</code>（放弃做种）。</li>
+    <li>改用 <code>softlink</code>，但要确认媒体服务器跟随符号链接。</li>
+  </ul>
+
+  <CodeBlock
+    label="确认设备号"
+    lang="bash"
+    code={`stat -c '%d %n' /downloads /media
+# 第一列是设备号，相同才能硬链接`}
+  />
+
+  <h3 id="q-skip">日志里出现「源文件不大于目标文件, 跳过」</h3>
+
+  <p>
+    这是 <code>size</code> 覆盖模式的正常行为：目标已存在且比源更大，所以不覆盖。
+    如果你确实想用新文件替换，把覆盖模式临时改成 <code>always</code>，
+    或者先手动删掉目标文件。
+  </p>
+
+  <h3 id="q-watch">目录监听没反应</h3>
+
+  <ul>
+    <li>确认卡片的「目录监听」开着，且下载源路径填的是容器内真实存在的路径。</li>
+    <li>SMB / NFS 这类网络文件系统上 fsnotify 不可靠。</li>
+    <li>Linux 的 inotify 句柄上限（<code>fs.inotify.max_user_watches</code>）在目录层级很深时会被打满。</li>
+    <li>替代方案：用 qBittorrent 的「运行外部程序」在下载完成时调整理接口。</li>
+  </ul>
+
+  <h3 id="q-move">move 模式之后 qBittorrent 报错「文件丢失」</h3>
+  <p>
+    这是预期行为——文件被移走了，种子自然找不到源。想继续做种就用 <code>link</code>
+    或 <code>copy</code>。
+  </p>
+
+  <h2 id="search">搜索下载</h2>
+
+  <h3 id="q-zero">站点明明有资源，搜索结果却是空的</h3>
+
+  <ol>
+    <li>先看片名识别面板里的「实际检索词」——如果还是纯中文去查英文站，结果当然为空。</li>
+    <li>确认该站点的「检索语言」包含能命中它的语言（中文站要 <code>zh</code>，英文站要 <code>en</code>）。</li>
+    <li>用「测试」按钮单测这个站点：返回「需要验证」说明是 Cloudflare 拦截，返回认证错误说明账号或 Cookie 不对。</li>
+    <li>看「状态」标签里是不是处在冷却期（连续失败后被降级）。</li>
+  </ol>
+
+  <h3 id="q-cf">站点提示需要人机验证</h3>
+
+  <p>
+    错误码 <code>42204</code>。导入浏览器里已通过验证的会话：站点表单里粘贴 Cookie + 同一浏览器的
+    User-Agent，或用仓库里的扩展一键导入。注意 <code>cf_clearance</code> 绑定出口 IP 与 UA，
+    两边必须一致。详见 <a href="/docs/search/#cloudflare">搜索下载 · Cloudflare</a>。
+  </p>
+
+  <h3 id="q-auth">站点提示认证失败（40102）</h3>
+
+  <p>
+    账号密码错、Cookie 过期、或者 station 需要 2FA。注意前端不会因为这个错误码把你登出——
+    <code>40102</code> 是<em>站点</em>认证失败，不是你的会话失效。
+  </p>
+
+  <h3 id="q-category">推送成功但任务落在错误的分类</h3>
+
+  <p>
+    分类映射没配或配错了。在下载器编辑里检查「分类映射」，映射目标必须是 qBittorrent 里
+    <strong>已经存在</strong>的分类名（表单会实时读取）。另外确认该站点绑定的下载器就是你期望的那个。
+  </p>
+
+  <h3 id="q-def">模板库更新后站点还是不工作</h3>
+
+  <p>
+    定义是快照，添加时保存的那份不会自动更新。在「已添加站点」里点该站点的「刷新定义」才会切换。
+    站点改域名这类变更也需要先刷新定义。
+  </p>
+
+  <h3 id="q-slow">一次搜索要等很久</h3>
+
+  <p>
+    全量搜索有 15 秒总时限，慢站点会被跳过而不是无限等。如果经常接近上限：
+    减少启用站点数、把长期失败的站点停用、或调小单站点超时。慢站点的平均耗时在「状态」页可见。
+  </p>
+
+  <h2 id="subtitle">字幕</h2>
+
+  <h3 id="q-substatus">明明有中文字幕却显示「缺失」</h3>
+
+  <p>
+    外挂字幕的命名不符合约定。系统按 <code>视频主名.语言.扩展名</code> 识别，
+    比如 <code>xxx.zh-CN.srt</code>。随便起的名字（<code>字幕.srt</code>、
+    <code>xxx.chs.ass</code> 之外的写法）可能识别不到语言。用整理功能重命名字幕，
+    或者手动改名成约定形式。
+  </p>
+
+  <h3 id="q-internal">看不到内嵌字幕</h3>
+
+  <p>
+    需要 ffprobe。Docker 镜像已内置；手动部署请确认
+    <code>ffprobe -version</code> 能执行。另外如果 NFO 里已经记录了
+    <code>&lt;streamdetails&gt;</code>，系统会优先读 NFO 而不是现场探测。
+  </p>
+
+  <h3 id="q-image">提取出来的字幕是图片</h3>
+
+  <p>
+    那是 PGS / VobSub 这类图像字幕，无法转成文本。只能另找文本字幕源，
+    或者用 Agent 基于其他语言轨翻译。
+  </p>
+
+  <h3 id="q-ffmpeg">繁转简之后看不出来变化</h3>
+
+  <p>
+    转换是字符级的，只处理汉字异体差异。本来就是简体、或者主要是英文的字幕，转换前后基本一致。
+    另外确认你看的是新生成的那个 <code>zh-CN</code> 文件，而不是原来的繁体文件。
+  </p>
+
+  <h2 id="mcp">MCP / Agent</h2>
+
+  <h3 id="q-mcp-401">Agent 调用返回 401</h3>
+
+  <ul>
+    <li>确认用的是 <strong>API Key</strong> 而不是网页登录的 JWT——MCP 端点不接受 JWT，这是刻意的隔离。</li>
+    <li>确认 Key 没有被禁用。</li>
+    <li>确认请求头是 <code>Authorization: Bearer &lt;KEY&gt;</code>，没有多余空格或引号。</li>
+    <li>先用 <code>mcp_ping</code> 验证，它不读业务数据。</li>
+  </ul>
+
+  <h3 id="q-mcp-tools">客户端里看不到工具</h3>
+
+  <p>
+    多数客户端支持用 <code>toolNames</code> 白名单限制工具。确认白名单里列了需要的工具，
+    或者直接去掉这个字段让它拉全部。改完配置要重启客户端。
+  </p>
+
+  <h3 id="q-mcp-empty">query_media_list 返回空</h3>
+
+  <p>
+    常见原因是 <code>media_card_id</code> 限定了错误的卡。先调
+    <code>list_media_cards</code> 确认卡片的 ID 与归档路径，再决定范围；
+    省略或传 0 表示全部卡。
+  </p>
+
+  <h3 id="q-mcp-upload">upload_subtitle 报路径不允许</h3>
+
+  <p>
+    目标视频必须落在某张媒体卡的归档目录下。传了下载目录、临时目录、或符号链接指向外部的位置
+    都会被拒绝。这是路径白名单，不是 bug。
+  </p>
+
+  <h2 id="perf">性能与资源</h2>
+
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr>
+          <th>现象</th>
+          <th>常见原因</th>
+          <th>处理</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td>整季刮削很慢</td>
+          <td>每集都要请求 TMDB 详情 + 下载剧照</td>
+          <td>正常现象；注意 TMDB 有速率限制，不要并发跑多个整季任务</td>
+        </tr>
+        <tr>
+          <td>媒体库页加载卡</td>
+          <td>卡片很多，每张都要读本地海报</td>
+          <td>海报走带鉴权的 <code>/media/image</code> 接口，属正常开销</td>
+        </tr>
+        <tr>
+          <td>内存占用逐渐升高</td>
+          <td>日志缓冲、调用记录有界，不会无限涨</td>
+          <td>若持续上涨，检查是否有大量监听目录</td>
+        </tr>
+        <tr>
+          <td>CPU 峰值高</td>
+          <td>ffprobe/ffmpeg 在处理大文件</td>
+          <td>限制并发任务数，避免同时整理多部 4K 原盘</td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+
+  <h2 id="diag">收集诊断信息</h2>
+
+  <CodeBlock
+    label="排查时优先跑这几条"
+    lang="bash"
+    code={`# 1. 版本与健康
+curl -s http://localhost:8080/api/v1/health
+
+# 2. 最近的日志（需要 JWT）
+curl -s http://localhost:8080/api/v1/logs/recent \\
+  -H "Authorization: Bearer $TOKEN" | head -c 2000
+
+# 3. 容器内工具是否齐全
+docker compose exec bujic-movie sh -c 'ffprobe -version | head -1'
+
+# 4. 路径与权限
+docker compose exec bujic-movie sh -c 'ls -ld /media /downloads /app/data'
+
+# 5. 数据库文件
+docker compose exec bujic-movie sh -c 'ls -lh /app/data'`}
+  />
+
+  <NoteBox title="还没解决的问题">
+    <p class="text-muted-foreground mt-2 text-sm leading-6">
+      提 issue 时把上面 1、2、4 的输出附上（注意删掉路径里的个人信息）。
+      日志里带 <code class="bg-muted rounded px-1 font-mono text-[0.85em]">[刮削]</code> /
+      <code class="bg-muted rounded px-1 font-mono text-[0.85em]">[整理]</code>
+      标签的那几行通常就是关键。
+    </p>
+  </NoteBox>
+</DocsLayout>

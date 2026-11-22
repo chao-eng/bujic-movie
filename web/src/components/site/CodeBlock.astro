@@ -1,0 +1,154 @@
+---
+import { codeToHtml } from 'shiki'
+
+export interface CodeTab {
+  label: string
+  code: string
+  lang?: string
+}
+
+export interface Props {
+  /** 单块代码；与 tabs 二选一 */
+  code?: string
+  lang?: string
+  /** 标题栏文字，通常是文件名 */
+  label?: string
+  tabs?: CodeTab[]
+}
+
+const { code = '', lang = 'bash', label, tabs } = Astro.props
+
+const items: CodeTab[] = tabs && tabs.length ? tabs : [{ label: label ?? lang, code, lang }]
+
+// 构建期渲染：亮/暗双主题各一套 token，运行时零成本。
+const rendered = await Promise.all(
+  items.map(async (item) => ({
+    ...item,
+    html: await codeToHtml(item.code, {
+      lang: item.lang ?? 'bash',
+      themes: { light: 'github-light', dark: 'github-dark-default' },
+      defaultColor: false,
+    }),
+  })),
+)
+
+const group = `code-${Math.random().toString(36).slice(2, 8)}`
+---
+
+<div class="browser-frame code-block" data-code-group={group}>
+  <div class="border-border/70 flex items-center justify-between gap-2 border-b px-3 py-1.5">
+    {
+      rendered.length > 1 ? (
+        <div class="no-scrollbar flex gap-1 overflow-x-auto">
+          {rendered.map((item, index) => (
+            <button
+              type="button"
+              class="code-tab text-muted-foreground hover:text-foreground data-[active=true]:bg-muted data-[active=true]:text-foreground rounded-md px-2 py-1 text-xs font-medium transition-colors"
+              data-target={`${group}-${index}`}
+              data-active={index === 0 ? 'true' : 'false'}
+            >
+              {item.label}
+            </button>
+          ))}
+        </div>
+      ) : (
+        <span class="text-muted-foreground font-mono text-[0.7rem] tracking-wide">{items[0].label}</span>
+      )
+    }
+    <button
+      type="button"
+      class="code-copy text-muted-foreground hover:text-foreground hover:bg-muted flex shrink-0 items-center gap-1 rounded-md px-1.5 py-1 text-[0.7rem] transition-colors"
+      aria-label="复制代码"
+    >
+      <span class="code-copy-label">复制</span>
+    </button>
+  </div>
+  {
+    rendered.map((item, index) => (
+      <div class="code-panel" data-panel={`${group}-${index}`} hidden={index !== 0} set:html={item.html} />
+    ))
+  }
+</div>
+
+<script>
+  const copyText = async (text: string) => {
+    try {
+      await navigator.clipboard.writeText(text)
+      return true
+    } catch {
+      const area = document.createElement('textarea')
+      area.value = text
+      area.style.position = 'fixed'
+      area.style.opacity = '0'
+      document.body.appendChild(area)
+      area.select()
+      const ok = document.execCommand('copy')
+      document.body.removeChild(area)
+      return ok
+    }
+  }
+
+  document.querySelectorAll<HTMLElement>('.code-block').forEach((block) => {
+    block.querySelectorAll<HTMLButtonElement>('.code-tab').forEach((tab) => {
+      tab.addEventListener('click', () => {
+        const target = tab.dataset.target
+        block.querySelectorAll<HTMLButtonElement>('.code-tab').forEach((other) => {
+          other.dataset.active = String(other === tab)
+        })
+        block.querySelectorAll<HTMLElement>('.code-panel').forEach((panel) => {
+          panel.hidden = panel.dataset.panel !== target
+        })
+      })
+    })
+
+    const copyBtn = block.querySelector<HTMLButtonElement>('.code-copy')
+    copyBtn?.addEventListener('click', async () => {
+      const visible = [...block.querySelectorAll<HTMLElement>('.code-panel')].find((p) => !p.hidden)
+      const text = visible?.textContent ?? ''
+      const label = copyBtn.querySelector<HTMLElement>('.code-copy-label')
+      const ok = await copyText(text)
+      if (label) {
+        label.textContent = ok ? '已复制' : '失败'
+        setTimeout(() => {
+          label.textContent = '复制'
+        }, 1600)
+      }
+    })
+  })
+</script>
+
+<style>
+  .code-block :global(pre) {
+    margin: 0;
+    padding: 0.85rem 1rem 1rem;
+    overflow-x: auto;
+    font-family: var(--font-mono, ui-monospace, monospace);
+    font-size: 0.78rem;
+    line-height: 1.65;
+    background: transparent !important;
+    counter-reset: line;
+  }
+
+  .code-block :global(pre code) {
+    display: block;
+    width: max-content;
+    min-width: 100%;
+    background: transparent !important;
+  }
+
+  .code-block :global(.line) {
+    display: inline-block;
+    width: 100%;
+  }
+
+  /* shiki 双主题：defaultColor:false 时里只写入两个 CSS 变量，
+     亮色取 --shiki-light，暗色取 --shiki-dark，主题切换不需要重新渲染。 */
+  .code-block :global(pre span) {
+    color: var(--shiki-light) !important;
+  }
+
+  :global(.dark) .code-block :global(pre),
+  :global(.dark) .code-block :global(pre span) {
+    color: var(--shiki-dark) !important;
+  }
+</style>
