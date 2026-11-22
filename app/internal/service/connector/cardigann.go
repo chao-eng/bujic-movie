@@ -37,6 +37,9 @@ type CardigannConnector struct {
 	mu      sync.Mutex
 	cookies map[string]string
 
+	// loginMu keeps concurrent keyword searches from all logging in at once.
+	loginMu sync.Mutex
+
 	session Session
 }
 
@@ -182,7 +185,13 @@ func (c *CardigannConnector) LoginWithCaptcha(ctx context.Context, captcha strin
 
 // login authenticates against the site. force ignores any cached session, which
 // is what the expired-session retry needs (AC-14).
+// login serialises the login flow via loginMu. One search can now issue several
+// keyword requests to the same connector at once, and all of them may discover
+// an expired session; without the lock they would each post a login.
 func (c *CardigannConnector) login(ctx context.Context, captcha string, force bool) error {
+	c.loginMu.Lock()
+	defer c.loginMu.Unlock()
+
 	login := c.def.Login
 	if login == nil {
 		return nil
@@ -310,26 +319,49 @@ func (c *CardigannConnector) loginFailed(body []byte) bool {
 	return false
 }
 
-// Search renders every applicable path, runs them, and merges releases.
+// Search renders every applicable path, runs them concurrently, and merges
+// releases.
+//
+// Paths used to run one after another, which made a definition like 1337x — whose
+// four paths are just pages 1-4 of the same search — take four serial round trips
+// (observed 4×2s, and up to 4×9s with retries). They are independent HTTP calls,
+// so running them in parallel keeps a site at roughly one request's latency.
 func (c *CardigannConnector) Search(ctx context.Context, q Query) ([]Release, error) {
 	paths := c.applicablePaths(q)
 	if len(paths) == 0 {
 		return nil, NewError(KindUnsupported, "该站点不支持所选分类", "caps.categories", nil)
 	}
 
-	// Each path gets an equal share of the 8s budget, with a 2s floor.
-	budget := pathBudget(len(paths))
+	// With parallel execution each path may use the full budget; the deadline
+	// below still bounds the whole call.
+	budget := httpclient.DefaultTimeout
+
+	type pathResult struct {
+		releases []Release
+		err      error
+	}
+	results := make([]pathResult, len(paths))
+	var wg sync.WaitGroup
+	for i, path := range paths {
+		wg.Add(1)
+		go func(index int, path cardigann.SearchPathBlock) {
+			defer wg.Done()
+			releases, err := c.runPath(ctx, path, q, budget, len(paths))
+			results[index] = pathResult{releases: releases, err: err}
+		}(i, path)
+	}
+	wg.Wait()
+
 	var all []Release
 	var firstErr error
-	for _, path := range paths {
-		releases, err := c.runPath(ctx, path, q, budget)
-		if err != nil {
+	for _, res := range results {
+		if res.err != nil {
 			if firstErr == nil {
-				firstErr = err
+				firstErr = res.err
 			}
 			continue
 		}
-		all = append(all, releases...)
+		all = append(all, res.releases...)
 	}
 	if len(all) == 0 && firstErr != nil {
 		return nil, firstErr
@@ -341,6 +373,9 @@ func (c *CardigannConnector) Search(ctx context.Context, q Query) ([]Release, er
 	return all, nil
 }
 
+// pathBudget divides the site budget across paths. It is kept for the diagram in
+// the test suite; Search no longer splits the budget because paths now run in
+// parallel and the shared deadline already bounds them.
 func pathBudget(paths int) time.Duration {
 	if paths <= 1 {
 		return httpclient.DefaultTimeout
@@ -388,7 +423,7 @@ func intersectsAny(pathCats []string, queryCats []int) bool {
 	return false
 }
 
-func (c *CardigannConnector) runPath(ctx context.Context, path cardigann.SearchPathBlock, q Query, budget time.Duration) ([]Release, error) {
+func (c *CardigannConnector) runPath(ctx context.Context, path cardigann.SearchPathBlock, q Query, budget time.Duration, burst int) ([]Release, error) {
 	// Preserve declaration order: the site's WAF can depend on it.
 	inputs := cardigann.OrderedInputs{Keys: nil, Values: map[string]string{}}
 	for _, k := range c.def.Search.Inputs.Keys {
@@ -414,10 +449,19 @@ func (c *CardigannConnector) runPath(ctx context.Context, path cardigann.SearchP
 
 	// Keyword filters run on the user's term before it reaches the template.
 	// They matter: some sites cannot handle CJK, and definitions rewrite the
-	// term to something the site accepts.
+	// term to something the site accepts. Their arguments may be templated too
+	// (Nyaa strips the year unless a compatibility flag is set).
 	keyword := q.Keyword
 	if len(c.def.Search.KeywordsFilters) > 0 {
-		if filtered, err := cardigann.ApplyFilters(keyword, c.def.Search.KeywordsFilters); err == nil {
+		filterCtx := cardigann.NewTemplateContext(keyword, categories, map[string]string{
+			"page": fmt.Sprint(q.Page),
+		}, c.config())
+		filterCtx.Result = map[string]string{
+			"season":  fmt.Sprint(q.Season),
+			"episode": fmt.Sprint(q.Episode),
+			"year":    fmt.Sprint(q.Year),
+		}
+		if filtered, err := cardigann.ApplyFiltersWithContext(keyword, c.def.Search.KeywordsFilters, filterCtx); err == nil {
 			keyword = filtered
 		}
 	}
@@ -458,6 +502,7 @@ func (c *CardigannConnector) runPath(ctx context.Context, path cardigann.SearchP
 		Allowed:   c.allowed,
 		RateKey:   c.rateKey(),
 		RateLimit: time.Duration(c.limitMS) * time.Millisecond,
+		RateBurst: burst,
 		Proxy:     c.proxy,
 	})
 	if err != nil {
@@ -467,7 +512,8 @@ func (c *CardigannConnector) runPath(ctx context.Context, path cardigann.SearchP
 				headers["Cookie"] = c.cookieHeader()
 				resp, err = c.exec.Do(callCtx, httpclient.Request{
 					URL: target, Header: headers, Timeout: budget, Allowed: c.allowed,
-					RateKey: c.rateKey(), RateLimit: time.Duration(c.limitMS) * time.Millisecond, Proxy: c.proxy,
+					RateKey: c.rateKey(), RateLimit: time.Duration(c.limitMS) * time.Millisecond,
+					RateBurst: burst, Proxy: c.proxy,
 				})
 			}
 		}

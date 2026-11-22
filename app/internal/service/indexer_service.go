@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"net/url"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -17,6 +18,7 @@ import (
 	"github.com/bujic-movie/bujic-movie/internal/service/cardigann"
 	"github.com/bujic-movie/bujic-movie/internal/service/connector"
 	"github.com/bujic-movie/bujic-movie/internal/service/httpclient"
+	"github.com/bujic-movie/bujic-movie/pkg/logger"
 	"gorm.io/gorm"
 )
 
@@ -37,6 +39,9 @@ type IndexerInput struct {
 	Priority         int               `json:"priority"`
 	DownloadClientID uint              `json:"download_client_id"`
 	Enabled          *bool             `json:"enabled"`
+	// SearchLanguages lets a site be searched in several languages at once
+	// ("zh", "en"). Empty follows the definition's declared language.
+	SearchLanguages []string `json:"search_languages"`
 }
 
 // IndexerView is a read model that masks every secret.
@@ -50,6 +55,9 @@ type IndexerView struct {
 	Status           *IndexerStatusView `json:"status,omitempty"`
 	SessionState     string             `json:"session_state"`
 	DefinitionStatus string             `json:"definition_status"`
+	// SearchLanguages exposes the configured languages as a list. The entity
+	// stores them comma separated and hides the raw column from JSON.
+	SearchLanguages []string `json:"search_languages"`
 	// SiteURL is the site's homepage so the list can link to it. Cardigann
 	// sites take it from the definition's links; other connectors have no
 	// reliable homepage, so it stays empty.
@@ -95,11 +103,14 @@ type IndexerService struct {
 	cfg   *config.Config
 	http  *httpclient.Executor
 	sites *siteState
+
+	langMu    sync.Mutex
+	langCache map[string]string
 }
 
 // NewIndexerService wires the service.
 func NewIndexerService(repo repository.SearchRepository, box *internalcrypto.SecretBox, defs *DefinitionService, cfg *config.Config, exec *httpclient.Executor) *IndexerService {
-	return &IndexerService{repo: repo, box: box, defs: defs, cfg: cfg, http: exec, sites: newSiteState()}
+	return &IndexerService{repo: repo, box: box, defs: defs, cfg: cfg, http: exec, sites: newSiteState(), langCache: map[string]string{}}
 }
 
 func (s *IndexerService) siteTimeout() time.Duration {
@@ -139,6 +150,36 @@ func (s *IndexerService) Get(id uint) (*IndexerView, error) {
 	return &view, nil
 }
 
+// splitLanguages parses the stored comma-separated language list.
+func splitLanguages(raw string) []string {
+	out := make([]string, 0, 4)
+	for _, part := range strings.Split(raw, ",") {
+		part = strings.TrimSpace(part)
+		if part != "" {
+			out = append(out, part)
+		}
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
+}
+
+// joinLanguages normalises and stores the language list.
+func joinLanguages(langs []string) string {
+	seen := map[string]bool{}
+	out := make([]string, 0, len(langs))
+	for _, lang := range langs {
+		lang = strings.ToLower(strings.TrimSpace(lang))
+		if lang == "" || seen[lang] {
+			continue
+		}
+		seen[lang] = true
+		out = append(out, lang)
+	}
+	return strings.Join(out, ",")
+}
+
 func (s *IndexerService) view(idx entity.SearchIndexer) IndexerView {
 	apiKey := ""
 	if plain, err := s.box.Decrypt(idx.APIKeyEnc); err == nil {
@@ -169,6 +210,7 @@ func (s *IndexerService) view(idx entity.SearchIndexer) IndexerView {
 		CookieMask:       cookieMask,
 		SessionState:     "none",
 		DefinitionStatus: "ok",
+		SearchLanguages:  splitLanguages(idx.SearchLanguages),
 	}
 
 	if status, err := s.repo.GetStatus(idx.ID); err == nil {
@@ -406,6 +448,11 @@ func (s *IndexerService) build(base *entity.SearchIndexer, input IndexerInput, c
 	}
 	out.ProxyURLEnc = encProxy
 
+	out.SearchLanguages = joinLanguages(input.SearchLanguages)
+	if len(splitLanguages(out.SearchLanguages)) > 4 {
+		return nil, &InputError{Field: "search_languages", Message: "搜索语言最多选择 4 种"}
+	}
+
 	out.MinIntervalMS = input.MinIntervalMS
 	if out.MinIntervalMS <= 0 {
 		out.MinIntervalMS = s.defaultInterval()
@@ -475,6 +522,48 @@ func isSupportedConnector(kind string) bool {
 }
 
 // Connector builds (and caches) the connector for one indexer.
+// Languages maps each indexer to the language its site publishes in. Cardigann
+// sites take it from the definition; Torznab and other connectors have no
+// declaration and get an empty value, which the search pipeline resolves to a
+// latin title.
+func (s *IndexerService) Languages(indexers []entity.SearchIndexer) map[uint]string {
+	out := make(map[uint]string, len(indexers))
+	for _, idx := range indexers {
+		out[idx.ID] = s.DefinitionLanguage(idx)
+	}
+	return out
+}
+
+// DefinitionLanguage returns the definition's declared language for an indexer,
+// reading the instance snapshot first so a deleted definition never changes it.
+func (s *IndexerService) DefinitionLanguage(idx entity.SearchIndexer) string {
+	cacheKey := idx.DefinitionID + "@" + idx.DefinitionVersion
+	s.langMu.Lock()
+	if lang, ok := s.langCache[cacheKey]; ok {
+		s.langMu.Unlock()
+		return lang
+	}
+	s.langMu.Unlock()
+
+	lang := ""
+	yamlText := idx.DefinitionYAML
+	if yamlText == "" && idx.DefinitionID != "" && s.defs != nil {
+		if raw, _, err := s.defs.RawDefinition(idx.DefinitionID); err == nil {
+			yamlText = raw
+		}
+	}
+	if yamlText != "" {
+		if parsed, err := cardigann.Parse(idx.DefinitionID+".yml", []byte(yamlText)); err == nil {
+			lang = parsed.Definition.Language
+		}
+	}
+
+	s.langMu.Lock()
+	s.langCache[cacheKey] = lang
+	s.langMu.Unlock()
+	return lang
+}
+
 func (s *IndexerService) Connector(ctx context.Context, id uint) (connector.Connector, error) {
 	idx, err := s.repo.GetIndexer(id)
 	if err != nil {
@@ -648,7 +737,7 @@ func (s *IndexerService) Test(ctx context.Context, id uint) (*TestResult, error)
 	testCtx, cancel := context.WithTimeout(ctx, s.siteTimeout())
 	defer cancel()
 	start := time.Now()
-	caps, err := conn.Test(testCtx)
+	caps, err := safeConnectorTest(conn, testCtx)
 	elapsed := time.Since(start)
 
 	if err != nil {
@@ -681,6 +770,22 @@ func (s *IndexerService) Test(ctx context.Context, id uint) (*TestResult, error)
 	}
 	s.attachRowState(id, result)
 	return result, nil
+}
+
+// safeConnectorTest is the probing equivalent of safeSiteSearch: one broken
+// definition reports a parse failure instead of crashing the test run.
+func safeConnectorTest(conn connector.Connector, ctx context.Context) (caps *connector.Capabilities, err error) {
+	defer func() {
+		if r := recover(); r != nil {
+			logger.Error("search: 站点测试时崩溃: %v", r)
+			caps = nil
+			err = &connector.Error{
+				Kind:    connector.KindParse,
+				Message: fmt.Sprintf("该站点定义处理失败（%v）", r),
+			}
+		}
+	}()
+	return conn.Test(ctx)
 }
 
 // attachRowState gives the UI the fresh health/session data for one row so a
@@ -798,6 +903,56 @@ func (s *IndexerService) ClearCooldown(id uint) error {
 }
 
 // Statuses returns the health panel payload.
+// LanguageFacets counts enabled indexers per site language, so the search page
+// can offer a multi-select filter. Each entry reports the raw tag (what the
+// search accepts), a Chinese label, and how many sites it covers.
+type LanguageFacet struct {
+	Language string `json:"language"`
+	Label    string `json:"label"`
+	Count    int    `json:"count"`
+}
+
+// LanguageFacets returns the language distribution of enabled sites, busiest
+// first. Sites whose definition declares no language are grouped under "", which
+// the UI shows as "未声明语言".
+func (s *IndexerService) LanguageFacets() ([]LanguageFacet, error) {
+	list, err := s.repo.ListIndexers()
+	if err != nil {
+		return nil, err
+	}
+
+	type bucket struct {
+		count int
+		label string
+	}
+	byGroup := map[string]*bucket{}
+	for _, idx := range list {
+		if !idx.Enabled {
+			continue
+		}
+		tag := s.DefinitionLanguage(idx)
+		group := languageGroup(tag)
+		b := byGroup[group]
+		if b == nil {
+			b = &bucket{label: LanguageLabel(tag)}
+			byGroup[group] = b
+		}
+		b.count++
+	}
+
+	out := make([]LanguageFacet, 0, len(byGroup))
+	for group, b := range byGroup {
+		out = append(out, LanguageFacet{Language: group, Label: b.label, Count: b.count})
+	}
+	sort.SliceStable(out, func(i, j int) bool {
+		if out[i].Count != out[j].Count {
+			return out[i].Count > out[j].Count
+		}
+		return out[i].Label < out[j].Label
+	})
+	return out, nil
+}
+
 func (s *IndexerService) Statuses() ([]IndexerStatusView, error) {
 	list, err := s.repo.ListIndexers()
 	if err != nil {

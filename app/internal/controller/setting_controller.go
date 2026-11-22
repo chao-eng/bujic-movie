@@ -2,6 +2,7 @@ package controller
 
 import (
 	"fmt"
+	"strings"
 
 	"github.com/bujic-movie/bujic-movie/internal/config"
 	"github.com/bujic-movie/bujic-movie/internal/db"
@@ -10,6 +11,14 @@ import (
 	"github.com/bujic-movie/bujic-movie/pkg/tmdb"
 	"github.com/gin-gonic/gin"
 )
+
+// boolText renders a bool for the settings table.
+func boolText(v bool) string {
+	if v {
+		return "true"
+	}
+	return "false"
+}
 
 type SettingController struct {
 	tmdbClient *tmdb.Client
@@ -31,6 +40,13 @@ type SettingUpdateRequest struct {
 	SearchDefinitionSource  string  `json:"search_definition_source"`
 	SearchDefinitionVersion string  `json:"search_definition_version"`
 	SearchAutoSync          *bool   `json:"search_auto_sync"`
+	SearchAliasResolution   *bool   `json:"search_alias_resolution"`
+
+	NetworkProxy         *string `json:"network_proxy"`
+	NetworkScrapeProxy   *bool   `json:"network_scrape_via_proxy"`
+	NetworkSearchProxy   *bool   `json:"network_search_via_proxy"`
+	ClearNetworkProxy    bool    `json:"clear_network_proxy"`
+	ClearSearchProxyOnly bool    `json:"clear_search_proxy"`
 }
 
 func NewSettingController(tmdbClient *tmdb.Client) *SettingController {
@@ -57,6 +73,11 @@ func (ctrl *SettingController) Get(c *gin.Context) {
 		"search_definition_source":  cfg.Search.DefinitionSource,
 		"search_definition_version": cfg.Search.DefinitionVersion,
 		"search_auto_sync":          cfg.Search.AutoSync,
+		"search_alias_resolution":   cfg.Search.AliasResolution,
+
+		"network_proxy":            cfg.Network.Proxy,
+		"network_search_via_proxy": cfg.Network.SearchViaProxy,
+		"network_scrape_via_proxy": cfg.Network.ScrapeViaProxy,
 	})
 }
 
@@ -137,6 +158,34 @@ func (ctrl *SettingController) Update(c *gin.Context) {
 		}
 		cfg.Search.Proxy = proxy
 		_ = db.SaveSetting("search.proxy", proxy)
+	}
+	// Network proxy: one address, two independent opt-ins.
+	if req.ClearNetworkProxy {
+		cfg.Network.Proxy = ""
+		_ = db.SaveSetting("network.proxy", "")
+	}
+	if req.NetworkProxy != nil {
+		proxy := strings.TrimSpace(*req.NetworkProxy)
+		if proxy != "" {
+			if _, err := httpclient.ParseProxy(proxy); err != nil {
+				response.BadRequest(c, "代理地址无效："+err.Error())
+				return
+			}
+		}
+		cfg.Network.Proxy = proxy
+		_ = db.SaveSetting("network.proxy", proxy)
+	}
+	if req.NetworkScrapeProxy != nil {
+		cfg.Network.ScrapeViaProxy = *req.NetworkScrapeProxy
+		_ = db.SaveSetting("network.scrape_via_proxy", boolText(*req.NetworkScrapeProxy))
+	}
+	if req.NetworkSearchProxy != nil {
+		cfg.Network.SearchViaProxy = *req.NetworkSearchProxy
+		_ = db.SaveSetting("network.search_via_proxy", boolText(*req.NetworkSearchProxy))
+	}
+	if req.SearchAliasResolution != nil {
+		cfg.Search.AliasResolution = *req.SearchAliasResolution
+		_ = db.SaveSetting("search.alias_resolution", boolText(*req.SearchAliasResolution))
 	}
 	if req.SearchDefinitionSource != "" {
 		cfg.Search.DefinitionSource = req.SearchDefinitionSource

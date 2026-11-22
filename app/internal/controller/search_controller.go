@@ -23,6 +23,7 @@ type SearchController struct {
 	search   *service.SearchService
 	grabs    *service.GrabService
 	tasks    *service.TaskService
+	titles   *service.TitleAliasService
 	enabled  bool
 }
 
@@ -37,6 +38,11 @@ func NewSearchController(
 	enabled bool,
 ) *SearchController {
 	return &SearchController{defs: defs, indexers: indexers, clients: clients, search: search, grabs: grabs, tasks: tasks, enabled: enabled}
+}
+
+// SetTitleAliases attaches the resolver used by the title confirmation API.
+func (h *SearchController) SetTitleAliases(titles *service.TitleAliasService) {
+	h.titles = titles
 }
 
 // Status reports whether the module is enabled (API-22).
@@ -451,6 +457,16 @@ func (h *SearchController) Query(c *gin.Context) {
 		Page       int    `json:"page"`
 		PageSize   int    `json:"page_size"`
 		Sort       string `json:"sort"`
+		// Title resolution controls: the UI confirms a TMDB match and re-runs
+		// the query with the chosen aliases.
+		MediaType     string   `json:"media_type"`
+		Aliases       []string `json:"aliases"`
+		TitleConfirmed bool    `json:"title_confirmed"`
+		RefreshTitle  bool     `json:"refresh_title"`
+		// TitleRecognition=false means "直接搜索": keep the typed keyword as-is.
+		TitleRecognition *bool `json:"title_recognition"`
+		// SiteLanguages limits the fan-out to sites in these languages (multi-select).
+		SiteLanguages []string `json:"site_languages"`
 	}
 	if err := c.ShouldBindJSON(&body); err != nil {
 		response.BadRequest(c, "请求参数无法解析")
@@ -462,6 +478,12 @@ func (h *SearchController) Query(c *gin.Context) {
 		Categories: body.Categories, IndexerIDs: body.IndexerIDs, Mode: body.Mode,
 		MinSeeders: body.MinSeeders, MinSize: body.MinSize, MaxSize: body.MaxSize,
 		Page: body.Page, PageSize: body.PageSize, Sort: body.Sort,
+		MediaType: body.MediaType, Aliases: body.Aliases, Confirmed: body.TitleConfirmed,
+		RefreshTitles: body.RefreshTitle,
+		// The UI sends false when its toggle is off; an absent field keeps the
+		// existing behaviour so other callers are unaffected.
+		SkipTitle: body.TitleRecognition != nil && !*body.TitleRecognition,
+		SiteLanguages: body.SiteLanguages,
 	})
 	if err != nil {
 		if errors.Is(err, service.ErrNoIndexers) {
@@ -472,6 +494,80 @@ func (h *SearchController) Query(c *gin.Context) {
 		return
 	}
 	response.Success(c, result)
+}
+
+// TitleCandidates resolves a keyword to TMDB candidates for manual
+// confirmation (API-31). It never queries indexers, so the UI can show the list
+// before spending the search budget.
+func (h *SearchController) TitleCandidates(c *gin.Context) {
+	if h.titles == nil {
+		response.Error(c, http.StatusServiceUnavailable, 50301, "片名解析不可用")
+		return
+	}
+	var body struct {
+		Keyword       string `json:"keyword"`
+		MediaType     string `json:"media_type"`
+		RefreshTitles bool   `json:"refresh"`
+	}
+	if err := c.ShouldBindJSON(&body); err != nil {
+		response.BadRequest(c, "请求参数无法解析")
+		return
+	}
+	if strings.TrimSpace(body.Keyword) == "" {
+		response.BadRequest(c, "关键词不能为空")
+		return
+	}
+	resolution, err := h.titles.Resolve(c.Request.Context(), body.Keyword, body.MediaType, body.RefreshTitles)
+	if err != nil {
+		response.Error(c, http.StatusBadGateway, 50203, err.Error())
+		return
+	}
+	response.Success(c, resolution)
+}
+
+// ConfirmTitle stores the user's pick so later searches reuse it (API-32).
+func (h *SearchController) ConfirmTitle(c *gin.Context) {
+	if h.titles == nil {
+		response.Error(c, http.StatusServiceUnavailable, 50301, "片名解析不可用")
+		return
+	}
+	var body struct {
+		Keyword   string `json:"keyword"`
+		MediaType string `json:"media_type"`
+		TMDBID    int    `json:"tmdb_id"`
+	}
+	if err := c.ShouldBindJSON(&body); err != nil {
+		response.BadRequest(c, "请求参数无法解析")
+		return
+	}
+	if body.TMDBID <= 0 {
+		response.BadRequest(c, "请选择一个 TMDB 结果")
+		return
+	}
+	resolution, err := h.titles.Confirm(c.Request.Context(), body.Keyword, body.MediaType, body.TMDBID)
+	if err != nil {
+		response.Error(c, http.StatusBadRequest, 40011, err.Error())
+		return
+	}
+	response.Success(c, resolution)
+}
+
+// ClearTitle drops the cached resolution for a keyword (API-33).
+func (h *SearchController) ClearTitle(c *gin.Context) {
+	if h.titles == nil {
+		response.Error(c, http.StatusServiceUnavailable, 50301, "片名解析不可用")
+		return
+	}
+	keyword := c.Query("keyword")
+	if strings.TrimSpace(keyword) == "" {
+		response.BadRequest(c, "缺少 keyword 参数")
+		return
+	}
+	if err := h.titles.Clear(keyword); err != nil {
+		response.InternalServerError(c, "清除失败")
+		return
+	}
+	response.Success(c, gin.H{"cleared": true})
 }
 
 // GrabPreview resolves the downloader and category for a result without pushing
@@ -669,7 +765,12 @@ func (h *SearchController) Health(c *gin.Context) {
 		return
 	}
 	indexers, _ := h.indexers.List()
-	response.Success(c, gin.H{"enabled": h.enabled, "indexers": indexers, "statuses": statuses})
+	languages, _ := h.indexers.LanguageFacets()
+	response.Success(c, gin.H{
+		"enabled": h.enabled, "indexers": indexers, "statuses": statuses,
+		// Languages powers the multi-select filter on the search page.
+		"languages": languages,
+	})
 }
 
 func (h *SearchController) writeTestFailure(c *gin.Context, result *service.TestResult) {

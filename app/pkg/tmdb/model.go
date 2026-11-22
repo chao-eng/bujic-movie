@@ -9,6 +9,8 @@ type SearchMovieResult struct {
 	BackdropPath  string  `json:"backdrop_path"`
 	Overview      string  `json:"overview"`
 	VoteAverage   float64 `json:"vote_average"`
+	VoteCount     int     `json:"vote_count"`
+	Popularity    float64 `json:"popularity"`
 }
 
 type SearchMovieResponse struct {
@@ -24,6 +26,8 @@ type SearchTVResult struct {
 	BackdropPath string   `json:"backdrop_path"`
 	Overview     string   `json:"overview"`
 	VoteAverage  float64  `json:"vote_average"`
+	VoteCount    int      `json:"vote_count"`
+	Popularity   float64  `json:"popularity"`
 }
 
 type SearchTVResponse struct {
@@ -46,6 +50,9 @@ type MovieDetail struct {
 	Runtime      int     `json:"runtime"`
 	Genres       []Genre `json:"genres"`
 	OriginalTitle string `json:"original_title"`
+	// OriginalLanguage is the ISO-639-1 code of the original title, used to
+	// tag aliases by language.
+	OriginalLanguage string `json:"original_language"`
 }
 
 type Season struct {
@@ -69,6 +76,27 @@ type TVDetail struct {
 	Genres        []Genre  `json:"genres"`
 	Seasons       []Season `json:"seasons"`
 	OriginalName  string   `json:"original_name"`
+	// OriginalLanguage mirrors MovieDetail for language-aware aliases.
+	OriginalLanguage string `json:"original_language"`
+}
+
+// AlternativeTitle is one entry of TMDB's alternative_titles payload.
+type AlternativeTitle struct {
+	ISO3166_1 string `json:"iso_3166_1"`
+	Title     string `json:"title"`
+	Type      string `json:"type"`
+}
+
+// AlternativeTitlesResponse is the movie payload for /movie/{id}/alternative_titles.
+type AlternativeTitlesResponse struct {
+	ID     int                `json:"id"`
+	Titles []AlternativeTitle `json:"titles"`
+}
+
+// TVAlternativeTitlesResponse nests the same data under "results" for TV.
+type TVAlternativeTitlesResponse struct {
+	ID      int                `json:"id"`
+	Results []AlternativeTitle `json:"results"`
 }
 
 type TVSeasonDetail struct {

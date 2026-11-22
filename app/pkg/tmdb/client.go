@@ -13,6 +13,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/bujic-movie/bujic-movie/pkg/netproxy"
 	"golang.org/x/time/rate"
 )
 
@@ -22,6 +23,9 @@ type Client struct {
 	language   string
 	httpClient *http.Client
 	limiter    *rate.Limiter
+	// proxy supplies the transport for every request so the network setting
+	// applies to scraping and image downloads alike.
+	proxy *netproxy.Provider
 }
 
 func NewClient(apiKey, baseURL, language string) *Client {
@@ -45,6 +49,28 @@ func NewClient(apiKey, baseURL, language string) *Client {
 
 func (c *Client) SetAPIKey(apiKey string) {
 	c.apiKey = apiKey
+}
+
+// SetProxyProvider routes API and image requests through the configured proxy.
+// A nil provider means direct connections.
+func (c *Client) SetProxyProvider(provider *netproxy.Provider) {
+	c.proxy = provider
+}
+
+// ProxyProvider returns the provider in use, so callers that download images
+// share the same network path.
+func (c *Client) ProxyProvider() *netproxy.Provider {
+	return c.proxy
+}
+
+// doer returns the transport owner for outbound requests.
+func (c *Client) doer() interface {
+	Do(*http.Request) (*http.Response, error)
+} {
+	if c.proxy != nil {
+		return c.proxy
+	}
+	return c.httpClient
 }
 
 func maskAPIKey(urlStr string) string {
@@ -131,7 +157,7 @@ func (c *Client) get(ctx context.Context, path string, params map[string]string)
 		}
 
 		startTime := time.Now()
-		resp, err := c.httpClient.Do(req)
+		resp, err := c.doer().Do(req)
 		duration := time.Since(startTime)
 		if err != nil {
 			c.logRequest(u.String(), 0, duration, nil, err)
@@ -232,6 +258,35 @@ func (c *Client) GetTVDetail(ctx context.Context, id int) (*TVDetail, error) {
 		return nil, err
 	}
 	return &detail, nil
+}
+
+// GetMovieAlternativeTitles retrieves release titles per country/region.
+func (c *Client) GetMovieAlternativeTitles(ctx context.Context, id int) (*AlternativeTitlesResponse, error) {
+	body, err := c.get(ctx, fmt.Sprintf("/movie/%d/alternative_titles", id), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	var resp AlternativeTitlesResponse
+	if err := json.Unmarshal(body, &resp); err != nil {
+		return nil, err
+	}
+	return &resp, nil
+}
+
+// GetTVAlternativeTitles retrieves a show's titles in other markets. TMDB nests
+// them under "results" for TV, unlike the movie payload.
+func (c *Client) GetTVAlternativeTitles(ctx context.Context, id int) (*TVAlternativeTitlesResponse, error) {
+	body, err := c.get(ctx, fmt.Sprintf("/tv/%d/alternative_titles", id), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	var resp TVAlternativeTitlesResponse
+	if err := json.Unmarshal(body, &resp); err != nil {
+		return nil, err
+	}
+	return &resp, nil
 }
 
 // GetMovieCredits retrieves the cast & crew for a movie

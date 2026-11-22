@@ -55,6 +55,16 @@ type SearchSource struct {
 	DetailsURL  string `json:"details_url"`
 }
 
+// SiteQuery records the keyword one indexer was actually asked for. The UI
+// shows it as a subtitle so the user can see why a site returned (or did not
+// return) results for a Chinese query.
+type SiteQuery struct {
+	IndexerID   uint   `json:"indexer_id"`
+	IndexerName string `json:"indexer_name"`
+	Keyword     string `json:"keyword"`
+	Language    string `json:"language"`
+}
+
 // SearchResult is the response payload for one query.
 type SearchResult struct {
 	SearchID   string          `json:"search_id"`
@@ -69,6 +79,12 @@ type SearchResult struct {
 	Skipped    int             `json:"skipped"`
 	Irrelevant int             `json:"irrelevant"`
 	TotalFound int             `json:"total_found"`
+	// SiteQueries lists the keyword sent to each site, so the UI can show the
+	// per-site search term instead of guessing.
+	SiteQueries []SiteQuery `json:"site_queries,omitempty"`
+	// Title is the alias resolution behind this query, so the UI can show the
+	// confirmed title and offer the candidate list for manual confirmation.
+	Title *TitleResolution `json:"title,omitempty"`
 }
 
 // SearchQuery is the normalised input for a search.
@@ -89,6 +105,23 @@ type SearchQuery struct {
 	Year       int
 	IMDBID     string
 	TMDBID     string
+	// MediaType narrows alias resolution to movie or tv.
+	MediaType string
+	// Aliases overrides resolution with titles the user picked explicitly.
+	Aliases []string
+	// Confirmed marks Aliases as a manual choice, so no list is offered.
+	Confirmed bool
+	// RefreshTitles re-asks TMDB even when a cached resolution exists.
+	RefreshTitles bool
+	// SkipTitle turns alias resolution off for this query, so the raw keyword
+	// goes to every site. The search page exposes this as a quick toggle for
+	// "直接搜索" vs "片名搜索".
+	SkipTitle bool
+	// SiteLanguages restricts the fan-out to sites publishing in these
+	// languages. Empty means every enabled site, which is the default. The
+	// search page lets the user pick, so an English-only show can be searched
+	// on English trackers and a Korean drama on Korean ones.
+	SiteLanguages []string
 }
 
 // SearchService fans out a query across enabled indexers with global and
@@ -98,6 +131,7 @@ type SearchService struct {
 	indexers  *IndexerService
 	cfg       *config.Config
 	metrics   *SearchMetrics
+	titles    *TitleAliasService
 	globalSem chan struct{}
 	mu        sync.Mutex
 	inFlight  map[string]struct{}
@@ -113,12 +147,18 @@ const MaxPageSize = 50
 
 // NewSearchService builds the service with the configured concurrency budget.
 func NewSearchService(repo repository.SearchRepository, indexers *IndexerService, cfg *config.Config) *SearchService {
+	return NewSearchServiceWithTitles(repo, indexers, cfg, nil)
+}
+
+// NewSearchServiceWithTitles wires title alias resolution into the search
+// pipeline. A nil resolver keeps the previous keyword-only behaviour.
+func NewSearchServiceWithTitles(repo repository.SearchRepository, indexers *IndexerService, cfg *config.Config, titles *TitleAliasService) *SearchService {
 	limit := 3
 	if cfg != nil && cfg.Search.MaxGlobalSearches > 0 {
 		limit = cfg.Search.MaxGlobalSearches
 	}
 	return &SearchService{
-		repo: repo, indexers: indexers, cfg: cfg, metrics: NewSearchMetrics(),
+		repo: repo, indexers: indexers, cfg: cfg, metrics: NewSearchMetrics(), titles: titles,
 		globalSem: make(chan struct{}, limit),
 		inFlight:  map[string]struct{}{},
 		siteSems:  map[uint]chan struct{}{},
@@ -143,7 +183,10 @@ func (s *SearchService) maxWorkers() int {
 	if s.cfg != nil && s.cfg.Search.MaxSiteWorkers > 0 {
 		return s.cfg.Search.MaxSiteWorkers
 	}
-	return 20
+	// 40 lets a large library (80+ sites) resolve in two waves instead of four.
+	// It is only a local gate: each site still honours its own request interval,
+	// and one in-flight request per site is enforced by acquireSite.
+	return 40
 }
 
 func (s *SearchService) historyLimit() int {
@@ -196,7 +239,7 @@ func (s *SearchService) Search(ctx context.Context, q SearchQuery) (*SearchResul
 		}()
 	}
 
-	indexers, err := s.candidates(q.IndexerIDs)
+	indexers, err := s.candidatesFor(q.IndexerIDs, q.SiteLanguages)
 	if err != nil {
 		s.metrics.RecordSearch(time.Since(start), true)
 		return nil, err
@@ -206,6 +249,10 @@ func (s *SearchService) Search(ctx context.Context, q SearchQuery) (*SearchResul
 		return nil, ErrNoIndexers
 	}
 
+	// Resolve the keyword into the titles indexers actually publish before the
+	// fan-out. A failure here degrades to the raw keyword instead of blocking.
+	resolution := s.resolveTitle(waitCtx, q)
+
 	searchCtx, cancel := context.WithDeadline(ctx, deadline)
 	defer cancel()
 
@@ -214,58 +261,102 @@ func (s *SearchService) Search(ctx context.Context, q SearchQuery) (*SearchResul
 		releases []connector.Release
 		err      error
 		skipped  bool
+		// keywords are the terms actually sent, so relevance checks judge the
+		// batch against what the site was asked.
+		keywords []string
+		// language is the site's primary search language, for the UI hint.
+		language string
 	}
 
 	results := make(chan outcome, len(indexers))
 	var wg sync.WaitGroup
 	sem := make(chan struct{}, s.maxWorkers())
+	// Site language decides which alias to send: English trackers cannot answer
+	// a Chinese title.
+	languages := s.indexers.Languages(indexers)
 
 	queueStart := time.Now()
 	for _, idx := range indexers {
 		wg.Add(1)
 		go func(idx entity.SearchIndexer) {
 			defer wg.Done()
+			// Resolve the keywords up front so even a skipped or failed site
+			// reports which terms it was asked for.
+			keywords := siteKeywords(idx, q.Keyword, resolution, languages[idx.ID])
+			skipOutcome := func(err *connector.Error) outcome {
+				return outcome{indexer: idx, skipped: true, keywords: keywords, language: languages[idx.ID], err: err}
+			}
 			// Worker pool: a site that cannot be scheduled within 8s is skipped.
 			select {
 			case sem <- struct{}{}:
 				defer func() { <-sem }()
 			case <-time.After(s.siteTimeout()):
-				results <- outcome{indexer: idx, skipped: true, err: &connector.Error{Kind: connector.KindTimeout, Message: "站点排队超时"}}
+				results <- skipOutcome(&connector.Error{Kind: connector.KindTimeout, Message: "站点排队超时"})
 				return
 			}
 			if time.Since(queueStart) > s.siteTimeout() {
-				results <- outcome{indexer: idx, skipped: true, err: &connector.Error{Kind: connector.KindTimeout, Message: "站点排队超时"}}
+				results <- skipOutcome(&connector.Error{Kind: connector.KindTimeout, Message: "站点排队超时"})
 				return
 			}
 
 			release, ok := s.acquireSite(searchCtx, idx.ID)
 			if !ok {
-				results <- outcome{indexer: idx, skipped: true, err: &connector.Error{Kind: connector.KindTimeout, Message: "站点排队超时"}}
+				results <- skipOutcome(&connector.Error{Kind: connector.KindTimeout, Message: "站点排队超时"})
 				return
 			}
 			defer release()
 
 			conn, err := s.indexers.Connector(searchCtx, idx.ID)
 			if err != nil {
-				results <- outcome{indexer: idx, err: err}
+				results <- outcome{indexer: idx, keywords: keywords, language: languages[idx.ID], err: err}
 				return
 			}
 			if aware, ok := conn.(interface{ SupportsCategories([]int) bool }); ok && !aware.SupportsCategories(q.Categories) {
 				// AC-27: do not query a site that declares no support for the
 				// requested category. It is not a failure, just not applicable.
-				results <- outcome{indexer: idx, skipped: true}
+				results <- outcome{indexer: idx, skipped: true, keywords: keywords, language: languages[idx.ID]}
 				return
 			}
-			releases, err := conn.Search(searchCtx, connector.Query{
-				Keyword: q.Keyword, Categories: q.Categories, Season: q.Season,
-				Episode: q.Episode, Year: q.Year, IMDBID: q.IMDBID, TMDBID: q.TMDBID,
-				Page: q.Page - 1, Limit: MaxPageSize, Mode: q.Mode,
-			})
-			for i := range releases {
-				releases[i].IndexerID = idx.ID
-				releases[i].IndexerName = idx.Name
+
+			// One request per configured language, run together so a site that
+			// indexes several languages costs one round trip rather than N.
+			var (
+				mu        sync.Mutex
+				collected []connector.Release
+				firstErr  error
+			)
+			var keywordWG sync.WaitGroup
+			for _, keyword := range keywords {
+				keywordWG.Add(1)
+				go func(keyword string) {
+					defer keywordWG.Done()
+					releases, err := safeSiteSearch(conn, searchCtx, connector.Query{
+						Keyword: keyword, Categories: q.Categories, Season: q.Season,
+						Episode: q.Episode, Year: q.Year, IMDBID: q.IMDBID, TMDBID: q.TMDBID,
+						Page: q.Page - 1, Limit: MaxPageSize, Mode: q.Mode,
+					}, idx.Name)
+					mu.Lock()
+					defer mu.Unlock()
+					if err != nil {
+						if firstErr == nil {
+							firstErr = err
+						}
+						return
+					}
+					collected = append(collected, releases...)
+				}(keyword)
 			}
-			results <- outcome{indexer: idx, releases: releases, err: err}
+			keywordWG.Wait()
+
+			if len(collected) == 0 && firstErr != nil {
+				results <- outcome{indexer: idx, keywords: keywords, language: languages[idx.ID], err: firstErr}
+				return
+			}
+			for i := range collected {
+				collected[i].IndexerID = idx.ID
+				collected[i].IndexerName = idx.Name
+			}
+			results <- outcome{indexer: idx, releases: collected, keywords: keywords, language: languages[idx.ID]}
 		}(idx)
 	}
 
@@ -276,9 +367,20 @@ func (s *SearchService) Search(ctx context.Context, q SearchQuery) (*SearchResul
 
 	var all []connector.Release
 	failures := make([]SearchFailure, 0)
+	siteQueries := make([]SiteQuery, 0, len(indexers))
 	skipped := 0
 	irrelevant := 0
 	for res := range results {
+		// Record the keyword per site even when the site failed, so the UI can
+		// explain what was asked.
+		for _, keyword := range res.keywords {
+			siteQueries = append(siteQueries, SiteQuery{
+				IndexerID:   res.indexer.ID,
+				IndexerName: res.indexer.Name,
+				Keyword:     keyword,
+				Language:    res.language,
+			})
+		}
 		if res.err == nil && res.skipped {
 			skipped++
 			continue
@@ -300,17 +402,21 @@ func (s *SearchService) Search(ctx context.Context, q SearchQuery) (*SearchResul
 		// A site whose definition went stale may ignore the keyword and return
 		// its default listing; dropping the batch keeps the merged list useful
 		// (BUG-008). It is reported as a failure so the user can see why.
-		kept, dropped := connector.DropIrrelevantBatch(res.releases, q.Keyword)
+		kept, dropped := connector.DropIrrelevantBatchFor(res.releases, relevanceKeywordsFor(res.keywords, resolution))
 		if dropped {
 			irrelevant++
 			failures = append(failures, SearchFailure{
 				IndexerID:   res.indexer.ID,
 				IndexerName: res.indexer.Name,
 				Kind:        "irrelevant",
-				Message:     irrelevantReason(q.Keyword),
+				Message:     irrelevantReason(res.keywords[0]),
 			})
 			continue
 		}
+		// A site's category is not always trustworthy: some file hosts label a
+		// cracked application as a movie. Drop the individual non-video entries
+		// so a mixed batch still contributes its real episodes.
+		kept = connector.DropNonVideoReleases(kept)
 		all = append(all, kept...)
 	}
 
@@ -352,27 +458,47 @@ func (s *SearchService) Search(ctx context.Context, q SearchQuery) (*SearchResul
 	}
 
 	sort.SliceStable(failures, func(i, j int) bool { return failures[i].IndexerID < failures[j].IndexerID })
+	sort.SliceStable(siteQueries, func(i, j int) bool { return siteQueries[i].IndexerID < siteQueries[j].IndexerID })
 
 	s.metrics.RecordSearch(time.Since(start), false)
 
 	return &SearchResult{
-		SearchID:   fmt.Sprintf("s_%d", start.UnixNano()),
-		RequestID:  q.RequestID,
-		ElapsedMS:  time.Since(start).Milliseconds(),
-		Total:      len(items),
-		TotalFound: totalFound,
-		Truncated:  truncated,
-		Failures:   failures,
-		Items:      items,
-		Page:       q.Page,
-		PageSize:   q.PageSize,
-		Skipped:    skipped,
-		Irrelevant: irrelevant,
+		SearchID:    fmt.Sprintf("s_%d", start.UnixNano()),
+		RequestID:   q.RequestID,
+		ElapsedMS:   time.Since(start).Milliseconds(),
+		Total:       len(items),
+		TotalFound:  totalFound,
+		Truncated:   truncated,
+		Failures:    failures,
+		Items:       items,
+		Page:        q.Page,
+		PageSize:    q.PageSize,
+		Skipped:     skipped,
+		Irrelevant:  irrelevant,
+		Title:       resolution,
+		SiteQueries: siteQueries,
 	}, nil
 }
 
 // acquireSite enforces one in-flight request per indexer (BR-29). Waiting is
 // bounded by 15s or the remaining search budget, whichever is shorter.
+// safeSiteSearch runs one site's search and turns a panic into a per-site
+// failure. A definition's template or filter bug must not take down the whole
+// fan-out (which would also kill every other site's result).
+func safeSiteSearch(conn connector.Connector, ctx context.Context, q connector.Query, name string) (releases []connector.Release, err error) {
+	defer func() {
+		if r := recover(); r != nil {
+			logger.Error("search: 站点 %s 搜索时崩溃: %v", name, r)
+			releases = nil
+			err = &connector.Error{
+				Kind:    connector.KindParse,
+				Message: fmt.Sprintf("该站点定义处理失败（%v）", r),
+			}
+		}
+	}()
+	return conn.Search(ctx, q)
+}
+
 func (s *SearchService) acquireSite(ctx context.Context, id uint) (func(), bool) {
 	s.siteMu.Lock()
 	sem, ok := s.siteSems[id]
@@ -393,6 +519,12 @@ func (s *SearchService) acquireSite(ctx context.Context, id uint) (func(), bool)
 }
 
 func (s *SearchService) candidates(ids []uint) ([]entity.SearchIndexer, error) {
+	return s.candidatesFor(ids, nil)
+}
+
+// candidatesFor is candidates with an optional site-language filter. An empty
+// language list means no restriction.
+func (s *SearchService) candidatesFor(ids []uint, languages []string) ([]entity.SearchIndexer, error) {
 	enabled, err := s.repo.EnabledIndexers()
 	if err != nil {
 		return nil, err
@@ -402,10 +534,17 @@ func (s *SearchService) candidates(ids []uint) ([]entity.SearchIndexer, error) {
 		wanted[id] = true
 	}
 
+	wantLang := normaliseLanguageSet(languages)
+
 	out := make([]entity.SearchIndexer, 0, len(enabled))
 	now := time.Now()
 	for _, idx := range enabled {
 		if len(wanted) > 0 && !wanted[idx.ID] {
+			continue
+		}
+		// Language filtering happens here, before the fan-out, so a restricted
+		// search does not waste a request on a site that cannot answer.
+		if len(wantLang) > 0 && !wantLang[languageGroup(s.indexers.DefinitionLanguage(idx))] {
 			continue
 		}
 		status, err := s.repo.GetStatus(idx.ID)
@@ -418,6 +557,32 @@ func (s *SearchService) candidates(ids []uint) ([]entity.SearchIndexer, error) {
 		out = append(out, idx)
 	}
 	return out, nil
+}
+
+// normaliseLanguageSet lower-cases and de-duplicates the requested languages.
+func normaliseLanguageSet(languages []string) map[string]bool {
+	out := map[string]bool{}
+	for _, lang := range languages {
+		lang = strings.ToLower(strings.TrimSpace(lang))
+		if lang == "" || lang == "all" {
+			continue
+		}
+		out[languageGroup(lang)] = true
+	}
+	return out
+}
+
+// languageGroup maps a BCP-47 tag to its primary subtag, so "zh-CN", "zh-TW" and
+// "zh" all compare equal while staying distinct from other languages.
+func languageGroup(lang string) string {
+	lang = strings.ToLower(strings.TrimSpace(lang))
+	if lang == "" {
+		return ""
+	}
+	if idx := strings.Index(lang, "-"); idx > 0 {
+		return lang[:idx]
+	}
+	return lang
 }
 
 func (s *SearchService) applyFilters(cards []connector.MergedRelease, q SearchQuery) []connector.MergedRelease {
@@ -486,6 +651,152 @@ func toSearchItem(card connector.MergedRelease) SearchItem {
 		CategoryLabels: card.CategoryNames,
 	}
 }
+
+// resolveTitle turns the user keyword into the titles indexers publish. A
+// failure degrades to the raw keyword: alias resolution is an optimisation, not
+// a dependency.
+func (s *SearchService) resolveTitle(ctx context.Context, q SearchQuery) *TitleResolution {
+	// The caller asked for a plain keyword search: do not consult TMDB and do
+	// not rewrite the term for any site.
+	if q.SkipTitle {
+		return nil
+	}
+	// A confirmed choice in the cache carries the candidate plus every alias
+	// with its language tag, which is what per-site keyword routing needs. Prefer
+	// it over a bare alias list.
+	if s.titles != nil && s.titles.Enabled() {
+		if cached := s.titles.Cached(q.Keyword, q.MediaType); cached != nil && cached.Confirmed && cached.Selected != nil {
+			return cached
+		}
+	}
+	if len(q.Aliases) > 0 {
+		return &TitleResolution{
+			Keyword: q.Keyword, MediaType: q.MediaType, Aliases: q.Aliases, Confirmed: q.Confirmed,
+		}
+	}
+	if s.titles == nil || !s.titles.Enabled() {
+		return nil
+	}
+	if q.RefreshTitles {
+		resolution, err := s.titles.Resolve(ctx, q.Keyword, q.MediaType, true)
+		if err != nil {
+			logger.Warn("search: title resolution failed: %v", err)
+			return nil
+		}
+		return resolution
+	}
+	if cached := s.titles.Cached(q.Keyword, q.MediaType); cached != nil {
+		// A confirmed choice is authoritative. An unconfirmed one is reused but
+		// still surfaced so the user can correct it.
+		return cached
+	}
+	resolution, err := s.titles.Resolve(ctx, q.Keyword, q.MediaType, false)
+	if err != nil {
+		logger.Warn("search: title resolution failed: %v", err)
+		return nil
+	}
+	return resolution
+}
+
+// relevanceKeywordsFor is relevanceKeywords for a site queried in several
+// languages: every keyword actually sent counts, plus the original term.
+func relevanceKeywordsFor(sent []string, resolution *TitleResolution) []string {
+	out := make([]string, 0, len(sent)+4)
+	add := func(title string) {
+		title = strings.TrimSpace(title)
+		if title == "" {
+			return
+		}
+		for _, existing := range out {
+			if strings.EqualFold(existing, title) {
+				return
+			}
+		}
+		out = append(out, title)
+	}
+	for _, keyword := range sent {
+		add(keyword)
+	}
+	if resolution != nil {
+		add(resolution.Keyword)
+		for _, alias := range resolution.Aliases {
+			add(alias)
+		}
+	}
+	return out
+}
+
+// relevanceKeywords is the set of titles a site's batch may match. The alias we
+// sent always counts, plus the original keyword, so a site that answered with
+// either is kept.
+func relevanceKeywords(sent string, resolution *TitleResolution) []string {
+	return relevanceKeywordsFor([]string{sent}, resolution)
+}
+
+// siteKeywords returns every keyword this site should be searched with.
+//
+// A site normally answers in one language, so this is a single keyword. When the
+// user configured several languages for it (FileMood indexes both Chinese and
+// English releases), the site is queried once per language and the results are
+// merged, which finds more than picking one language.
+func siteKeywords(idx entity.SearchIndexer, base string, resolution *TitleResolution, definitionLang string) []string {
+	langs := splitLanguages(idx.SearchLanguages)
+	if len(langs) == 0 {
+		langs = []string{definitionLang}
+	}
+	out := make([]string, 0, len(langs))
+	seen := map[string]bool{}
+	for _, lang := range langs {
+		keyword := keywordFor(resolution, base, lang)
+		if strings.TrimSpace(keyword) == "" {
+			continue
+		}
+		key := strings.ToLower(keyword)
+		if seen[key] {
+			continue
+		}
+		seen[key] = true
+		out = append(out, keyword)
+	}
+	if len(out) == 0 {
+		return []string{base}
+	}
+	return out
+}
+
+// keywordFor picks the alias for one language. It prefers the selected
+// candidate, which carries language tags. When only a bare alias list is
+// available (a caller supplied aliases directly), it falls back to picking by
+// writing system so a multi-language site still gets distinct keywords.
+func keywordFor(resolution *TitleResolution, base, lang string) string {
+	if resolution != nil && resolution.Selected != nil {
+		return KeywordForLanguage(resolution, base, lang)
+	}
+	if resolution == nil || len(resolution.Aliases) == 0 {
+		return base
+	}
+	lang = strings.ToLower(strings.TrimSpace(lang))
+	if strings.HasPrefix(lang, "zh") {
+		return base
+	}
+	wantHangul := lang == "ko" || strings.HasPrefix(lang, "ko-")
+	wantKana := strings.HasPrefix(lang, "ja")
+	for _, alias := range resolution.Aliases {
+		switch {
+		case wantHangul && isHangul(alias):
+			return alias
+		case wantKana && isKana(alias):
+			return alias
+		case !wantHangul && !wantKana && !containsCJK(alias) && containsLatin(alias):
+			return alias
+		}
+	}
+	return base
+}
+
+
+
+
 
 // irrelevantReason explains why a site's batch was dropped. Sites that only
 // index latin titles rewrite Chinese keywords to punctuation, so their "results"

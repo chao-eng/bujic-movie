@@ -119,39 +119,118 @@ func (s *DefinitionService) SiteURLOf(def entity.SearchIndexerDefinition) string
 }
 
 // LanguageLabel renders a language code as a short Chinese name.
+//
+// Definitions store full BCP-47 tags ("ru-RU", "pt-BR"), so the lookup first
+// tries the exact tag in the explicit table, then the bare language subtag. A
+// bare subtag alone is not enough: before this, "ru-RU" fell through to the
+// fallback and the site filter listed raw codes like "RU", "DE", "HU".
 func LanguageLabel(code string) string {
-	switch strings.ToLower(strings.TrimSpace(code)) {
-	case "zh-cn", "zh-hans", "zh":
-		return "简体中文"
-	case "zh-tw", "zh-hant", "zh-hk":
-		return "繁体中文"
-	case "ja", "ja-jp":
-		return "日语"
-	case "ko", "ko-kr":
-		return "韩语"
-	case "en", "en-us", "en-gb":
-		return "英语"
-	case "ru":
-		return "俄语"
-	case "fr":
-		return "法语"
-	case "de":
-		return "德语"
-	case "es":
-		return "西班牙语"
-	case "pt", "pt-br":
-		return "葡萄牙语"
-	case "it":
-		return "意大利语"
-	case "":
+	normalised := strings.ToLower(strings.TrimSpace(code))
+	if normalised == "" {
 		return "未知"
 	}
-	// Fall back to the region part of an unknown tag (ru-ru -> RU) instead of
-	// showing a raw machine code.
-	if idx := strings.Index(code, "-"); idx > 0 {
-		return strings.ToUpper(code[:idx])
+
+	// Primary language subtag: "ru-ru" -> "ru", "zh-hant-tw" -> "zh".
+	primary := normalised
+	if idx := strings.Index(normalised, "-"); idx > 0 {
+		primary = normalised[:idx]
 	}
-	return strings.ToUpper(strings.TrimSpace(code))
+
+	// Script/region variants that need their own name.
+	switch normalised {
+	case "zh-cn", "zh-hans", "zh-sg", "zh-my":
+		return "简体中文"
+	case "zh-tw", "zh-hant", "zh-hk", "zh-mo":
+		return "繁体中文"
+	}
+
+	if name, ok := languageNames[primary]; ok {
+		return name
+	}
+	// Unknown but well-formed tag: show the language subtag upper-cased rather
+	// than the whole tag ("xx-YY" always reads as "XX").
+	return strings.ToUpper(primary)
+}
+
+// languageNames maps an ISO-639-1 language subtag to its Chinese name. It covers
+// every language present in the upstream Cardigann library plus the common ones
+// definitions are likely to add later.
+var languageNames = map[string]string{
+	"af": "南非荷兰语",
+	"ar": "阿拉伯语",
+	"az": "阿塞拜疆语",
+	"be": "白俄罗斯语",
+	"bg": "保加利亚语",
+	"bn": "孟加拉语",
+	"bs": "波斯尼亚语",
+	"ca": "加泰罗尼亚语",
+	"cs": "捷克语",
+	"cy": "威尔士语",
+	"da": "丹麦语",
+	"de": "德语",
+	"el": "希腊语",
+	"en": "英语",
+	"eo": "世界语",
+	"es": "西班牙语",
+	"et": "爱沙尼亚语",
+	"eu": "巴斯克语",
+	"fa": "波斯语",
+	"fi": "芬兰语",
+	"fr": "法语",
+	"ga": "爱尔兰语",
+	"gl": "加利西亚语",
+	"he": "希伯来语",
+	"hi": "印地语",
+	"hr": "克罗地亚语",
+	"hu": "匈牙利语",
+	"hy": "亚美尼亚语",
+	"id": "印尼语",
+	"is": "冰岛语",
+	"it": "意大利语",
+	"ja": "日语",
+	"ka": "格鲁吉亚语",
+	"kk": "哈萨克语",
+	"km": "高棉语",
+	"ko": "韩语",
+	"ku": "库尔德语",
+	"ky": "吉尔吉斯语",
+	"la": "拉丁语",
+	"lt": "立陶宛语",
+	"lv": "拉脱维亚语",
+	"mk": "马其顿语",
+	"ml": "马拉雅拉姆语",
+	"mn": "蒙古语",
+	"ms": "马来语",
+	"mt": "马耳他语",
+	"nb": "挪威语",
+	"ne": "尼泊尔语",
+	"nl": "荷兰语",
+	"nn": "挪威语（新诺斯克）",
+	"no": "挪威语",
+	"pa": "旁遮普语",
+	"pl": "波兰语",
+	"ps": "普什图语",
+	"pt": "葡萄牙语",
+	"ro": "罗马尼亚语",
+	"ru": "俄语",
+	"si": "僧伽罗语",
+	"sk": "斯洛伐克语",
+	"sl": "斯洛文尼亚语",
+	"sq": "阿尔巴尼亚语",
+	"sr": "塞尔维亚语",
+	"sv": "瑞典语",
+	"sw": "斯瓦希里语",
+	"ta": "泰米尔语",
+	"te": "泰卢固语",
+	"tg": "塔吉克语",
+	"th": "泰语",
+	"tl": "他加禄语",
+	"tr": "土耳其语",
+	"uk": "乌克兰语",
+	"ur": "乌尔都语",
+	"uz": "乌兹别克语",
+	"vi": "越南语",
+	"zh": "中文",
 }
 
 // definitionShape summarises the categories and search modes a template covers,

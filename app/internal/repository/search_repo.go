@@ -1,6 +1,7 @@
 package repository
 
 import (
+	"errors"
 	"time"
 
 	"github.com/bujic-movie/bujic-movie/internal/model/entity"
@@ -59,6 +60,12 @@ type SearchRepository interface {
 	ListHistory(limit int) ([]entity.SearchHistory, error)
 	DeleteHistory(keyword string) error
 	ClearHistory() error
+
+	// Title aliases
+	GetTitleAlias(keyword, mediaType string) (*entity.SearchTitleAlias, error)
+	SaveTitleAlias(alias *entity.SearchTitleAlias) error
+	DeleteTitleAlias(keyword string) error
+	DeleteTitleAliasesBefore(before time.Time) error
 }
 
 type searchRepository struct {
@@ -77,6 +84,7 @@ func NewSearchRepository(db *gorm.DB) SearchRepository {
 		&entity.SearchDownloadClientCategory{},
 		&entity.SearchDownloadRecord{},
 		&entity.SearchHistory{},
+		&entity.SearchTitleAlias{},
 	)
 	return &searchRepository{db: db}
 }
@@ -372,4 +380,42 @@ func (r *searchRepository) DeleteHistory(keyword string) error {
 
 func (r *searchRepository) ClearHistory() error {
 	return r.db.Where("1 = 1").Delete(&entity.SearchHistory{}).Error
+}
+
+func (r *searchRepository) GetTitleAlias(keyword, mediaType string) (*entity.SearchTitleAlias, error) {
+	var alias entity.SearchTitleAlias
+	err := r.db.Where("keyword = ? AND media_type = ?", keyword, mediaType).First(&alias).Error
+	if err != nil {
+		return nil, err
+	}
+	return &alias, nil
+}
+
+func (r *searchRepository) SaveTitleAlias(alias *entity.SearchTitleAlias) error {
+	now := time.Now()
+	alias.UpdatedAt = now
+	if alias.CreatedAt.IsZero() {
+		alias.CreatedAt = now
+	}
+	// The table has a unique index on (keyword, media_type), so an existing row
+	// is updated in place instead of failing on a duplicate key.
+	if alias.ID == 0 {
+		var existing entity.SearchTitleAlias
+		err := r.db.Where("keyword = ? AND media_type = ?", alias.Keyword, alias.MediaType).First(&existing).Error
+		if err == nil {
+			alias.ID = existing.ID
+			alias.CreatedAt = existing.CreatedAt
+		} else if !errors.Is(err, gorm.ErrRecordNotFound) {
+			return err
+		}
+	}
+	return r.db.Save(alias).Error
+}
+
+func (r *searchRepository) DeleteTitleAlias(keyword string) error {
+	return r.db.Where("keyword = ?", keyword).Delete(&entity.SearchTitleAlias{}).Error
+}
+
+func (r *searchRepository) DeleteTitleAliasesBefore(before time.Time) error {
+	return r.db.Where("updated_at < ?", before).Delete(&entity.SearchTitleAlias{}).Error
 }

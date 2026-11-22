@@ -59,7 +59,7 @@ func newTestEnv(t *testing.T) *testEnv {
 	// The production limiter sleeps for the configured interval; tests assert on
 	// behaviour, not wall-clock throttling, so swap in an instant waiter.
 	restoreWaiter := httpclient.WaiterFactory
-	httpclient.WaiterFactory = func(time.Duration) httpclient.Waiter { return instantWaiter{} }
+	httpclient.WaiterFactory = func(time.Duration, int) httpclient.Waiter { return instantWaiter{} }
 	t.Cleanup(func() { httpclient.WaiterFactory = restoreWaiter })
 
 	env := &testEnv{db: db, repo: repo, box: box, cfg: cfg, exec: exec}
@@ -1280,16 +1280,78 @@ func TestTST005_LanguageLabel(t *testing.T) {
 	cases := map[string]string{
 		"zh-CN": "简体中文",
 		"zh-TW": "繁体中文",
+		"zh-SG": "简体中文",
+		"zh-HK": "繁体中文",
 		"en-US": "英语",
+		"en-GB": "英语",
+		"en-AU": "英语",
 		"ja-JP": "日语",
-		"ru-ru": "RU",
-		"":      "未知",
+		"ko-KR": "韩语",
+		// Full BCP-47 tags used to fall through to the raw subtag, so the site
+		// filter listed "RU", "DE", "HU" instead of Chinese names.
+		"ru-RU": "俄语",
+		"ru-ru": "俄语",
+		"de-DE": "德语",
+		"hu-HU": "匈牙利语",
+		"fr-FR": "法语",
+		"es-ES": "西班牙语",
+		"es-MX": "西班牙语",
+		"pl-PL": "波兰语",
+		"pt-BR": "葡萄牙语",
+		"it-IT": "意大利语",
+		"el-GR": "希腊语",
+		"cs-CZ": "捷克语",
+		"tr-TR": "土耳其语",
+		"uk-UA": "乌克兰语",
+		"th-TH": "泰语",
+		"vi-VN": "越南语",
+		"bg-BG": "保加利亚语",
+		"ar-SA": "阿拉伯语",
+		"he-IL": "希伯来语",
+		"nl-NL": "荷兰语",
+		"sv-SE": "瑞典语",
+		"fi-FI": "芬兰语",
+		// Bare subtags still resolve.
+		"ja": "日语",
+		"ko": "韩语",
+		"":   "未知",
+		// An unknown but well-formed tag shows the language part, not the region.
+		"xx-YY": "XX",
 	}
 	for code, want := range cases {
 		if got := LanguageLabel(code); got != want {
 			t.Errorf("LanguageLabel(%q) = %q, want %q", code, got, want)
 		}
 	}
+}
+
+// Every language present in the upstream Cardigann library must render as a
+// Chinese name; a raw code in the filter is the bug this guards against.
+func TestLanguageLabelCoversUpstreamLibrary(t *testing.T) {
+	upstream := []string{
+		"en-US", "zh-CN", "ru-RU", "hu-HU", "de-DE", "fr-FR", "pl-PL", "pt-BR",
+		"es-ES", "ro-RO", "it-IT", "el-GR", "cs-CZ", "tr-TR", "en-GB", "uk-UA",
+		"th-TH", "pt-PT", "vi-VN", "sl-SI", "en-AU", "bg-BG", "ar-AE", "sv-SE",
+		"sr-SP", "lt-LT", "ko-KR", "hr-HR", "he-IL", "es-MX", "zh-TW", "nl-NL",
+		"mk-MK", "lv-LV", "is-IS", "fi-FI", "es-AR", "ar-SA",
+	}
+	for _, code := range upstream {
+		label := LanguageLabel(code)
+		if labelHasChinese(label) {
+			continue
+		}
+		t.Errorf("LanguageLabel(%q) = %q, want a Chinese name", code, label)
+	}
+}
+
+// labelHasChinese reports whether the label carries Chinese characters.
+func labelHasChinese(s string) bool {
+	for _, r := range s {
+		if r >= 0x4E00 && r <= 0x9FFF {
+			return true
+		}
+	}
+	return false
 }
 
 // TST-005 / 需求 03: each template exposes its site homepage so the list can

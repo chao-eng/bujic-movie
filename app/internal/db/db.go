@@ -86,6 +86,14 @@ func LoadSettingsFromDB(db *gorm.DB, cfg *config.Config) error {
 			cfg.Search.DefinitionVersion = setting.Value
 		case "search.auto_sync":
 			cfg.Search.AutoSync = setting.Value == "true"
+		case "search.alias_resolution":
+			cfg.Search.AliasResolution = setting.Value == "true"
+		case "network.proxy":
+			cfg.Network.Proxy = setting.Value
+		case "network.scrape_via_proxy":
+			cfg.Network.ScrapeViaProxy = setting.Value == "true"
+		case "network.search_via_proxy":
+			cfg.Network.SearchViaProxy = setting.Value == "true"
 		}
 	}
 	return nil

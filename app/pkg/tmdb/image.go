@@ -20,14 +20,33 @@ func GetImageURL(path string, size string) string {
 	return fmt.Sprintf("https://image.tmdb.org/t/p/%s%s", size, path)
 }
 
-// DownloadImage downloads an image from URL and saves it atomically to targetPath
-func DownloadImage(url string, targetPath string) error {
+// DownloadImage downloads an image directly, ignoring the configured proxy. New
+// code should call Client.DownloadImage so the network setting is honoured.
+func DownloadImage(url, targetPath string) error {
+	return downloadImage(http.DefaultClient, url, targetPath)
+}
+
+// DownloadImage downloads an image through the client's proxy provider.
+func (c *Client) DownloadImage(url, targetPath string) error {
+	return downloadImage(c.doer(), url, targetPath)
+}
+
+type httpDoer interface {
+	Do(*http.Request) (*http.Response, error)
+}
+
+// downloadImage downloads an image from URL and saves it atomically to targetPath
+func downloadImage(doer httpDoer, url, targetPath string) error {
 	dir := filepath.Dir(targetPath)
 	if err := os.MkdirAll(dir, 0755); err != nil {
 		return err
 	}
 
-	resp, err := http.Get(url)
+	req, err := http.NewRequest(http.MethodGet, url, nil)
+	if err != nil {
+		return err
+	}
+	resp, err := doer.Do(req)
 	if err != nil {
 		return err
 	}

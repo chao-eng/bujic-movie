@@ -67,6 +67,11 @@ type Request struct {
 	NoRetry   bool
 	RateKey   string
 	RateLimit time.Duration
+	// RateBurst is how many calls may start before the interval applies. A
+	// definition whose search spans several pages issues those requests at the
+	// same time, and a burst of 1 would serialise them back into one per
+	// interval — slower than before, because nothing else is running then.
+	RateBurst int
 	MaxBytes  int64
 	// Proxy overrides the global proxy for this call (http/https/socks5).
 	Proxy string
@@ -229,7 +234,7 @@ func (e *Executor) Do(ctx context.Context, req Request) (*Response, error) {
 
 	// Wait for the per-site rate limiter before spending the timeout.
 	if req.RateKey != "" && req.RateLimit > 0 {
-		if err := e.limiter.wait(ctx, req.RateKey, req.RateLimit); err != nil {
+		if err := e.limiter.wait(ctx, req.RateKey, req.RateLimit, req.RateBurst); err != nil {
 			return nil, newError(KindTimeout, "排队等待超过预算", err)
 		}
 	}
@@ -483,8 +488,11 @@ type Waiter interface {
 
 // WaiterFactory builds a Waiter for an interval. It is a variable so tests can
 // replace the real limiter with an instant one; production never reassigns it.
-var WaiterFactory = func(interval time.Duration) Waiter {
-	return rate.NewLimiter(rate.Every(interval), 1)
+var WaiterFactory = func(interval time.Duration, burst int) Waiter {
+	if burst < 1 {
+		burst = 1
+	}
+	return rate.NewLimiter(rate.Every(interval), burst)
 }
 
 // limiterSet keeps one waiter per rate key so different sites never share a
@@ -496,6 +504,7 @@ type limiterSet struct {
 
 type waiterEntry struct {
 	interval time.Duration
+	burst    int
 	waiter   Waiter
 }
 
@@ -503,11 +512,17 @@ func newLimiterSet() *limiterSet {
 	return &limiterSet{byKey: map[string]waiterEntry{}}
 }
 
-func (s *limiterSet) wait(ctx context.Context, key string, interval time.Duration) error {
+func (s *limiterSet) wait(ctx context.Context, key string, interval time.Duration, burst int) error {
+	if burst < 1 {
+		burst = 1
+	}
 	s.mu.Lock()
 	entry, ok := s.byKey[key]
-	if !ok || entry.interval != interval {
-		entry = waiterEntry{interval: interval, waiter: WaiterFactory(interval)}
+	// A larger burst is never downgraded: one multi-page search raises it for the
+	// following single-page requests too, which is harmless and avoids rebuilding
+	// the limiter on every call.
+	if !ok || entry.interval != interval || entry.burst < burst {
+		entry = waiterEntry{interval: interval, burst: burst, waiter: WaiterFactory(interval, burst)}
 		s.byKey[key] = entry
 	}
 	s.mu.Unlock()

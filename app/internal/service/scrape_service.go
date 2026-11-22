@@ -376,7 +376,7 @@ func (s *scrapeService) scrapeMovieFile(ctx context.Context, path string, detail
 		posterURL := tmdb.GetImageURL(detail.PosterPath, "w500")
 		posterDst := filepath.Join(dir, "poster.jpg")
 		if overwrite || !fileExists(posterDst) {
-			if err := tmdb.DownloadImage(posterURL, posterDst); err == nil {
+			if err := s.tmdbClient.DownloadImage(posterURL, posterDst); err == nil {
 				_ = fileutil.ChmodWithUmask(posterDst, false)
 				// Create Plex/Kodi alias copies
 				s.createAliases(posterDst, "folder.jpg")
@@ -388,7 +388,7 @@ func (s *scrapeService) scrapeMovieFile(ctx context.Context, path string, detail
 		backdropURL := tmdb.GetImageURL(detail.BackdropPath, "original")
 		backdropDst := filepath.Join(dir, "backdrop.jpg")
 		if overwrite || !fileExists(backdropDst) {
-			if err := tmdb.DownloadImage(backdropURL, backdropDst); err == nil {
+			if err := s.tmdbClient.DownloadImage(backdropURL, backdropDst); err == nil {
 				_ = fileutil.ChmodWithUmask(backdropDst, false)
 				s.createAliases(backdropDst, "fanart.jpg")
 			}
@@ -492,7 +492,7 @@ func (s *scrapeService) scrapeTVEpisodeFile(ctx context.Context, path string, de
 		stillURL := tmdb.GetImageURL(matchedEpisode.StillPath, "w300")
 		stillDst := filepath.Join(dir, baseName+"-thumb.jpg")
 		if overwrite || !fileExists(stillDst) {
-			if err := tmdb.DownloadImage(stillURL, stillDst); err == nil {
+			if err := s.tmdbClient.DownloadImage(stillURL, stillDst); err == nil {
 				_ = fileutil.ChmodWithUmask(stillDst, false)
 				// Create alias: thumb -> landscape for compatibility
 				s.createAliases(stillDst, baseName+"-landscape.jpg")
@@ -567,7 +567,7 @@ func (s *scrapeService) scrapeBluRayFolderWithType(ctx context.Context, path str
 	if movieDetail.PosterPath != "" {
 		posterDst := filepath.Join(path, "poster.jpg")
 		if overwrite || !fileExists(posterDst) {
-			if err := tmdb.DownloadImage(tmdb.GetImageURL(movieDetail.PosterPath, "w500"), posterDst); err == nil {
+			if err := s.tmdbClient.DownloadImage(tmdb.GetImageURL(movieDetail.PosterPath, "w500"), posterDst); err == nil {
 				_ = fileutil.ChmodWithUmask(posterDst, false)
 				s.createAliases(posterDst, "folder.jpg")
 			}
@@ -577,7 +577,7 @@ func (s *scrapeService) scrapeBluRayFolderWithType(ctx context.Context, path str
 	if movieDetail.BackdropPath != "" {
 		backdropDst := filepath.Join(path, "backdrop.jpg")
 		if overwrite || !fileExists(backdropDst) {
-			if err := tmdb.DownloadImage(tmdb.GetImageURL(movieDetail.BackdropPath, "original"), backdropDst); err == nil {
+			if err := s.tmdbClient.DownloadImage(tmdb.GetImageURL(movieDetail.BackdropPath, "original"), backdropDst); err == nil {
 				_ = fileutil.ChmodWithUmask(backdropDst, false)
 				s.createAliases(backdropDst, "fanart.jpg")
 			}
@@ -626,7 +626,7 @@ func (s *scrapeService) scrapeTVDirectory(ctx context.Context, path string, deta
 	if detail.PosterPath != "" {
 		posterDst := filepath.Join(path, "poster.jpg")
 		if overwrite || !fileExists(posterDst) {
-			if err := tmdb.DownloadImage(tmdb.GetImageURL(detail.PosterPath, "w500"), posterDst); err == nil {
+			if err := s.tmdbClient.DownloadImage(tmdb.GetImageURL(detail.PosterPath, "w500"), posterDst); err == nil {
 				_ = fileutil.ChmodWithUmask(posterDst, false)
 				s.createAliases(posterDst, "folder.jpg")
 			}
@@ -636,7 +636,7 @@ func (s *scrapeService) scrapeTVDirectory(ctx context.Context, path string, deta
 	if detail.BackdropPath != "" {
 		backdropDst := filepath.Join(path, "backdrop.jpg")
 		if overwrite || !fileExists(backdropDst) {
-			if err := tmdb.DownloadImage(tmdb.GetImageURL(detail.BackdropPath, "original"), backdropDst); err == nil {
+			if err := s.tmdbClient.DownloadImage(tmdb.GetImageURL(detail.BackdropPath, "original"), backdropDst); err == nil {
 				_ = fileutil.ChmodWithUmask(backdropDst, false)
 				s.createAliases(backdropDst, "fanart.jpg")
 			}
@@ -689,7 +689,7 @@ func (s *scrapeService) scrapeSeasonDirectory(ctx context.Context, path string, 
 	if seasonPosterPath != "" {
 		posterDst := filepath.Join(path, "poster.jpg")
 		if overwrite || !fileExists(posterDst) {
-			if err := tmdb.DownloadImage(tmdb.GetImageURL(seasonPosterPath, "w500"), posterDst); err == nil {
+			if err := s.tmdbClient.DownloadImage(tmdb.GetImageURL(seasonPosterPath, "w500"), posterDst); err == nil {
 				_ = fileutil.ChmodWithUmask(posterDst, false)
 				s.createAliases(posterDst, "folder.jpg")
 			}
@@ -743,7 +743,7 @@ func (s *scrapeService) initializeMovieDirectory(ctx context.Context, path strin
 	if detail.PosterPath != "" {
 		posterDst := filepath.Join(path, "poster.jpg")
 		if overwrite || !fileExists(posterDst) {
-			if err := tmdb.DownloadImage(tmdb.GetImageURL(detail.PosterPath, "w500"), posterDst); err == nil {
+			if err := s.tmdbClient.DownloadImage(tmdb.GetImageURL(detail.PosterPath, "w500"), posterDst); err == nil {
 				_ = fileutil.ChmodWithUmask(posterDst, false)
 				s.createAliases(posterDst, "folder.jpg")
 			}
@@ -753,7 +753,7 @@ func (s *scrapeService) initializeMovieDirectory(ctx context.Context, path strin
 	if detail.BackdropPath != "" {
 		backdropDst := filepath.Join(path, "backdrop.jpg")
 		if overwrite || !fileExists(backdropDst) {
-			if err := tmdb.DownloadImage(tmdb.GetImageURL(detail.BackdropPath, "original"), backdropDst); err == nil {
+			if err := s.tmdbClient.DownloadImage(tmdb.GetImageURL(detail.BackdropPath, "original"), backdropDst); err == nil {
 				_ = fileutil.ChmodWithUmask(backdropDst, false)
 				s.createAliases(backdropDst, "fanart.jpg")
 			}

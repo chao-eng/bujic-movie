@@ -46,6 +46,11 @@ type SearchIndexer struct {
 	Priority          int       `gorm:"column:priority;not null;default:50" json:"priority"`
 	DownloadClientID  uint      `gorm:"column:download_client_id;not null;default:0" json:"download_client_id"`
 	Enabled           bool      `gorm:"column:enabled;not null;default:true" json:"enabled"`
+	// SearchLanguages overrides how many languages this site is searched in,
+	// comma separated ("zh,en"). Empty means "follow the definition". A site like
+	// FileMood indexes both Chinese and English releases, so searching it once
+	// per language finds more than picking a single one.
+	SearchLanguages string `gorm:"column:search_languages;not null;default:''" json:"-"`
 }
 
 func (SearchIndexer) TableName() string {

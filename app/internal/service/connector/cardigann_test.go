@@ -351,3 +351,135 @@ func TestTST033_CardigannResolveDownloadKeepsMagnet(t *testing.T) {
 		t.Fatalf("type = %q", ref.Type)
 	}
 }
+
+// Multi-path search must issue the paths concurrently. They are independent
+// pages of the same query (1337x has four), and running them in sequence was the
+// dominant cost of a search: 5 sites took 9.3s instead of 1.3s.
+func TestCardigannPathsRunConcurrently(t *testing.T) {
+	const paths = 4
+	const perPathDelay = 300 * time.Millisecond
+
+	var (
+		mu      sync.Mutex
+		inFight int
+		peak    int
+	)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		inFight++
+		if inFight > peak {
+			peak = inFight
+		}
+		mu.Unlock()
+		time.Sleep(perPathDelay)
+		mu.Lock()
+		inFight--
+		mu.Unlock()
+		_, _ = w.Write([]byte(`<table><tr><td><a class="t">x</a><a class="d" href="/x">d</a></td></tr></table>`))
+	}))
+	defer srv.Close()
+
+	pathBlocks := make([]cardigann.SearchPathBlock, 0, paths)
+	for i := 0; i < paths; i++ {
+		pathBlocks = append(pathBlocks, cardigann.SearchPathBlock{
+			RequestBlock: cardigann.RequestBlock{Path: fmt.Sprintf("/p%d", i)},
+		})
+	}
+	def := &cardigann.Definition{
+		ID: "x", Name: "x", Type: "public", Links: []string{srv.URL},
+		Caps: cardigann.CapabilitiesBlock{Modes: map[string][]string{"search": {"q"}}},
+		Search: &cardigann.SearchBlock{
+			Paths: pathBlocks,
+			Rows:  &cardigann.RowsBlock{SelectorBlock: cardigann.SelectorBlock{Selector: "tr"}},
+			Fields: cardigann.FieldMap{Entries: []cardigann.FieldEntry{
+				{Name: "title", Selector: cardigann.SelectorBlock{Selector: "a.t"}},
+				{Name: "download", Selector: cardigann.SelectorBlock{Selector: "a.d", Attribute: "href"}},
+			}},
+		},
+	}
+	conn := newTestCardigann(t, def, srv, &memSession{})
+
+	start := time.Now()
+	releases, err := conn.Search(context.Background(), Query{Keyword: "x"})
+	elapsed := time.Since(start)
+	if err != nil {
+		t.Fatalf("Search: %v", err)
+	}
+	if len(releases) != paths {
+		t.Fatalf("releases = %d, want %d", len(releases), paths)
+	}
+	// Serial execution would need paths*perPathDelay (1.2s); concurrent needs ~1x.
+	if elapsed > perPathDelay*2 {
+		t.Errorf("elapsed = %v, want about %v; paths are running serially", elapsed, perPathDelay)
+	}
+	if peak < 2 {
+		t.Errorf("peak in-flight = %d, want at least 2 concurrent requests", peak)
+	}
+}
+
+// A multi-page search must not be serialised by the per-site rate limiter: the
+// burst covers the paths issued at the same moment.
+func TestCardigannMultiPathUsesRateBurst(t *testing.T) {
+	var (
+		mu      sync.Mutex
+		bursts  []int
+		handler = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			mu.Lock()
+			mu.Unlock()
+			_, _ = w.Write([]byte(`<table><tr><td><a class="t">x</a><a class="d" href="/x">d</a></td></tr></table>`))
+		})
+	)
+	srv := httptest.NewServer(handler)
+	defer srv.Close()
+
+	pathBlocks := make([]cardigann.SearchPathBlock, 0, 3)
+	for i := 0; i < 3; i++ {
+		pathBlocks = append(pathBlocks, cardigann.SearchPathBlock{
+			RequestBlock: cardigann.RequestBlock{Path: fmt.Sprintf("/p%d", i)},
+		})
+	}
+	def := &cardigann.Definition{
+		ID: "x", Name: "x", Type: "public", Links: []string{srv.URL},
+		Caps: cardigann.CapabilitiesBlock{Modes: map[string][]string{"search": {"q"}}},
+		Search: &cardigann.SearchBlock{
+			Paths: pathBlocks,
+			Rows:  &cardigann.RowsBlock{SelectorBlock: cardigann.SelectorBlock{Selector: "tr"}},
+			Fields: cardigann.FieldMap{Entries: []cardigann.FieldEntry{
+				{Name: "title", Selector: cardigann.SelectorBlock{Selector: "a.t"}},
+				{Name: "download", Selector: cardigann.SelectorBlock{Selector: "a.d", Attribute: "href"}},
+			}},
+		},
+	}
+
+	// Capture the burst each request asks for.
+	restore := httpclient.WaiterFactory
+	httpclient.WaiterFactory = func(_ time.Duration, burst int) httpclient.Waiter {
+		mu.Lock()
+		bursts = append(bursts, burst)
+		mu.Unlock()
+		return instantWaiterConnector{}
+	}
+	t.Cleanup(func() { httpclient.WaiterFactory = restore })
+
+	conn := newTestCardigann(t, def, srv, &memSession{})
+	if _, err := conn.Search(context.Background(), Query{Keyword: "x"}); err != nil {
+		t.Fatalf("Search: %v", err)
+	}
+
+	mu.Lock()
+	defer mu.Unlock()
+	sawBurst := false
+	for _, b := range bursts {
+		if b >= 3 {
+			sawBurst = true
+		}
+	}
+	if !sawBurst {
+		t.Errorf("rate bursts = %v, want the path count so pages run together", bursts)
+	}
+}
+
+// instantWaiterConnector satisfies Waiter without sleeping.
+type instantWaiterConnector struct{}
+
+func (instantWaiterConnector) Wait(context.Context) error { return nil }

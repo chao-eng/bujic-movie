@@ -4,6 +4,7 @@ import (
 	"io/fs"
 	"net/http"
 	"strings"
+	"time"
 
 	bujicmovie "github.com/bujic-movie/bujic-movie"
 	"github.com/bujic-movie/bujic-movie/internal/config"
@@ -18,6 +19,7 @@ import (
 	"github.com/bujic-movie/bujic-movie/internal/service/httpclient"
 	"github.com/bujic-movie/bujic-movie/internal/storage/local"
 	"github.com/bujic-movie/bujic-movie/pkg/logger"
+	"github.com/bujic-movie/bujic-movie/pkg/netproxy"
 	"github.com/bujic-movie/bujic-movie/pkg/tmdb"
 	"github.com/gin-gonic/gin"
 	"gorm.io/gorm"
@@ -68,14 +70,27 @@ func SetupRouter(gormDB *gorm.DB, cfg *config.Config) *gin.Engine {
 
 	// Search/download module. It shares the HTTP executor so timeouts, retries
 	// and proxies behave the same for indexers and download clients.
-	searchHTTP, searchHTTPErr := httpclient.New(nil, nil, cfg.Search.Proxy)
+	searchHTTP, searchHTTPErr := httpclient.New(nil, nil, cfg.EffectiveSearchProxy())
 	if searchHTTPErr != nil {
 		logger.Warn("search: proxy config ignored: %v", searchHTTPErr)
 		searchHTTP, _ = httpclient.New(nil, nil, "")
 	}
 	// Re-read the proxy from the live config so a settings change applies
-	// without a restart.
-	searchHTTP.SetGlobalProxyResolver(func() string { return config.GlobalConfig.Search.Proxy })
+	// without a restart. A site-level address still wins, per request.
+	searchHTTP.SetGlobalProxyResolver(func() string {
+		if c := config.GlobalConfig; c != nil {
+			return c.EffectiveSearchProxy()
+		}
+		return ""
+	})
+	// TMDB scraping follows its own opt-in so a tracker-only proxy does not
+	// slow down metadata requests.
+	tmdbClient.SetProxyProvider(netproxy.NewProvider(func() string {
+		if c := config.GlobalConfig; c != nil {
+			return c.EffectiveScrapeProxy()
+		}
+		return ""
+	}, 30*time.Second))
 	searchBox, boxErr := internalcrypto.NewSecretBox(cfg.Server.SecretKey)
 	if boxErr != nil {
 		logger.Error("search: secret box unavailable, module disabled: %v", boxErr)
@@ -87,13 +102,17 @@ func SetupRouter(gormDB *gorm.DB, cfg *config.Config) *gin.Engine {
 		downloadClientSvc *service.DownloadClientService
 		grabSvc           *service.GrabService
 		taskSvc           *service.TaskService
+		titleAliasSvc     *service.TitleAliasService
 	)
 	searchEnabled := cfg.Search.Enabled && searchBox != nil
 	if searchBox != nil {
 		definitionSvc = service.NewDefinitionService(searchRepo, cfg, searchHTTP)
 		indexerSvc = service.NewIndexerService(searchRepo, searchBox, definitionSvc, cfg, searchHTTP)
 		downloadClientSvc = service.NewDownloadClientService(searchRepo, searchBox, cfg, searchHTTP)
-		searchDownloadSvc = service.NewSearchService(searchRepo, indexerSvc, cfg)
+		// Title aliases let a Chinese name find latin/ko indexer listings; TMDB
+		// is the only provider and the resolver degrades to the raw keyword.
+		titleAliasSvc = service.NewTitleAliasService(searchRepo, tmdbClient, cfg)
+		searchDownloadSvc = service.NewSearchServiceWithTitles(searchRepo, indexerSvc, cfg, titleAliasSvc)
 		grabSvc = service.NewGrabService(searchRepo, indexerSvc, downloadClientSvc, cfg, searchDownloadSvc.Metrics())
 		taskSvc = service.NewTaskService(searchRepo, downloadClientSvc)
 	}
@@ -130,6 +149,7 @@ func SetupRouter(gormDB *gorm.DB, cfg *config.Config) *gin.Engine {
 	var searchCtrl *controller.SearchController
 	if searchEnabled {
 		searchCtrl = controller.NewSearchController(definitionSvc, indexerSvc, downloadClientSvc, searchDownloadSvc, grabSvc, taskSvc, true)
+		searchCtrl.SetTitleAliases(titleAliasSvc)
 	} else {
 		// Keep /status reachable so the UI can explain why the module is off.
 		searchCtrl = controller.NewSearchController(nil, nil, nil, nil, nil, nil, false)
@@ -262,6 +282,9 @@ func SetupRouter(gormDB *gorm.DB, cfg *config.Config) *gin.Engine {
 			guarded.GET("/download-clients/:id/categories", searchCtrl.ClientCategories)
 
 			guarded.POST("/query", searchCtrl.Query)
+			guarded.POST("/title-candidates", searchCtrl.TitleCandidates)
+			guarded.POST("/title-confirm", searchCtrl.ConfirmTitle)
+			guarded.DELETE("/title-alias", searchCtrl.ClearTitle)
 			guarded.POST("/grab/preview", searchCtrl.GrabPreview)
 			guarded.POST("/grab", searchCtrl.Grab)
 			guarded.GET("/tasks", searchCtrl.Tasks)
