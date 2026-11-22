@@ -531,6 +531,9 @@ func (c *CardigannConnector) runPath(ctx context.Context, path cardigann.SearchP
 	}
 
 	body := resp.Body
+	// Trackers that declare a legacy charset serve it verbatim; convert before
+	// any selector runs, otherwise titles and dates come out as mojibake.
+	body = cardigann.Decode(body, c.def.Encoding)
 	if len(c.def.Search.PreprocessingFilters) > 0 {
 		if preprocessed, filterErr := cardigann.ApplyFilters(string(body), c.def.Search.PreprocessingFilters); filterErr == nil {
 			body = []byte(preprocessed)
@@ -550,6 +553,8 @@ func (c *CardigannConnector) runPath(ctx context.Context, path cardigann.SearchP
 			SizeBytes:    rel.SizeBytes,
 			Seeders:      rel.Seeders,
 			Peers:        rel.Peers,
+			Grabs:        rel.Grabs,
+			SeedersKnown: rel.SeedersKnown,
 			PublishDate:  rel.PublishDate,
 			Categories:   rel.Categories,
 			DownloadType: rel.DownloadType,

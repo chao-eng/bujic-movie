@@ -293,8 +293,15 @@ func parseTorznabRSS(body []byte) ([]Release, error) {
 			switch strings.ToLower(attr.Name) {
 			case "seeders":
 				rel.Seeders = atoiSafe(attr.Value)
-			case "peers":
-				rel.Peers = atoiSafe(attr.Value)
+				rel.SeedersKnown = strings.TrimSpace(attr.Value) != ""
+			case "peers", "leechers":
+				// Torznab spells the downloader side `peers`; some servers send
+				// `leechers` as well. Either way it is the count not seeding.
+				if v := atoiSafe(attr.Value); v > 0 {
+					rel.Peers = v
+				}
+			case "grabs":
+				rel.Grabs = atoiSafe(attr.Value)
 			case "infohash":
 				rel.InfoHash = strings.ToLower(strings.TrimSpace(attr.Value))
 			case "category":

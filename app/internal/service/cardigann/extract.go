@@ -8,6 +8,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/PuerkitoBio/goquery"
 	"github.com/tidwall/gjson"
@@ -15,13 +16,19 @@ import (
 
 // Release is one normalised search result shared by all connectors.
 type Release struct {
-	Title        string
-	DownloadURL  string
-	InfoHash     string
-	SizeBytes    int64
-	Seeders      int
-	Peers        int
-	PublishDate  string
+	Title       string
+	DownloadURL string
+	InfoHash    string
+	SizeBytes   int64
+	Seeders     int
+	Peers       int
+	// Grabs is the site's completed-download count when the definition exposes
+	// it. It says how many people actually pulled the torrent, which is the
+	// closest thing to "is this release still alive" next to seeders.
+	Grabs       int
+	PublishDate string
+	// SeedersKnown reports whether the definition produced a seeder value.
+	SeedersKnown bool
 	Categories   []int
 	IndexerID    uint
 	IndexerName  string
@@ -388,13 +395,22 @@ func buildRelease(def *Definition, values map[string]string) (Release, error) {
 		rel.DownloadURL = strings.TrimSpace(values["magnet"])
 	}
 	rel.InfoHash = strings.TrimSpace(values["infohash"])
-	rel.PublishDate = strings.TrimSpace(values["date"])
+	rel.PublishDate = normaliseDateText(values["date"])
 	if rel.PublishDate == "" {
-		rel.PublishDate = strings.TrimSpace(values["publishdate"])
+		rel.PublishDate = normaliseDateText(values["publishdate"])
 	}
 	rel.SizeBytes = parseSize(values["size"])
-	rel.Seeders = parseInt(values["seeders"])
+	rawSeeders, hasSeeders := values["seeders"]
+	rel.Seeders = parseInt(rawSeeders)
+	rel.SeedersKnown = hasSeeders && strings.TrimSpace(rawSeeders) != ""
+	// Definitions name the downloader side either `peers` (Torznab wording) or
+	// `leechers` (most Cardigann trackers). Reading only `peers` silently
+	// dropped the number for the vast majority of sites.
 	rel.Peers = parseInt(values["peers"])
+	if rel.Peers == 0 {
+		rel.Peers = parseInt(values["leechers"])
+	}
+	rel.Grabs = parseInt(values["grabs"])
 	// Site categories are mapped to Newznab ids through the definition's caps.
 	// Without this the UI would show the tracker's own numbering (TPB's 208).
 	rel.Categories = mapCategories(def, values["category"])
@@ -414,6 +430,60 @@ func downloadTypeFor(link string) string {
 		return "magnet"
 	}
 	return "torrent"
+}
+
+// normaliseDateText turns the usual tracker date spellings into RFC3339 so the
+// UI can show "3 天前" and sort by real time.
+//
+// Definitions hand us whatever the site prints: unix seconds (The Pirate Bay's
+// `added`), unix milliseconds, "now"/"today" literals, or already-ISO strings.
+// Without this the list showed raw epoch numbers and "now", and 发布时间
+// sorting compared strings.
+func normaliseDateText(raw string) string {
+	value := strings.TrimSpace(raw)
+	if value == "" {
+		return ""
+	}
+	switch strings.ToLower(value) {
+	case "now", "today", "just now":
+		// 这些词在定义里是「抓不到日期」的占位（FileMood 直接写死 now，1337x
+		// 的 date 模板也用它兜底）。当成空值处理，界面就不显示时间，而不是
+		// 把所有结果都说成「刚刚」。
+		return ""
+	case "yesterday":
+		return nowFn().Add(-24 * time.Hour).UTC().Format(time.RFC3339)
+	}
+	// All digits: a unix timestamp, in seconds or milliseconds.
+	if digitsOnly(value) {
+		if n, err := strconv.ParseInt(value, 10, 64); err == nil && n > 0 {
+			if len(value) >= 13 {
+				return time.UnixMilli(n).UTC().Format(time.RFC3339)
+			}
+			// Reject values that cannot be a real date (a stray year number is a
+			// classic false positive: 2024 is not a timestamp).
+			if n > 100_000_000 {
+				return time.Unix(n, 0).UTC().Format(time.RFC3339)
+			}
+		}
+	}
+	for _, layout := range []string{time.RFC3339, "2006-01-02T15:04:05Z07:00", "2006-01-02 15:04:05"} {
+		if t, err := time.Parse(layout, value); err == nil {
+			return t.UTC().Format(time.RFC3339)
+		}
+	}
+	return value
+}
+
+func digitsOnly(s string) bool {
+	if s == "" {
+		return false
+	}
+	for _, r := range s {
+		if r < '0' || r > '9' {
+			return false
+		}
+	}
+	return true
 }
 
 // MagnetFromInfoHash builds a magnet link when the site only exposes a hash.

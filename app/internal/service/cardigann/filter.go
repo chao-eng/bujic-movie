@@ -196,7 +196,7 @@ func applyFilter(in string, f FilterBlock, ctx *TemplateContext) (string, error)
 	case "timeparse":
 		return applyTimeParse(in, f.Args)
 	case "timeago", "reltime", "fuzzytime":
-		return in, nil // timestamps already relative; nothing to normalise
+		return applyFuzzyTime(in, name), nil
 	case "validfilename":
 		return sanitizeFilename(in), nil
 	case "diacritics":
@@ -269,7 +269,73 @@ func applyDateParse(in string, raw any) (string, error) {
 			return t.UTC().Format(time.RFC3339), nil
 		}
 	}
+	// A declared layout is often slightly off for real rows: the zone token is
+	// missing, or the site leaves a language particle behind ("5 October 2024
+	// г. 10:23:04 +03:00"). Accept those rather than shipping raw text, which
+	// costs the UI its relative time and date sorting.
+	if t, ok := parseLooseDate(value); ok {
+		return t.UTC().Format(time.RFC3339), nil
+	}
 	return value, nil
+}
+
+// looseDateRe captures "5 October 2024 г. 10:23:04 +03:00"-style values: a day,
+// a month name, a year, then any filler before an optional time and offset.
+var looseDateRe = regexp.MustCompile(`(?i)^(\d{1,2})\s+([a-z]{3,})\s+(\d{4})\b[^0-9]*(?:(\d{1,2}):(\d{2})(?::(\d{2}))?)?[^+-]*(?:([+-]\d{2}:?\d{2}))?`)
+
+func parseLooseDate(value string) (time.Time, bool) {
+	m := looseDateRe.FindStringSubmatch(strings.TrimSpace(value))
+	if m == nil {
+		return time.Time{}, false
+	}
+	month, err := time.Parse("January", capitalise(m[2]))
+	if err != nil {
+		// Three-letter abbreviations are common too.
+		month, err = time.Parse("Jan", capitalise(m[2]))
+		if err != nil {
+			return time.Time{}, false
+		}
+	}
+	day, err := strconv.Atoi(m[1])
+	if err != nil {
+		return time.Time{}, false
+	}
+	year, err := strconv.Atoi(m[3])
+	if err != nil {
+		return time.Time{}, false
+	}
+	hour, minute, second := 0, 0, 0
+	if m[4] != "" {
+		hour, _ = strconv.Atoi(m[4])
+		minute, _ = strconv.Atoi(m[5])
+		if m[6] != "" {
+			second, _ = strconv.Atoi(m[6])
+		}
+	}
+	loc := time.UTC
+	if m[7] != "" {
+		name := m[7]
+		if len(name) == 5 {
+			// "+0300" → "+03:00" so one layout parses both spellings.
+			name = name[:3] + ":" + name[3:]
+		}
+		if t, err := time.Parse("-07:00", name); err == nil {
+			_, secs := t.Zone()
+			loc = time.FixedZone("", secs)
+		}
+	}
+	return time.Date(year, month.Month(), day, hour, minute, second, 0, loc), true
+}
+
+// capitalise upper-cases the first letter so a month name matches Go's layout
+// names ("october" → "October"). strings.Title is deprecated and would
+// upper-case every word.
+func capitalise(s string) string {
+	lower := strings.ToLower(strings.TrimSpace(s))
+	if lower == "" {
+		return lower
+	}
+	return strings.ToUpper(lower[:1]) + lower[1:]
 }
 
 func applyTimeParse(in string, raw any) (string, error) {
@@ -291,13 +357,100 @@ func applyTimeParse(in string, raw any) (string, error) {
 	return value, nil
 }
 
+// applyFuzzyTime turns a relative timestamp from a tracker listing into an
+// absolute one. Definitions emit things like "3 hours ago", "yesterday" or
+// "12:25am" (today); storing the raw text makes the UI unable to tell how old
+// a release is, and makes sorting by 发布时间 compare strings.
+func applyFuzzyTime(in, filterName string) string {
+	value := strings.TrimSpace(in)
+	if value == "" {
+		return value
+	}
+	now := nowFn().UTC()
+	lower := strings.ToLower(value)
+	switch lower {
+	case "just now":
+		return now.Format(time.RFC3339)
+	case "now", "today":
+		// 定义里 date 找不到值时常用 now 兜底（1337x 就是这样），把它当空值，
+		// 免得整页结果都被说成「刚刚」。
+		return ""
+	case "yesterday":
+		return now.Add(-24 * time.Hour).Format(time.RFC3339)
+	}
+
+	// "<number> <unit> ago" / "<number><unit>" — upstream's timeago layout.
+	if m := timeAgoRe.FindStringSubmatch(lower); m != nil {
+		n, err := strconv.Atoi(m[1])
+		if err == nil {
+			unit := m[2]
+			var step time.Duration
+			switch {
+			case strings.HasPrefix(unit, "s"), strings.HasPrefix(unit, "sec"):
+				step = time.Second
+			case strings.HasPrefix(unit, "m") && !strings.HasPrefix(unit, "mo"):
+				step = time.Minute
+			case strings.HasPrefix(unit, "h"):
+				step = time.Hour
+			case strings.HasPrefix(unit, "d"):
+				step = 24 * time.Hour
+			case strings.HasPrefix(unit, "w"):
+				step = 7 * 24 * time.Hour
+			case strings.HasPrefix(unit, "mo"):
+				step = 30 * 24 * time.Hour
+			case strings.HasPrefix(unit, "y"):
+				step = 365 * 24 * time.Hour
+			}
+			if step > 0 {
+				return now.Add(-time.Duration(n) * step).Format(time.RFC3339)
+			}
+		}
+	}
+
+	// A bare clock time means today (1337x shows "12:25am" for today's rows).
+	if m := clockRe.FindStringSubmatch(lower); m != nil {
+		hour, _ := strconv.Atoi(m[1])
+		minute, _ := strconv.Atoi(m[2])
+		ampm := m[3]
+		switch ampm {
+		case "am":
+			if hour == 12 {
+				hour = 0
+			}
+		case "pm":
+			if hour != 12 {
+				hour += 12
+			}
+		}
+		day := now
+		if hour > now.Hour() || (hour == now.Hour() && minute > now.Minute()) {
+			// A time later than now must belong to yesterday.
+			day = now.Add(-24 * time.Hour)
+		}
+		stamp := time.Date(day.Year(), day.Month(), day.Day(), hour, minute, 0, 0, time.UTC)
+		return stamp.Format(time.RFC3339)
+	}
+
+	if filterName == "fuzzytime" {
+		// Cardigann's fuzzytime only ever sees "today"-style values; anything
+		// else is already absolute and parsed below by dateparse.
+		if t, err := time.Parse(time.RFC3339, value); err == nil {
+			return t.UTC().Format(time.RFC3339)
+		}
+	}
+	return value
+}
+
+var (
+	timeAgoRe = regexp.MustCompile(`^(?:about\s+|over\s+)?(\d+)\s*(seconds?|secs?|s|minutes?|mins?|m|hours?|hrs?|h|days?|d|weeks?|w|months?|mo|years?|y)\s*(?:ago)?$`)
+	clockRe   = regexp.MustCompile(`^(\d{1,2}):(\d{2})\s*(am|pm)?$`)
+)
+
 func applyValidate(in string, raw any) (string, error) {
 	args := argsList(raw)
 	if len(args) == 0 {
 		return in, nil
 	}
-	// Two arguments mean the regexp form some definitions use: the second is
-	// "in" (keep when matched) or anything else (keep when unmatched).
 	if len(args) >= 2 {
 		re, err := regexp.Compile(normaliseRegex(args[0]))
 		if err != nil {

@@ -11,6 +11,8 @@
       "state": "downloading",
       "eta": 900,
       "category": "4k",
+      "num_seeds": 12,
+      "num_complete": 84,
       "save_path": "/downloads/movies"
     },
     {

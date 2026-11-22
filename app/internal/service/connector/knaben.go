@@ -116,15 +116,16 @@ func (k *KnabenConnector) Search(ctx context.Context, q Query) ([]Release, error
 			continue
 		}
 		rel := Release{
-			Title:       hit.Title,
-			DownloadURL: link,
-			InfoHash:    strings.ToLower(hit.Hash),
-			SizeBytes:   hit.Bytes,
-			Seeders:     hit.Seeders,
-			Peers:       hit.Peers,
-			PublishDate: normaliseDate(hit.Date),
-			Categories:  knabenCategoriesToNewznab(hit.CategoryID),
-			IndexerName: k.Name(),
+			Title:        hit.Title,
+			DownloadURL:  link,
+			InfoHash:     strings.ToLower(hit.Hash),
+			SizeBytes:    hit.Bytes,
+			Seeders:      hit.Seeders,
+			SeedersKnown: true,
+			Peers:        hit.Peers,
+			PublishDate:  normaliseDate(hit.Date),
+			Categories:   knabenCategoriesToNewznab(hit.CategoryID),
+			IndexerName:  k.Name(),
 		}
 		if strings.HasPrefix(strings.ToLower(link), "magnet:") {
 			rel.DownloadType = "magnet"

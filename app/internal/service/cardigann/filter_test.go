@@ -4,6 +4,7 @@ import (
 	"errors"
 	"strings"
 	"testing"
+	"time"
 )
 
 // TST-016 / REQ-09: every whitelisted filter is implemented and unknown names
@@ -78,6 +79,61 @@ func TestTST016_FilterChainOrder(t *testing.T) {
 	}
 	if got != "hello-world" {
 		t.Fatalf("got %q", got)
+	}
+}
+
+// A relative timestamp from a tracker listing must become absolute, otherwise
+// the UI cannot show how old a release is and date sorting compares strings.
+func TestFuzzyTimeBecomesAbsolute(t *testing.T) {
+	fixed := time.Date(2026, 11, 22, 12, 0, 0, 0, time.UTC)
+	original := nowFn
+	nowFn = func() time.Time { return fixed }
+	defer func() { nowFn = original }()
+
+	cases := map[string]string{
+		"3 hours ago": "2026-11-22T09:00:00Z",
+		"2 days ago":  "2026-11-20T12:00:00Z",
+		"yesterday":   "2026-11-21T12:00:00Z",
+		"now":         "",
+		"12:25am":     "2026-11-22T00:25:00Z",
+	}
+	for in, want := range cases {
+		got, err := ApplyFilters(in, []FilterBlock{{Name: "fuzzytime"}})
+		if err != nil {
+			t.Fatalf("ApplyFilters(%q): %v", in, err)
+		}
+		if got != want {
+			t.Errorf("%q => %q, want %q", in, got, want)
+		}
+	}
+
+	// An already absolute value must be left alone.
+	if got, _ := ApplyFilters("2026-01-02T03:04:05Z", []FilterBlock{{Name: "timeago"}}); got != "2026-01-02T03:04:05Z" {
+		t.Errorf("absolute value changed to %q", got)
+	}
+}
+
+// A declared layout is often not exactly what the site prints: the language
+// leaves a particle behind ("5 октября 2024 г. 10:23:04 +03:00"). Those dates
+// must still become absolute, otherwise 发布时间 sorting and relative time both
+// break for that site.
+func TestDateParseAcceptsFillerText(t *testing.T) {
+	cases := map[string]string{
+		"5 October 2024 г. 10:23:04 +03:00": "2024-10-05T07:23:04Z",
+		"5 Oct 2024 10:23:04 +0300":         "2024-10-05T07:23:04Z",
+		"20 April 2014 08:15:11 +03:00":     "2014-04-20T05:15:11Z",
+	}
+	for in, want := range cases {
+		got, err := ApplyFilters(in, []FilterBlock{{
+			Name: "dateparse",
+			Args: []any{"d MMMM yyyy HH:mm:ss zzz"},
+		}})
+		if err != nil {
+			t.Fatalf("ApplyFilters(%q): %v", in, err)
+		}
+		if got != want {
+			t.Errorf("%q => %q, want %q", in, got, want)
+		}
 	}
 }
 

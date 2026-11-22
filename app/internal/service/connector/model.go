@@ -70,13 +70,19 @@ type Query struct {
 
 // Release is one normalised search result.
 type Release struct {
-	Title        string
-	DownloadURL  string
-	InfoHash     string
-	SizeBytes    int64
-	Seeders      int
-	Peers        int
-	PublishDate  string
+	Title       string
+	DownloadURL string
+	InfoHash    string
+	SizeBytes   int64
+	Seeders     int
+	Peers       int
+	// Grabs is the completed-download count, when the site reports it.
+	Grabs       int
+	PublishDate string
+	// SeedersKnown reports whether the site published a seeder count at all.
+	// Without it a missing field is indistinguishable from a dead torrent and
+	// the UI would label every such result "无人做种".
+	SeedersKnown bool
 	Categories   []int
 	DownloadType string
 	IndexerID    uint

@@ -23,6 +23,11 @@ type Task struct {
 	State      string  `json:"state"`
 	ETASeconds int64   `json:"eta_seconds"`
 	Category   string  `json:"category"`
+	// ConnectedSeeds is how many seeders this client is actually connected to,
+	// AvailableSeeds is how many the swarm has. A task that stays at 0 connected
+	// explains a stuck download better than the state string does.
+	ConnectedSeeds int `json:"connected_seeds"`
+	AvailableSeeds int `json:"available_seeds"`
 }
 
 // Config is everything needed to talk to one qBittorrent instance.
@@ -579,6 +584,9 @@ func parseTasks(body []byte) []Task {
 			SpeedBPS:   jsonInt(entry, "dlspeed"),
 			ETASeconds: jsonInt(entry, "eta"),
 			Progress:   jsonFloat(entry, "progress"),
+			// qBittorrent 4.6+ reports seeds both connected and in the swarm.
+			ConnectedSeeds: int(jsonInt(entry, "num_seeds")),
+			AvailableSeeds: int(jsonInt(entry, "num_complete")),
 		}
 		if task.Hash != "" {
 			tasks = append(tasks, task)

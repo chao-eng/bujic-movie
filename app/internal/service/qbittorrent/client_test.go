@@ -203,6 +203,11 @@ func TestTST036_TasksParsed(t *testing.T) {
 	if first.State != "downloading" {
 		t.Errorf("state = %q", first.State)
 	}
+	// The connection count is what explains a stuck download, so it must be read
+	// from num_seeds / num_complete rather than left at zero.
+	if first.ConnectedSeeds != 12 || first.AvailableSeeds != 84 {
+		t.Errorf("seeds = %d/%d, want 12/84", first.ConnectedSeeds, first.AvailableSeeds)
+	}
 }
 
 // TST-038 / TST-039: pause, resume and delete map to the right endpoints and

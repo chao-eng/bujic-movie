@@ -27,32 +27,38 @@ type SearchFailure struct {
 
 // SearchItem is one merged result card.
 type SearchItem struct {
-	Fingerprint    string         `json:"fingerprint"`
-	Title          string         `json:"title"`
-	IndexerID      uint           `json:"indexer_id"`
-	IndexerName    string         `json:"indexer_name"`
-	Sources        []SearchSource `json:"sources"`
-	Categories     []int          `json:"categories"`
-	SizeBytes      int64          `json:"size_bytes"`
-	PublishDate    string         `json:"publish_date"`
-	Seeders        int            `json:"seeders"`
-	Peers          int            `json:"peers"`
-	DownloadType   string         `json:"download_type"`
-	DownloadURL    string         `json:"download_url"`
-	InfoHash       string         `json:"info_hash"`
-	DetailsURL     string         `json:"details_url"`
-	CategoryLabels []string       `json:"category_labels"`
+	Fingerprint string         `json:"fingerprint"`
+	Title       string         `json:"title"`
+	IndexerID   uint           `json:"indexer_id"`
+	IndexerName string         `json:"indexer_name"`
+	Sources     []SearchSource `json:"sources"`
+	Categories  []int          `json:"categories"`
+	SizeBytes   int64          `json:"size_bytes"`
+	PublishDate string         `json:"publish_date"`
+	Seeders     int            `json:"seeders"`
+	// SeedersKnown=false 表示站点没给做种数，界面不能据此判定「无人做种」。
+	SeedersKnown   bool     `json:"seeders_known"`
+	Peers          int      `json:"peers"`
+	Grabs          int      `json:"grabs"`
+	DownloadType   string   `json:"download_type"`
+	DownloadURL    string   `json:"download_url"`
+	InfoHash       string   `json:"info_hash"`
+	DetailsURL     string   `json:"details_url"`
+	CategoryLabels []string `json:"category_labels"`
 }
 
 // SearchSource is one indexer variant of a merged card.
 type SearchSource struct {
-	IndexerID   uint   `json:"indexer_id"`
-	IndexerName string `json:"indexer_name"`
-	DownloadURL string `json:"download_url"`
-	InfoHash    string `json:"info_hash"`
-	Seeders     int    `json:"seeders"`
-	SizeBytes   int64  `json:"size_bytes"`
-	DetailsURL  string `json:"details_url"`
+	IndexerID    uint   `json:"indexer_id"`
+	IndexerName  string `json:"indexer_name"`
+	DownloadURL  string `json:"download_url"`
+	InfoHash     string `json:"info_hash"`
+	Seeders      int    `json:"seeders"`
+	SeedersKnown bool   `json:"seeders_known"`
+	Peers        int    `json:"peers"`
+	Grabs        int    `json:"grabs"`
+	SizeBytes    int64  `json:"size_bytes"`
+	DetailsURL   string `json:"details_url"`
 }
 
 // SiteQuery records the keyword one indexer was actually asked for. The UI
@@ -650,13 +656,15 @@ func toSearchItem(card connector.MergedRelease) SearchItem {
 	sources := make([]SearchSource, 0, len(card.Sources))
 	for _, src := range card.Sources {
 		sources = append(sources, SearchSource{
-			IndexerID:   src.IndexerID,
-			IndexerName: src.IndexerName,
-			DownloadURL: src.DownloadURL,
-			InfoHash:    src.InfoHash,
-			Seeders:     src.Seeders,
-			SizeBytes:   src.SizeBytes,
-			DetailsURL:  src.DetailsURL,
+			IndexerID:    src.IndexerID,
+			IndexerName:  src.IndexerName,
+			DownloadURL:  src.DownloadURL,
+			InfoHash:     src.InfoHash,
+			Seeders:      src.Seeders,
+			SeedersKnown: src.SeedersKnown,
+			Grabs:        src.Grabs,
+			SizeBytes:    src.SizeBytes,
+			DetailsURL:   src.DetailsURL,
 		})
 	}
 	return SearchItem{
@@ -669,7 +677,9 @@ func toSearchItem(card connector.MergedRelease) SearchItem {
 		SizeBytes:      card.SizeBytes,
 		PublishDate:    card.PublishDate,
 		Seeders:        card.Seeders,
+		SeedersKnown:   card.SeedersKnown,
 		Peers:          card.Peers,
+		Grabs:          card.Grabs,
 		DownloadType:   card.DownloadType,
 		DownloadURL:    card.DownloadURL,
 		InfoHash:       card.InfoHash,
@@ -819,10 +829,6 @@ func keywordFor(resolution *TitleResolution, base, lang string) string {
 	}
 	return base
 }
-
-
-
-
 
 // irrelevantReason explains why a site's batch was dropped. Sites that only
 // index latin titles rewrite Chinese keywords to punctuation, so their "results"

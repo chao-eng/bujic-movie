@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 )
 
 func loadSearchFixture(t *testing.T, name string) []byte {
@@ -64,6 +65,69 @@ func TestTST032_ExtractKeepsAllRows(t *testing.T) {
 	}
 	if releases[2].Seeders != 0 {
 		t.Errorf("zero seeders row must keep 0, got %d", releases[2].Seeders)
+	}
+}
+
+// A definition that names the downloader side `leechers` (most Cardigann
+// trackers) must still fill Peers, and `grabs` must survive extraction.
+func TestExtractLeechersAndGrabs(t *testing.T) {
+	def := &Definition{
+		Search: &SearchBlock{
+			Rows: &RowsBlock{SelectorBlock: SelectorBlock{Selector: "tr"}},
+			Fields: FieldMap{Entries: []FieldEntry{
+				{Name: "title", Selector: SelectorBlock{Selector: "a.title"}},
+				{Name: "download", Selector: SelectorBlock{Selector: "a.download", Attribute: "href"}},
+				{Name: "seeders", Selector: SelectorBlock{Selector: "td.seeders"}},
+				{Name: "leechers", Selector: SelectorBlock{Selector: "td.leechers"}},
+				{Name: "grabs", Selector: SelectorBlock{Selector: "td.grabs"}},
+			}},
+		},
+	}
+	body := []byte(`<table><tr>
+		<td><a class="title">T</a><a class="download" href="/d/1.torrent">d</a></td>
+		<td class="seeders">42</td><td class="leechers">7</td><td class="grabs">1,234</td>
+	</tr></table>`)
+
+	releases, err := Extract(def, body, "html")
+	if err != nil {
+		t.Fatalf("Extract: %v", err)
+	}
+	if len(releases) != 1 {
+		t.Fatalf("releases = %d, want 1", len(releases))
+	}
+	if releases[0].Peers != 7 {
+		t.Errorf("peers from leechers = %d, want 7", releases[0].Peers)
+	}
+	if releases[0].Grabs != 1234 {
+		t.Errorf("grabs = %d, want 1234", releases[0].Grabs)
+	}
+}
+
+// Definitions hand dates in several spellings; they all must become RFC3339 so
+// the UI can render "3 天前" and sort by real time.
+func TestNormaliseDateText(t *testing.T) {
+	fixed := time.Date(2026, 11, 22, 12, 0, 0, 0, time.UTC)
+	original := nowFn
+	nowFn = func() time.Time { return fixed }
+	defer func() { nowFn = original }()
+
+	cases := map[string]string{
+		"1634482853":           "2021-10-17T15:00:53Z",
+		"1699857963000":        "2023-11-13T06:46:03Z",
+		"now":                  "",
+		"today":                "",
+		"yesterday":            "2026-11-21T12:00:00Z",
+		"2026-01-02T03:04:05Z": "2026-01-02T03:04:05Z",
+		"2026-01-02 03:04:05":  "2026-01-02T03:04:05Z",
+		// A bare year is not a timestamp.
+		"2024": "2024",
+		// Unparsable text is kept so the user can still see what the site said.
+		"Каталог файлов": "Каталог файлов",
+	}
+	for in, want := range cases {
+		if got := normaliseDateText(in); got != want {
+			t.Errorf("normaliseDateText(%q) = %q, want %q", in, got, want)
+		}
 	}
 }
 

@@ -20,14 +20,16 @@ type MergedRelease struct {
 
 // Source is one indexer that returned the merged card.
 type Source struct {
-	IndexerID   uint
-	IndexerName string
-	DownloadURL string
-	InfoHash    string
-	Seeders     int
-	Peers       int
-	SizeBytes   int64
-	DetailsURL  string
+	IndexerID    uint
+	IndexerName  string
+	DownloadURL  string
+	InfoHash     string
+	Seeders      int
+	SeedersKnown bool
+	Peers        int
+	Grabs        int
+	SizeBytes    int64
+	DetailsURL   string
 }
 
 // Fingerprint identifies a grab attempt. It uses the exact size so two
@@ -78,9 +80,13 @@ func mergeInto(card *MergedRelease, rel Release) {
 		card.DetailsURL = rel.DetailsURL
 	}
 	card.Sources = append(card.Sources, sourceOf(rel))
-	if rel.Seeders > card.Seeders {
+	// The card takes the source with the most seeders, but a site that reports
+	// seeders beats one that does not: an unknown count must not overwrite a
+	// real 0 with the same value and hide the fact that data exists.
+	if betterSeedSource(card.Release, rel) {
 		card.Seeders = rel.Seeders
 		card.Peers = rel.Peers
+		card.SeedersKnown = rel.SeedersKnown
 		card.DownloadURL = rel.DownloadURL
 		card.InfoHash = rel.InfoHash
 		card.IndexerID = rel.IndexerID
@@ -93,19 +99,38 @@ func mergeInto(card *MergedRelease, rel Release) {
 	if card.PublishDate == "" {
 		card.PublishDate = rel.PublishDate
 	}
+	// Grabs is a lifetime counter, so the highest value is the most informative
+	// even when another source wins on seeders.
+	if rel.Grabs > card.Grabs {
+		card.Grabs = rel.Grabs
+	}
 	card.Categories = unionInts(card.Categories, rel.Categories)
+}
+
+// betterSeedSource reports whether rel carries a more useful popularity figure
+// than the card currently holds.
+func betterSeedSource(card Release, rel Release) bool {
+	if rel.SeedersKnown && !card.SeedersKnown {
+		return true
+	}
+	if card.SeedersKnown && !rel.SeedersKnown {
+		return false
+	}
+	return rel.Seeders > card.Seeders
 }
 
 func sourceOf(rel Release) Source {
 	return Source{
-		IndexerID:   rel.IndexerID,
-		IndexerName: rel.IndexerName,
-		DownloadURL: rel.DownloadURL,
-		InfoHash:    rel.InfoHash,
-		Seeders:     rel.Seeders,
-		Peers:       rel.Peers,
-		SizeBytes:   rel.SizeBytes,
-		DetailsURL:  rel.DetailsURL,
+		IndexerID:    rel.IndexerID,
+		IndexerName:  rel.IndexerName,
+		DownloadURL:  rel.DownloadURL,
+		InfoHash:     rel.InfoHash,
+		Seeders:      rel.Seeders,
+		SeedersKnown: rel.SeedersKnown,
+		Peers:        rel.Peers,
+		Grabs:        rel.Grabs,
+		SizeBytes:    rel.SizeBytes,
+		DetailsURL:   rel.DetailsURL,
 	}
 }
 

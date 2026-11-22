@@ -134,6 +134,8 @@ func (s *SubsPleaseConnector) Search(ctx context.Context, q Query) ([]Release, e
 				Categories:   categories,
 				IndexerName:  s.Name(),
 				// The API exposes no seeder counts; the upstream indexer uses 1.
+				// SeedersKnown stays false so the UI says "unknown" instead of
+				// pretending a made-up 1 is real swarm data.
 				Seeders: 1,
 				Peers:   2,
 			}
