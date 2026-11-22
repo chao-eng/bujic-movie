@@ -180,12 +180,24 @@ Prowlarr 核心能力的产品级移植：定义库 → 站点 → 聚合搜索 
 - **不传保存目录**：推送只带分类，落盘位置由 qBittorrent 的分类规则决定（PRD D-04）。
 - **凭据只写不读**：`api_key`/`password`/代理凭据/登录 Cookie 加密落库；读接口只回掩码。更新时空值表示「保持原值」，清除需显式 `__clear__`。
 - **定义是快照**：实例保存时的 YAML 不随定义库更新；用户点「刷新定义」才切换（BR-41）。
-- **并发预算**：全局搜索 ≤3、单次站点 ≤20、同站单在途、单站 8s、全量 15s；不要绕开 `SearchService` 直接扇出。
+- **并发预算**：全局搜索 ≤3、单次站点 ≤40、同站单在途、单站 8s、全量 15s；不要绕开 `SearchService` 直接扇出。
 - **搜索结果不落库**；只有推送动作写 `search_download_records`，记录里固化站点/下载器名称。
 - **测试结果就地更新**：单个/批量测试只补丁对应行，不要为此重新拉取整个列表（会丢滚动位置与展开状态）。
 - **错误码别复用 401**：目标站点认证失败返回 422 + `40102`，避免前端把它当成会话失效而登出。
 
-配置项在 `config.Search`（环境变量 `BUJIC_SEARCH_*`）：`enabled`、`definition_source/version`、`auto_sync`、`proxy`、并发与超时、`grab_window_ms`、记录保留天数。全局代理也可在「系统设置 → 搜索下载」修改，保存即生效；站点级 `proxy_url` 优先于全局；qBittorrent 请求带 `BypassProxy`，始终直连。
+配置项在 `config.Search`（环境变量 `BUJIC_SEARCH_*`）：`enabled`、`definition_source/version`、`auto_sync`、并发与超时、`grab_window_ms`、记录保留天数、`alias_resolution`、`alias_timeout_ms`。
+
+**网络代理是独立配置**（`config.Network`，`BUJIC_NETWORK_*`）：一个地址 + 两个开关。
+
+| 字段 | 默认 | 说明 |
+|------|------|------|
+| `network.proxy` | 空 | 全局出口，支持 `http/https/socks5/socks5h` |
+| `network.search_via_proxy` | true | 索引器与定义源走代理 |
+| `network.scrape_via_proxy` | false | TMDB 元数据与海报下载走代理 |
+
+两条链路各自读实时配置，保存即生效。站点级 `proxy_url` 优先于全局开关；qBittorrent 请求带 `BypassProxy`，始终直连。`search.proxy` 保留为升级兼容，`network.proxy` 为空时回退读取它。TMDB 侧统一走 `pkg/netproxy` 的 `Provider`，`pkg/tmdb.DownloadImage` 只是直连的兼容包装，新代码用 `Client.DownloadImage`。
+
+**片名解析**（`internal/service/title_alias_service.go`）：中文片名在扇出前先经 TMDB 解析成原名与各地别名，缓存到 `search_title_aliases`；`SearchService` 按站点 `language` 选检索词（`zh*` 用中文原名，`ko*`/`ja*` 用本地文字，其余优先拉丁名），每站仍只发一次请求。相关性判定用 `connector.DropIrrelevantBatchFor` 接受全部别名，否则英文站结果会被当成「忽略关键词」整批丢弃。人工确认走 `/search/title-candidates` + `/search/title-confirm`，确认后长期复用。
 
 测试：`go test ./internal/service/ ./internal/service/cardigann ./internal/service/connector ./internal/service/httpclient ./internal/service/qbittorrent ./internal/router ./internal/controller`。需求/设计/测试文档在 `doc/搜索下载能力/01-需求文档.md`、`doc/搜索下载能力/03-设计说明书.md`、`doc/搜索下载能力/04-测试计划.md`。
 
