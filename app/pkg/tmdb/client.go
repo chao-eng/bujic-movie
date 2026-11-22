@@ -3,6 +3,7 @@ package tmdb
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -86,6 +87,32 @@ func maskAPIKey(urlStr string) string {
 	return u.String()
 }
 
+// errorText renders an error for reuse, tolerating nil.
+func errorText(err error) string {
+	if err == nil {
+		return "unknown error"
+	}
+	return err.Error()
+}
+
+// maskSecretText removes the API key from arbitrary text.
+//
+// net/http transport errors embed the full request URL
+// (`Get "https://api.themoviedb.org/3/...?api_key=...": dial tcp ...`), so masking
+// only the URL we pass to the log is not enough — the error message reproduces it.
+// This runs over both the log line and any error returned to a caller, because
+// the search API now surfaces TMDB failures.
+func (c *Client) maskSecretText(text string) string {
+	if c.apiKey == "" || text == "" {
+		return text
+	}
+	// Raw and percent-encoded forms; url.QueryEscape encodes nothing here but
+	// keep both in case the key ever contains a reserved character.
+	masked := strings.ReplaceAll(text, c.apiKey, "******")
+	masked = strings.ReplaceAll(masked, url.QueryEscape(c.apiKey), "******")
+	return masked
+}
+
 func (c *Client) logRequest(urlStr string, statusCode int, duration time.Duration, respBody []byte, reqErr error) {
 	logFilePath := "data/logs/tmdb_api.log"
 	dir := filepath.Dir(logFilePath)
@@ -104,7 +131,8 @@ func (c *Client) logRequest(urlStr string, statusCode int, duration time.Duratio
 
 	var logLine string
 	if reqErr != nil {
-		logLine = fmt.Sprintf("[%s] GET %s | DURATION: %v | ERROR: %v\n", timestamp, maskedURL, duration, reqErr)
+		logLine = fmt.Sprintf("[%s] GET %s | DURATION: %v | ERROR: %s\n",
+			timestamp, maskedURL, duration, c.maskSecretText(reqErr.Error()))
 	} else {
 		bodySnippet := string(respBody)
 		if len(bodySnippet) > 200 {
@@ -153,7 +181,7 @@ func (c *Client) get(ctx context.Context, path string, params map[string]string)
 		req, err := http.NewRequestWithContext(ctx, "GET", u.String(), nil)
 		if err != nil {
 			c.logRequest(u.String(), 0, 0, nil, err)
-			return nil, err
+			return nil, errors.New(c.maskSecretText(err.Error()))
 		}
 
 		startTime := time.Now()
@@ -181,13 +209,15 @@ func (c *Client) get(ctx context.Context, path string, params map[string]string)
 		}
 
 		if resp.StatusCode != http.StatusOK {
-			return nil, fmt.Errorf("tmdb api error: status %d, body %s", resp.StatusCode, string(body))
+			return nil, fmt.Errorf("tmdb api error: status %d, body %s",
+				resp.StatusCode, c.maskSecretText(string(body)))
 		}
 
 		return body, nil
 	}
 
-	return nil, fmt.Errorf("tmdb api request failed after 3 attempts, last error: %w", lastErr)
+	return nil, fmt.Errorf("tmdb api request failed after 3 attempts: %s",
+		c.maskSecretText(errorText(lastErr)))
 }
 
 // SearchMovie searches for movies by title and optional year
