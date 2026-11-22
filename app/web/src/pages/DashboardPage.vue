@@ -93,7 +93,7 @@ onMounted(() => {
       <div>
         <h1 class="text-2xl font-bold tracking-tight">控制面板</h1>
         <p class="text-muted-foreground mt-1 text-sm">
-          欢迎使用 Bujic Movie 媒体管家，轻松完成电影电视剧的自动归档与元数据刮削。
+          欢迎使用布吉影库媒体管家，轻松完成电影电视剧的自动归档与元数据刮削。
         </p>
       </div>
       <Button class="gap-2" @click="router.push('/transfer')">
