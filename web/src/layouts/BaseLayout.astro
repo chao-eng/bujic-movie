@@ -57,6 +57,13 @@ const canonical = new URL(Astro.url.pathname, Astro.site ?? 'https://bujic.movie
         }
       })()
     </script>
+
+    <!-- 访问统计：Umami，自行托管，defer 加载不阻塞首屏 -->
+    <script
+      is:inline
+      defer
+      src="https://umami.home.cc/script.js"
+      data-website-id="a0c87b7e-9dcb-4254-9135-6fa9f142f897"></script>
   </head>
   <body class="bg-background text-foreground min-h-screen">
     <a
