@@ -69,7 +69,7 @@ const handleLogin = async () => {
     <Card class="relative z-10 w-full max-w-md backdrop-blur-xl">
       <CardHeader class="justify-items-center py-6 text-center">
         <img src="/favicon.png" alt="布吉影库" class="bg-muted ring-border mb-2 size-14 rounded-xl ring-1" />
-        <CardTitle class="text-2xl font-extrabold tracking-wider">BUJIC MOVIE</CardTitle>
+        <CardTitle class="text-2xl font-extrabold tracking-wider">布吉影视</CardTitle>
         <CardDescription>登入您的媒体管家控制台</CardDescription>
       </CardHeader>
 
