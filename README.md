@@ -199,10 +199,23 @@ services:
 }
 ```
 
+### 3. 安装字幕翻译 Skill
+
+配套 Skill 已发布到 SkillHub，无需手动拷文件，把下面这句话原样发给你的 Agent（Claude Code、Codex、OpenCode、Cursor 等）即可：
+
+```text
+请根据 https://skillhub.cn/install/skillhub.md，安装 @user_029d56a9/bujic-subittle。
+```
+
+装完重启一次 Agent 会话才会加载新 Skill。它依赖上一步配好的 MCP 端点，所以先建 Key、配客户端，再装 Skill；如果调不到工具，先让 Agent 跑一次 `mcp_ping`。
+
+不想用 SkillHub 也可以手动安装：仓库 `skills/bujic-subtitle/` 下的 `SKILL.md`（含完整工具编排流程与字幕翻译规范），整个目录复制到对应 Agent 的 skills 目录（例如 Claude Code 的 `~/.claude/skills/`）即可。
+
+### 4. 其它说明
+
 - MCP 端点**仅接受 API Key 鉴权**（不接受网页登录 JWT）；管理 REST 与 Web UI 仅接受 JWT，两者互不通用。
 - 端点内置 `mcp_ping` 工具，可用于连通性与鉴权自测（不读业务数据、不计入调用记录）。
 - `query_media_list` 的 `media_card_id`：省略或 0 查**全部媒体卡**；>0 查指定卡（先用 `list_media_cards` 枚举）。
-- 对接 Agent 使用的配套 Skill 见仓库 `skills/bujic-subtitle/SKILL.md`（含完整工具编排流程与字幕翻译规范）。
 - 详细设计见 `doc/字幕Agent能力/需求文档.md`（v0.4，BR 权威来源）。
 - 全部需求/设计/测试文档的分类索引见 [`doc/文档索引.md`](doc/文档索引.md)。
 

@@ -184,6 +184,30 @@ import NoteBox from '@/components/site/NoteBox.astro'
     并附了一套专业的字幕翻译规范。
   </p>
 
+  <h3 id="skill-install">安装 Skill</h3>
+
+  <p>
+    Skill 已发布到 SkillHub，不用手动拷文件：把下面这句话原样发给你的 Agent
+    （Claude Code、Codex、OpenCode、Cursor 等），它会自己读安装说明、装到当前 Agent 的 skills 目录。
+  </p>
+
+  <CodeBlock
+    label="发给 Agent 的安装指令"
+    lang="text"
+    code={`请根据 https://skillhub.cn/install/skillhub.md，安装 @user_029d56a9/bujic-subittle。`}
+  />
+
+  <p>
+    装完需要重启一次 Agent 会话才会加载新 Skill。它依赖前面配好的 MCP 端点，
+    所以先建 Key、配客户端，再装 Skill；装完如果调不到工具，先让 Agent 跑一次
+    <code>mcp_ping</code> 验证连通性。
+  </p>
+
+  <p>
+    不想用 SkillHub 也可以手动装：把仓库里的 <code>skills/bujic-subtitle/</code>
+    整个目录复制到对应 Agent 的 skills 目录（例如 Claude Code 的 <code>~/.claude/skills/</code>）。
+  </p>
+
   <CodeBlock
     label="典型对话"
     lang="text"
