@@ -75,6 +75,9 @@ yarn-error.log*
 # 本地工具产物
 .openchamber/
 
+# 介绍视频工程（huashu-motion 剪辑缓存、渲染产物，全部为本地产物）
+/film/
+
 # 前端锁文件必须进版本库：Docker 构建用 npm ci 依赖它锁定依赖版本。
 # （全局 gitignore 忽略了 package-lock.json，这里显式放行。）
 !app/web/package-lock.json
