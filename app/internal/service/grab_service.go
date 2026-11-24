@@ -10,7 +10,7 @@ import (
 	"github.com/bujic-movie/bujic-movie/internal/config"
 	"github.com/bujic-movie/bujic-movie/internal/model/entity"
 	"github.com/bujic-movie/bujic-movie/internal/repository"
-	"github.com/bujic-movie/bujic-movie/internal/service/qbittorrent"
+	"github.com/bujic-movie/bujic-movie/internal/service/downloadclient"
 	"github.com/bujic-movie/bujic-movie/pkg/logger"
 )
 
@@ -34,11 +34,16 @@ type GrabRequest struct {
 type GrabPreview struct {
 	ClientID     uint     `json:"client_id"`
 	ClientName   string   `json:"client_name"`
+	ClientKind   string   `json:"client_kind"`
 	Category     string   `json:"category"`
 	CategoryFrom string   `json:"category_from"` // mapping / parent / default / none
 	Categories   []string `json:"categories"`
+	SavePath     string   `json:"save_path"`
 	SavePathHint string   `json:"save_path_hint"`
-	Warning      string   `json:"warning,omitempty"`
+	// Capabilities lets the dialog hide the category picker for a client that
+	// has no categories at all.
+	Capabilities downloadclient.Capabilities `json:"capabilities"`
+	Warning      string                      `json:"warning,omitempty"`
 }
 
 // GrabResult reports what happened to a grab request.
@@ -47,6 +52,7 @@ type GrabResult struct {
 	ClientID   uint   `json:"client_id"`
 	ClientName string `json:"client_name"`
 	Category   string `json:"category"`
+	SavePath   string `json:"save_path"`
 	InfoHash   string `json:"info_hash"`
 	Status     string `json:"status"`
 	Duplicate  bool   `json:"duplicate"`
@@ -117,24 +123,28 @@ func (s *GrabService) Preview(ctx context.Context, req GrabRequest) (*GrabPrevie
 		return nil, err
 	}
 
-	category, source, err := s.clients.ResolveCategoryDetailed(client.ID, req.Categories)
+	target, err := s.clients.ResolveTarget(client.ID, req.Categories)
 	if err != nil {
 		return nil, err
 	}
 
+	info, _ := downloadclient.LookupKind(client.Kind)
 	preview := &GrabPreview{
-		ClientID: client.ID, ClientName: client.Name,
-		Category: category, CategoryFrom: source,
+		ClientID: client.ID, ClientName: client.Name, ClientKind: client.Kind,
+		Category: target.Category, CategoryFrom: target.Source, SavePath: target.SavePath,
+		Capabilities: info.Capabilities,
 	}
-	switch source {
-	case "mapping", "parent":
+	switch {
+	case target.SavePath != "":
+		preview.SavePathHint = target.SavePath
+	case target.Source == "mapping" || target.Source == "parent":
 		preview.SavePathHint = "由下载器的分类规则决定"
-	case "default":
+	case target.Source == "default":
 		preview.SavePathHint = "由下载器的默认分类决定"
 		preview.Warning = "这个资源的分类没有配置映射，将使用默认分类"
 	default:
-		preview.SavePathHint = "由下载器的分类规则决定"
-		preview.Warning = "没有可用的分类，将由下载器自己决定"
+		preview.SavePathHint = "由下载器的默认下载目录决定"
+		preview.Warning = "没有可用的分类或目录，将由下载器自己决定"
 	}
 	// Offered targets: everything the client already has, plus every mapped
 	// target, so the user can pick something that is actually valid.
@@ -169,7 +179,7 @@ func (s *GrabService) Grab(ctx context.Context, req GrabRequest) (*GrabResult, e
 	if existing, err := s.repo.FindRecentRecord(req.Fingerprint, time.Now().Add(-s.window())); err == nil && existing.Status != "failed" {
 		result := &GrabResult{
 			RecordID: existing.ID, ClientID: existing.DownloaderID, ClientName: existing.DownloaderName,
-			Category: existing.ClientCategory, InfoHash: existing.InfoHash,
+			Category: existing.ClientCategory, SavePath: existing.SavePath, InfoHash: existing.InfoHash,
 			Status: existing.Status, Duplicate: true, Message: "该结果已在下载器中",
 		}
 		s.metrics.RecordDuplicateGrab()
@@ -181,11 +191,16 @@ func (s *GrabService) Grab(ctx context.Context, req GrabRequest) (*GrabResult, e
 		return nil, err
 	}
 
+	target, err := s.clients.ResolveTarget(client.ID, categoriesOf(req))
+	if err != nil {
+		return nil, err
+	}
 	category := strings.TrimSpace(req.CategoryOverride)
-	if category == "" {
-		category, err = s.clients.ResolveCategory(client.ID, categoriesOf(req))
-		if err != nil {
-			return nil, err
+	if category != "" {
+		// A client without categories has nothing to apply an override to; the
+		// directory already came from the mapping.
+		if info, _ := downloadclient.LookupKind(client.Kind); info.Capabilities.Categories {
+			target.Category = category
 		}
 	}
 
@@ -196,7 +211,8 @@ func (s *GrabService) Grab(ctx context.Context, req GrabRequest) (*GrabResult, e
 		DownloaderID:   client.ID,
 		DownloaderName: client.Name,
 		SizeBytes:      req.SizeBytes,
-		ClientCategory: category,
+		ClientCategory: target.Category,
+		SavePath:       target.SavePath,
 		Status:         "pending",
 		InfoHash:       req.InfoHash,
 		Fingerprint:    req.Fingerprint,
@@ -214,9 +230,18 @@ func (s *GrabService) Grab(ctx context.Context, req GrabRequest) (*GrabResult, e
 	grabCtx, cancel := context.WithTimeout(ctx, s.timeout())
 	defer cancel()
 
-	qb := s.clients.Client(*client)
-	paused := client.InitialState == "pause"
-	pushErr := qb.Push(grabCtx, req.DownloadType, payload, category, req.Title, paused)
+	clientImpl := s.clients.Client(*client)
+	pushErr := clientImpl.Push(grabCtx, downloadclient.PushOptions{
+		Kind:          req.DownloadType,
+		Payload:       payload,
+		Name:          req.Title,
+		Category:      target.Category,
+		SavePath:      target.SavePath,
+		Paused:        client.InitialState == "pause",
+		Sequential:    client.Sequential,
+		FirstLast:     client.FirstLastFirst,
+		ContentLayout: client.ContentLayout,
+	})
 
 	switch {
 	case pushErr == nil:
@@ -243,7 +268,8 @@ func (s *GrabService) Grab(ctx context.Context, req GrabRequest) (*GrabResult, e
 
 	result := &GrabResult{
 		RecordID: record.ID, ClientID: client.ID, ClientName: client.Name,
-		Category: category, InfoHash: record.InfoHash, Status: record.Status,
+		Category: target.Category, SavePath: target.SavePath,
+		InfoHash: record.InfoHash, Status: record.Status,
 	}
 	s.metrics.RecordEvent("grab_result", 0, record.Status == "created")
 	switch record.Status {
@@ -292,23 +318,26 @@ func categoriesOf(req GrabRequest) []int {
 	return req.Categories
 }
 
+// isDuplicateErr reports "the client already has this torrent". A plain
+// rejection stays a failure, so the user is not told a task was created when it
+// was not.
 func isDuplicateErr(err error) bool {
-	var qErr *qbittorrent.Error
-	return errors.As(err, &qErr) && qErr.Kind == qbittorrent.KindRejected
+	var cErr *downloadclient.Error
+	return downloadclient.As(err, &cErr) && cErr.Kind == downloadclient.KindDuplicate
 }
 
 func isTimeoutErr(err error) bool {
 	if errors.Is(err, context.DeadlineExceeded) {
 		return true
 	}
-	var qErr *qbittorrent.Error
-	return errors.As(err, &qErr) && strings.Contains(qErr.Message, "超时")
+	var cErr *downloadclient.Error
+	return downloadclient.As(err, &cErr) && strings.Contains(cErr.Message, "超时")
 }
 
 func errorKindOf(err error) string {
-	var qErr *qbittorrent.Error
-	if errors.As(err, &qErr) {
-		return qErr.Kind
+	var cErr *downloadclient.Error
+	if downloadclient.As(err, &cErr) {
+		return cErr.Kind
 	}
 	return "unknown"
 }
@@ -317,9 +346,9 @@ func failureText(err error) string {
 	if err == nil {
 		return ""
 	}
-	var qErr *qbittorrent.Error
-	if errors.As(err, &qErr) {
-		return qErr.Message
+	var cErr *downloadclient.Error
+	if downloadclient.As(err, &cErr) {
+		return cErr.Message
 	}
 	return "推送失败"
 }
@@ -343,12 +372,12 @@ func (s *GrabService) Records(limit int) ([]entity.SearchDownloadRecord, error) 
 
 // TaskGroup is one client's task snapshot.
 type TaskGroup struct {
-	ClientID      uint               `json:"client_id"`
-	ClientName    string             `json:"client_name"`
-	State         string             `json:"state"` // ok / unreachable
-	DataUpdatedAt string             `json:"data_updated_at"`
-	Tasks         []qbittorrent.Task `json:"tasks"`
-	Message       string             `json:"message,omitempty"`
+	ClientID      uint                  `json:"client_id"`
+	ClientName    string                `json:"client_name"`
+	State         string                `json:"state"` // ok / unreachable
+	DataUpdatedAt string                `json:"data_updated_at"`
+	Tasks         []downloadclient.Task `json:"tasks"`
+	Message       string                `json:"message,omitempty"`
 }
 
 // TaskService aggregates tasks from every enabled client (BR-37).
@@ -360,7 +389,7 @@ type TaskService struct {
 }
 
 type taskSnapshot struct {
-	tasks     []qbittorrent.Task
+	tasks     []downloadclient.Task
 	updatedAt time.Time
 }
 
@@ -415,7 +444,7 @@ func (s *TaskService) snapshot(id uint) (taskSnapshot, bool) {
 	return snap, ok
 }
 
-func (s *TaskService) saveSnapshot(id uint, tasks []qbittorrent.Task) {
+func (s *TaskService) saveSnapshot(id uint, tasks []downloadclient.Task) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.snapshots[id] = taskSnapshot{tasks: tasks, updatedAt: time.Now()}
@@ -430,9 +459,9 @@ func (s *TaskService) Action(ctx context.Context, clientID uint, hash, action st
 	callCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
 	if err := s.clients.Client(*client).Action(callCtx, hash, action, deleteFiles); err != nil {
-		var qErr *qbittorrent.Error
-		if errors.As(err, &qErr) && qErr.Kind == qbittorrent.KindRejected {
-			return &InputError{Field: "action", Message: qErr.Message}
+		var cErr *downloadclient.Error
+		if downloadclient.As(err, &cErr) && (cErr.Kind == downloadclient.KindRejected || cErr.Kind == downloadclient.KindUnsupported) {
+			return &InputError{Field: "action", Message: cErr.Message}
 		}
 		return &ClientUnavailable{Err: err}
 	}

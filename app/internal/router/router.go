@@ -273,6 +273,7 @@ func SetupRouter(gormDB *gorm.DB, cfg *config.Config) *gin.Engine {
 			guarded.POST("/indexers/:id/clear-cooldown", searchCtrl.ClearCooldown)
 
 			guarded.GET("/download-clients", searchCtrl.ListClients)
+			guarded.GET("/download-clients/kinds", searchCtrl.ClientKinds)
 			guarded.POST("/download-clients", searchCtrl.CreateClient)
 			guarded.GET("/download-clients/:id", searchCtrl.GetClient)
 			guarded.PUT("/download-clients/:id", searchCtrl.UpdateClient)

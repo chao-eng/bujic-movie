@@ -78,6 +78,10 @@ type Request struct {
 	// BypassProxy skips the global proxy. Download clients live on the LAN and
 	// must not be tunnelled through the search proxy.
 	BypassProxy bool
+	// AllowStatus lists status codes the caller wants to inspect instead of
+	// having them turned into an error. Transmission answers 409 with a session
+	// id header that is the handshake, not a failure.
+	AllowStatus []int
 }
 
 // Response is the bounded result of a call.
@@ -312,6 +316,11 @@ func (e *Executor) once(ctx context.Context, method string, req Request, target 
 	}
 
 	out := &Response{Status: resp.StatusCode, Body: body, Header: resp.Header, Elapsed: e.clock.Now().Sub(start), URL: target.String()}
+	for _, allowed := range req.AllowStatus {
+		if resp.StatusCode == allowed {
+			return out, nil
+		}
+	}
 	switch {
 	case resp.StatusCode == http.StatusUnauthorized:
 		return out, &Error{Kind: KindAuth, Message: "站点拒绝访问，请检查账号或密钥", Status: resp.StatusCode}

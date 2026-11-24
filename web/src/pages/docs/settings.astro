@@ -122,14 +122,35 @@ const webhookSample = '{"title": "{title}", "body": "{text}"}'
   <h2 id="downloader">下载器</h2>
 
   <p>
-    配置 qBittorrent 连接与分类映射。多个下载器可以并存，按优先级与可用性选择。
+    配置下载器连接与分类映射。多个下载器可以并存，按优先级与可用性选择。
+    支持 qBittorrent、Transmission、Deluge、Aria2 四种；选类型后表单只显示该类型用得到的字段。
   </p>
 
   <Screenshot src="/screenshots/settings-downloader.webp" alt="下载器：qBittorrent 已启用" label="下载器" />
 
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr>
+          <th>类型</th>
+          <th>认证</th>
+          <th>分类</th>
+          <th>保存目录</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr><td>qBittorrent</td><td>账号密码或 5.x API Key</td><td>有，分类自带路径</td><td>由分类决定</td></tr>
+        <tr><td>Transmission</td><td>RPC 基本认证（可留空）</td><td>无</td><td>在映射里指定目录</td></tr>
+        <tr><td>Deluge</td><td>Web UI 密码</td><td>Label 插件标签，不影响目录</td><td>在映射里指定目录（可留空）</td></tr>
+        <tr><td>Aria2</td><td>RPC secret（可留空）</td><td>无</td><td>在映射里指定目录</td></tr>
+      </tbody>
+    </table>
+  </div>
+
   <ul>
     <li>支持 qBittorrent 4.6 与 5.x 的登录协议差异。</li>
-    <li>分类列表是从 qBittorrent 实时读取的，映射目标不会填错。</li>
+    <li>分类列表是从下载器实时读取的，映射目标不会填错。</li>
+    <li>下载器不能按分类自动落盘时，每条映射填一个<strong>下载目录</strong>；没匹配到就用「默认下载目录」。</li>
     <li>连续失败会进入短暂的不可用状态（页面上会显示剩余毫秒），到期自动恢复。</li>
     <li>下载器请求始终直连，不走代理。</li>
   </ul>

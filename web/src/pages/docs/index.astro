@@ -54,7 +54,7 @@ import Screenshot from '@/components/site/Screenshot.astro'
         </tr>
         <tr>
           <td><strong>搜索下载</strong></td>
-          <td>多站点聚合搜索、片名别名解析、跨站去重、一键推送到 qBittorrent</td>
+          <td>多站点聚合搜索、片名别名解析、跨站去重、一键推送到 qBittorrent / Transmission / Deluge / Aria2</td>
           <td><code>search_*</code> 八张表</td>
         </tr>
         <tr>
@@ -83,8 +83,9 @@ import Screenshot from '@/components/site/Screenshot.astro'
       再向所有启用的站点各发一次请求，结果按种子指纹跨站合并。
     </li>
     <li>
-      <strong>推送</strong>：点「下载」，系统把磁力链接和<em>分类名</em>交给 qBittorrent。
-      不传保存路径——落盘位置由 qBittorrent 自己的分类规则决定。
+      <strong>推送</strong>：点「下载」，系统把磁力链接和<em>分类名</em>交给下载器。
+      qBittorrent 自己按分类规则决定落盘位置；Transmission / Deluge / Aria2 不能按分类选目录，
+      改用分类映射里配置的下载目录。
     </li>
     <li>
       <strong>监听</strong>：卡片开启了「目录监听」时，fsnotify 会在下载目录里发现新文件，

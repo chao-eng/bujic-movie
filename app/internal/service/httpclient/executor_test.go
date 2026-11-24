@@ -391,3 +391,33 @@ func TestLimiterBurstDoesNotPersist(t *testing.T) {
 type instantWaiterHttp struct{}
 
 func (instantWaiterHttp) Wait(context.Context) error { return nil }
+
+// AllowStatus lets a caller inspect a status the executor would otherwise
+// reject. Transmission's 409 handshake depends on this.
+func TestAllowStatusPassesThroughSelectedCodes(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("X-Transmission-Session-Id", "abc")
+		w.WriteHeader(http.StatusConflict)
+	}))
+	defer srv.Close()
+
+	exec, err := New(nil, newFakeClock(), "")
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	resp, err := exec.Do(context.Background(), Request{URL: srv.URL, AllowStatus: []int{http.StatusConflict}})
+	if err != nil {
+		t.Fatalf("Do: %v", err)
+	}
+	if resp.Status != http.StatusConflict {
+		t.Errorf("status = %d", resp.Status)
+	}
+	if resp.Header.Get("X-Transmission-Session-Id") != "abc" {
+		t.Errorf("header lost")
+	}
+
+	// Without the opt-in the same response is still an error.
+	if _, err := exec.Do(context.Background(), Request{URL: srv.URL}); err == nil {
+		t.Fatal("409 must remain an error by default")
+	}
+}

@@ -928,7 +928,11 @@ loadLanguageFacets()
             <template v-else>{{ grabPreview?.client_name || '—' }}</template>
           </span>
         </div>
-        <div class="flex items-start justify-between gap-3">
+        <div v-if="grabPreview?.capabilities?.categories === false" class="flex items-start justify-between gap-3">
+          <span class="text-muted-foreground">保存目录</span>
+          <span class="flex-1 break-all text-right">{{ grabPreview?.save_path || '下载器默认目录' }}</span>
+        </div>
+        <div v-else class="flex items-start justify-between gap-3">
           <span class="text-muted-foreground pt-1.5">分类</span>
           <div class="flex flex-1 flex-col gap-1">
             <Select
@@ -961,7 +965,7 @@ loadLanguageFacets()
           </div>
         </div>
         <p class="text-muted-foreground text-xs">
-          {{ grabPreview?.save_path_hint || '文件落盘位置由 qBittorrent 的分类规则决定，本页不指定保存目录。' }}
+          {{ grabPreview?.save_path_hint || '保存位置由下载器的分类或默认目录决定，本页不指定保存目录。' }}
         </p>
         <div class="mt-2 flex justify-end gap-2">
           <Button variant="ghost" :disabled="isGrabbing" @click="closeGrab">取消</Button>

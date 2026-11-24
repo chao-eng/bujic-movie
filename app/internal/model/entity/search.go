@@ -85,22 +85,27 @@ func (SearchIndexerStatus) TableName() string {
 	return "search_indexer_status"
 }
 
-// SearchDownloadClient is a download client instance. Only qBittorrent is
-// implemented in this version, but the model mirrors Prowlarr provider shape.
+// SearchDownloadClient is a download client instance. Kind selects the
+// implementation in service/downloadclient, whose Capabilities decide which of
+// the fields below actually apply.
 type SearchDownloadClient struct {
-	ID                  uint      `gorm:"primaryKey;column:id" json:"id"`
-	CreatedAt           time.Time `gorm:"column:created_at" json:"created_at"`
-	UpdatedAt           time.Time `gorm:"column:updated_at" json:"updated_at"`
-	Name                string    `gorm:"column:name;not null;uniqueIndex" json:"name"`
-	Kind                string    `gorm:"column:kind;not null" json:"kind"`
-	Host                string    `gorm:"column:host;not null" json:"host"`
-	Port                int       `gorm:"column:port;not null" json:"port"`
-	UseSSL              bool      `gorm:"column:use_ssl;not null;default:false" json:"use_ssl"`
-	URLBase             string    `gorm:"column:url_base" json:"url_base"`
-	APIKeyEnc           string    `gorm:"column:api_key_enc" json:"-"`
-	Username            string    `gorm:"column:username" json:"username"`
-	PasswordEnc         string    `gorm:"column:password_enc" json:"-"`
-	DefaultCategory     string    `gorm:"column:default_category" json:"default_category"`
+	ID              uint      `gorm:"primaryKey;column:id" json:"id"`
+	CreatedAt       time.Time `gorm:"column:created_at" json:"created_at"`
+	UpdatedAt       time.Time `gorm:"column:updated_at" json:"updated_at"`
+	Name            string    `gorm:"column:name;not null;uniqueIndex" json:"name"`
+	Kind            string    `gorm:"column:kind;not null" json:"kind"`
+	Host            string    `gorm:"column:host;not null" json:"host"`
+	Port            int       `gorm:"column:port;not null" json:"port"`
+	UseSSL          bool      `gorm:"column:use_ssl;not null;default:false" json:"use_ssl"`
+	URLBase         string    `gorm:"column:url_base" json:"url_base"`
+	APIKeyEnc       string    `gorm:"column:api_key_enc" json:"-"`
+	Username        string    `gorm:"column:username" json:"username"`
+	PasswordEnc     string    `gorm:"column:password_enc" json:"-"`
+	DefaultCategory string    `gorm:"column:default_category" json:"default_category"`
+	// DefaultSavePath is the fallback download directory for clients that cannot
+	// derive one from a category (Transmission, Deluge, Aria2). Empty means the
+	// client's own default directory.
+	DefaultSavePath     string    `gorm:"column:default_save_path" json:"default_save_path"`
 	InitialState        string    `gorm:"column:initial_state;not null;default:start" json:"initial_state"`
 	Sequential          bool      `gorm:"column:sequential;not null;default:false" json:"sequential"`
 	FirstLastFirst      bool      `gorm:"column:first_last_first;not null;default:false" json:"first_last_first"`
@@ -118,12 +123,15 @@ func (SearchDownloadClient) TableName() string {
 }
 
 // SearchDownloadClientCategory maps a Newznab category (or group) to a
-// download client category.
+// download client category. SavePath is optional and only used when the client
+// cannot turn a category into a folder by itself (Transmission, Deluge, Aria2):
+// there the mapping is what tells the module where the file should land.
 type SearchDownloadClientCategory struct {
 	ID             uint   `gorm:"primaryKey;column:id" json:"id"`
 	DownloaderID   uint   `gorm:"column:downloader_id;not null;index:idx_search_client_source,unique" json:"downloader_id"`
 	SourceCategory int    `gorm:"column:source_category;not null;index:idx_search_client_source,unique" json:"source_category"`
 	ClientCategory string `gorm:"column:client_category;not null" json:"client_category"`
+	SavePath       string `gorm:"column:save_path" json:"save_path"`
 }
 
 func (SearchDownloadClientCategory) TableName() string {
@@ -133,19 +141,22 @@ func (SearchDownloadClientCategory) TableName() string {
 // SearchDownloadRecord records one grab attempt. Indexer and downloader names
 // are snapshotted so records stay readable after deletion.
 type SearchDownloadRecord struct {
-	ID             uint      `gorm:"primaryKey;column:id" json:"id"`
-	Title          string    `gorm:"column:title;not null" json:"title"`
-	IndexerID      uint      `gorm:"column:indexer_id;not null;index" json:"indexer_id"`
-	IndexerName    string    `gorm:"column:indexer_name;not null" json:"indexer_name"`
-	DownloaderID   uint      `gorm:"column:downloader_id;not null;index" json:"downloader_id"`
-	DownloaderName string    `gorm:"column:downloader_name;not null" json:"downloader_name"`
-	SizeBytes      int64     `gorm:"column:size_bytes;not null;default:0" json:"size_bytes"`
-	ClientCategory string    `gorm:"column:client_category" json:"client_category"`
-	Status         string    `gorm:"column:status;not null;index" json:"status"` // created / failed / pending
-	ErrorKind      string    `gorm:"column:error_kind" json:"error_kind"`
-	InfoHash       string    `gorm:"column:info_hash;index" json:"info_hash"`
-	Fingerprint    string    `gorm:"column:fingerprint;not null;index:idx_search_grab_idem" json:"fingerprint"`
-	CreatedAt      time.Time `gorm:"column:created_at;not null;index" json:"created_at"`
+	ID             uint   `gorm:"primaryKey;column:id" json:"id"`
+	Title          string `gorm:"column:title;not null" json:"title"`
+	IndexerID      uint   `gorm:"column:indexer_id;not null;index" json:"indexer_id"`
+	IndexerName    string `gorm:"column:indexer_name;not null" json:"indexer_name"`
+	DownloaderID   uint   `gorm:"column:downloader_id;not null;index" json:"downloader_id"`
+	DownloaderName string `gorm:"column:downloader_name;not null" json:"downloader_name"`
+	SizeBytes      int64  `gorm:"column:size_bytes;not null;default:0" json:"size_bytes"`
+	ClientCategory string `gorm:"column:client_category" json:"client_category"`
+	// SavePath is what was actually passed to the downloader. Empty means the
+	// client used its own default.
+	SavePath    string    `gorm:"column:save_path" json:"save_path"`
+	Status      string    `gorm:"column:status;not null;index" json:"status"` // created / failed / pending
+	ErrorKind   string    `gorm:"column:error_kind" json:"error_kind"`
+	InfoHash    string    `gorm:"column:info_hash;index" json:"info_hash"`
+	Fingerprint string    `gorm:"column:fingerprint;not null;index:idx_search_grab_idem" json:"fingerprint"`
+	CreatedAt   time.Time `gorm:"column:created_at;not null;index" json:"created_at"`
 }
 
 func (SearchDownloadRecord) TableName() string {

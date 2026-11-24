@@ -59,6 +59,25 @@ export interface IndexerItem {
 export interface CategoryMapping {
   source_category: number
   client_category: string
+  /** 下载器不能按分类自动落盘时，用这个目录决定保存位置。 */
+  save_path?: string
+}
+
+export interface ClientKindCapabilities {
+  categories: boolean
+  category_path: boolean
+  save_path: boolean
+  queue: boolean
+  content_layout: boolean
+}
+
+export interface ClientKind {
+  kind: string
+  name: string
+  default_port: number
+  default_url_base: string
+  auth: 'api_key_or_user_pass' | 'user_pass' | 'password' | 'token'
+  capabilities: ClientKindCapabilities
 }
 
 export interface ClientCategory {
@@ -78,6 +97,7 @@ export interface DownloadClientItem {
   password_mask: string
   username: string
   default_category: string
+  default_save_path: string
   initial_state: string
   sequential: boolean
   first_last_first: boolean
@@ -87,6 +107,7 @@ export interface DownloadClientItem {
   enabled: boolean
   category_mappings: CategoryMapping[] | null
   unavailable_remaining_ms: number
+  capabilities?: ClientKindCapabilities
 }
 
 export interface SearchSource {
@@ -254,6 +275,7 @@ export interface RecordItem {
   downloader_name: string
   size_bytes: number
   client_category: string
+  save_path: string
   status: string
   error_kind: string
   created_at: string
@@ -268,10 +290,13 @@ export interface HistoryItem {
 export interface GrabPreview {
   client_id: number
   client_name: string
+  client_kind: string
   category: string
   category_from: 'mapping' | 'parent' | 'default' | 'none'
   categories: string[] | null
+  save_path: string
   save_path_hint: string
+  capabilities?: ClientKindCapabilities
   warning?: string
 }
 
@@ -280,6 +305,7 @@ export interface GrabResult {
   client_id: number
   client_name: string
   category: string
+  save_path: string
   info_hash: string
   status: string
   duplicate: boolean
@@ -318,6 +344,7 @@ export const searchApi = {
   }) => client.post(`${base}/cookie-import`, payload),
 
   listClients: () => client.get(`${base}/download-clients`),
+  clientKinds: () => client.get(`${base}/download-clients/kinds`),
   createClient: (payload: unknown) => client.post(`${base}/download-clients`, payload),
   updateClient: (id: number, payload: unknown) => client.put(`${base}/download-clients/${id}`, payload),
   deleteClient: (id: number) => client.delete(`${base}/download-clients/${id}`),

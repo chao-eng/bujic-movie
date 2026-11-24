@@ -35,7 +35,7 @@
 | `app/internal/service/cardigann/` | Cardigann YAML 定义解析引擎（解析、模板渲染、过滤器、字段抽取） |
 | `app/internal/service/connector/` | 索引器接出：统一 `Connector` 接口 + Torznab / Cardigann / Knaben / SubsPlease |
 | `app/internal/service/httpclient/` | 出站请求执行器：超时、重试、限速、主机白名单、响应体积上限 |
-| `app/internal/service/qbittorrent/` | qBittorrent 客户端 |
+| `app/internal/service/downloadclient/` | 下载器客户端：`Kind`/`Capabilities` 元数据、`Client` 接口与 qBittorrent / Transmission / Deluge / Aria2 四种实现 |
 | `app/internal/crypto/` | 站点凭据加密（AES-256-GCM） |
 | `app/internal/mcp/` | MCP Streamable HTTP 网关（工具定义、鉴权、调用记录） |
 | `app/internal/mediautil/` | REST 与 MCP 共享的字幕扫描/媒体聚合/路径白名单工具 |
@@ -175,7 +175,7 @@ Prowlarr 核心能力的产品级移植：定义库 → 站点 → 聚合搜索 
 | 定义解析 | `internal/service/cardigann/` | YAML → 定义模型、三级错误定位、过滤器白名单、HTML/JSON/XML 提取 |
 | 连接器 | `internal/service/connector/` | `Connector` 接口 + Torznab / Cardigann / Knaben / SubsPlease；`GroupReleases` 跨站去重 |
 | HTTP | `internal/service/httpclient/` | 超时、GET 重试（1s/2s）、代理、主机白名单、20MB 响应上限、每站限流；**每一跳重定向都重新校验主机** |
-| 下载器 | `internal/service/qbittorrent/` | qB 4.6/5.x 登录、建分类、推送、任务、暂停/继续/删除 |
+| 下载器 | `internal/service/downloadclient/` | 统一的 `Client` 接口；qB 4.6/5.x（API Key 或 Web UI 登录、建分类）、Transmission RPC（409 会话握手、basic auth）、Deluge Web UI JSON-RPC（密码 + 会话 Cookie + Label 插件）、Aria2 JSON-RPC（token 前缀）；推送、任务、暂停/继续/删除 |
 | 服务 | `internal/service/{definition,indexer,search,download_client,grab}_service.go`、`cookie_import_service.go` | 定义库、站点健康、聚合搜索、分类映射、幂等推送、任务聚合、会话导入 |
 | 加密 | `internal/crypto/secretbox.go` | AES-256-GCM，密钥由 `server.secret_key` 域分离派生；接口只回掩码 |
 | 控制器/路由 | `internal/controller/search_controller.go`、`internal/router/router.go` | `/api/v1/search/*`，JWT；`search.enabled=false` 时除 `/status` 外 404 |
@@ -191,7 +191,7 @@ Prowlarr 核心能力的产品级移植：定义库 → 站点 → 聚合搜索 
 
 #### 关键约束（改代码前必读）
 
-- **不传保存目录**：推送只带分类，落盘位置由 qBittorrent 的分类规则决定（PRD D-04）。
+- **保存目录按下载器能力决定**：qBittorrent 的分类自带保存路径，推送只带分类（PRD D-04）；Transmission / Deluge / Aria2 不能按分类自动落盘，改由分类映射里的 `save_path` 或下载器的 `default_save_path` 显式指定目录。`downloadclient.Capabilities` 是这一判断的唯一来源，不要在别处硬编码客户端名字。
 - **凭据只写不读**：`api_key`/`password`/代理凭据/登录 Cookie 加密落库；读接口只回掩码。更新时空值表示「保持原值」，清除需显式 `__clear__`。
 - **定义是快照**：实例保存时的 YAML 不随定义库更新；用户点「刷新定义」才切换（BR-41）。
 - **并发预算**：全局搜索 ≤3、单次站点 ≤40、同站单在途、单站 8s、全量 15s；不要绕开 `SearchService` 直接扇出。
@@ -213,7 +213,7 @@ Prowlarr 核心能力的产品级移植：定义库 → 站点 → 聚合搜索 
 
 **片名解析**（`internal/service/title_alias_service.go`）：中文片名在扇出前先经 TMDB 解析成原名与各地别名，缓存到 `search_title_aliases`；`SearchService` 按站点 `language` 选检索词（`zh*` 用中文原名，`ko*`/`ja*` 用本地文字，其余优先拉丁名），每站仍只发一次请求。相关性判定用 `connector.DropIrrelevantBatchFor` 接受全部别名，否则英文站结果会被当成「忽略关键词」整批丢弃。人工确认走 `/search/title-candidates` + `/search/title-confirm`，确认后长期复用。
 
-测试：`go test ./internal/service/ ./internal/service/cardigann ./internal/service/connector ./internal/service/httpclient ./internal/service/qbittorrent ./internal/router ./internal/controller`。需求/设计/测试文档在 `doc/搜索下载能力/01-需求文档.md`、`doc/搜索下载能力/03-设计说明书.md`、`doc/搜索下载能力/04-测试计划.md`。
+测试：`go test ./internal/service/ ./internal/service/cardigann ./internal/service/connector ./internal/service/httpclient ./internal/service/downloadclient ./internal/router ./internal/controller`。需求/设计/测试文档在 `doc/搜索下载能力/01-需求文档.md`、`doc/搜索下载能力/03-设计说明书.md`、`doc/搜索下载能力/04-测试计划.md`。
 
 ---
 

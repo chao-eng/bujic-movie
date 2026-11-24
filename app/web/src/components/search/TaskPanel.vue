@@ -128,7 +128,7 @@ onUnmounted(() => {
           <RefreshCwIcon />
         </EmptyMedia>
         <EmptyTitle>还没有配置下载器</EmptyTitle>
-        <EmptyDescription>到「设置 → 下载器」添加 qBittorrent 后即可查看任务。</EmptyDescription>
+        <EmptyDescription>到「设置 → 下载器」添加下载器后即可查看任务。</EmptyDescription>
       </EmptyHeader>
     </Empty>
 

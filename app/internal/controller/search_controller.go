@@ -330,6 +330,12 @@ func (h *SearchController) ListClients(c *gin.Context) {
 	response.Success(c, gin.H{"items": list, "total": len(list)})
 }
 
+// ClientKinds lists the supported download client kinds and their capabilities
+// (API-30), so the form can show only the fields a kind actually uses.
+func (h *SearchController) ClientKinds(c *gin.Context) {
+	response.Success(c, gin.H{"items": h.clients.Kinds()})
+}
+
 // GetClient returns one download client (API-11).
 func (h *SearchController) GetClient(c *gin.Context) {
 	id, ok := parseID(c)

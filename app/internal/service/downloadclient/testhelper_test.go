@@ -1,4 +1,4 @@
-package qbittorrent
+package downloadclient
 
 import (
 	"net/url"

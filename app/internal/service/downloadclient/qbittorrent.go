@@ -1,4 +1,4 @@
-package qbittorrent
+package downloadclient
 
 import (
 	"context"
@@ -12,94 +12,8 @@ import (
 	"github.com/bujic-movie/bujic-movie/internal/service/httpclient"
 )
 
-// Task is one torrent as reported by the client. The download module never
-// stores task state; this is read live and cached only for degraded display.
-type Task struct {
-	Hash       string  `json:"hash"`
-	Name       string  `json:"name"`
-	SizeBytes  int64   `json:"size_bytes"`
-	Progress   float64 `json:"progress"`
-	SpeedBPS   int64   `json:"speed_bps"`
-	State      string  `json:"state"`
-	ETASeconds int64   `json:"eta_seconds"`
-	Category   string  `json:"category"`
-	// ConnectedSeeds is how many seeders this client is actually connected to,
-	// AvailableSeeds is how many the swarm has. A task that stays at 0 connected
-	// explains a stuck download better than the state string does.
-	ConnectedSeeds int `json:"connected_seeds"`
-	AvailableSeeds int `json:"available_seeds"`
-}
-
-// Config is everything needed to talk to one qBittorrent instance.
-type Config struct {
-	Host     string
-	Port     int
-	UseSSL   bool
-	URLBase  string
-	APIKey   string
-	Username string
-	Password string
-	Proxy    string
-}
-
-// Client is the seam GrabService depends on, so tests can stub the client.
-type Client interface {
-	// Test logs in and reports the version plus category readiness.
-	Test(ctx context.Context, categories []string) (*Status, error)
-	// Push adds a torrent by URL (magnet or http) with a category.
-	Push(ctx context.Context, kind, payload, category, name string, paused bool) error
-	// Tasks lists current torrents.
-	Tasks(ctx context.Context) ([]Task, error)
-	// Action pauses, resumes or deletes one torrent.
-	Action(ctx context.Context, hash, action string, deleteFiles bool) error
-	// Categories lists the category names that already exist in the client.
-	Categories(ctx context.Context) ([]CategoryInfo, error)
-}
-
-// CategoryInfo is one category as reported by the download client.
-type CategoryInfo struct {
-	Name     string `json:"name"`
-	SavePath string `json:"save_path"`
-}
-
-// Status is the outcome of a connectivity test.
-type Status struct {
-	Version          string
-	CategoriesReady  []string
-	CategoriesFailed []string
-}
-
-// Error kinds mirror the module-wide classification.
-const (
-	KindAuth        = "auth"
-	KindUnreachable = "unreachable"
-	KindUnsupported = "unsupported"
-	KindRejected    = "rejected"
-)
-
-// Error is a classified client failure.
-type Error struct {
-	Kind    string
-	Message string
-	Err     error
-}
-
-func (e *Error) Error() string {
-	if e.Err != nil {
-		return fmt.Sprintf("%s: %s: %v", e.Kind, e.Message, e.Err)
-	}
-	return fmt.Sprintf("%s: %s", e.Kind, e.Message)
-}
-
-func (e *Error) Unwrap() error { return e.Err }
-
-// NewError builds a classified client error.
-func NewError(kind, message string, err error) *Error {
-	return &Error{Kind: kind, Message: message, Err: err}
-}
-
-// HTTPClient talks to the qBittorrent Web API (4.6 and 5.x).
-type HTTPClient struct {
+// QBittorrentClient talks to the qBittorrent Web API (4.6 and 5.x).
+type QBittorrentClient struct {
 	cfg     Config
 	exec    *httpclient.Executor
 	baseURL string
@@ -108,22 +22,14 @@ type HTTPClient struct {
 	version string
 }
 
-// NewHTTPClient builds a client. The executor is shared so timeouts, retries
-// and proxies behave the same as for indexers.
-func NewHTTPClient(cfg Config, exec *httpclient.Executor) *HTTPClient {
-	scheme := "http"
-	if cfg.UseSSL {
-		scheme = "https"
-	}
-	base := fmt.Sprintf("%s://%s:%d", scheme, cfg.Host, cfg.Port)
-	if strings.TrimSpace(cfg.URLBase) != "" {
-		base += "/" + strings.Trim(cfg.URLBase, "/")
-	}
-	return &HTTPClient{cfg: cfg, exec: exec, baseURL: base}
+// NewQBittorrentClient builds a qBittorrent client. The executor is shared so
+// timeouts, retries and proxies behave the same as for indexers.
+func NewQBittorrentClient(cfg Config, exec *httpclient.Executor) *QBittorrentClient {
+	return &QBittorrentClient{cfg: cfg, exec: exec, baseURL: baseURL(cfg)}
 }
 
 // Test logs in (unless an API key is used) and ensures every category exists.
-func (c *HTTPClient) Test(ctx context.Context, categories []string) (*Status, error) {
+func (c *QBittorrentClient) Test(ctx context.Context, categories []string) (*Status, error) {
 	if err := c.login(ctx); err != nil {
 		return nil, err
 	}
@@ -149,7 +55,7 @@ func (c *HTTPClient) Test(ctx context.Context, categories []string) (*Status, er
 			status.CategoriesReady = append(status.CategoriesReady, category)
 			continue
 		}
-		if err := c.createCategory(ctx, category); err != nil {
+		if err := c.createCategory(ctx, category, ""); err != nil {
 			status.CategoriesFailed = append(status.CategoriesFailed, category)
 			continue
 		}
@@ -158,7 +64,7 @@ func (c *HTTPClient) Test(ctx context.Context, categories []string) (*Status, er
 	return status, nil
 }
 
-func (c *HTTPClient) login(ctx context.Context) error {
+func (c *QBittorrentClient) login(ctx context.Context) error {
 	if strings.TrimSpace(c.cfg.APIKey) != "" {
 		// qBittorrent 5.x supports API key auth via the Authorization header.
 		c.cookie = ""
@@ -179,7 +85,7 @@ func (c *HTTPClient) login(ctx context.Context) error {
 		BypassProxy: c.cfg.Proxy == "",
 	})
 	if err != nil {
-		return translate(err)
+		return translateHTTP(err)
 	}
 	body := strings.TrimSpace(string(resp.Body))
 	if body != "Ok." {
@@ -203,7 +109,7 @@ func (c *HTTPClient) login(ctx context.Context) error {
 	return nil
 }
 
-func (c *HTTPClient) headers() map[string]string {
+func (c *QBittorrentClient) headers() map[string]string {
 	h := map[string]string{"Referer": c.baseURL}
 	if c.cookie != "" {
 		h["Cookie"] = c.cookie
@@ -214,7 +120,7 @@ func (c *HTTPClient) headers() map[string]string {
 	return h
 }
 
-func (c *HTTPClient) categories(ctx context.Context) (map[string]bool, error) {
+func (c *QBittorrentClient) categories(ctx context.Context) (map[string]bool, error) {
 	body, err := c.get(ctx, "/api/v2/torrents/categories")
 	if err != nil {
 		return nil, err
@@ -227,10 +133,12 @@ func (c *HTTPClient) categories(ctx context.Context) (map[string]bool, error) {
 	return out, nil
 }
 
-func (c *HTTPClient) createCategory(ctx context.Context, name string) error {
+// createCategory creates a category, optionally pinned to a save path. A 409
+// means it already exists, which is fine: Push passes savepath per torrent.
+func (c *QBittorrentClient) createCategory(ctx context.Context, name, savePath string) error {
 	form := url.Values{}
 	form.Set("category", name)
-	form.Set("savePath", "")
+	form.Set("savePath", savePath)
 	resp, err := c.exec.Do(ctx, httpclient.Request{
 		Method:      http.MethodPost,
 		URL:         c.baseURL + "/api/v2/torrents/createCategory",
@@ -241,35 +149,54 @@ func (c *HTTPClient) createCategory(ctx context.Context, name string) error {
 		BypassProxy: c.cfg.Proxy == "",
 	})
 	if err != nil {
-		return translate(err)
+		return translateHTTP(err)
 	}
-	if resp.Status >= 400 {
+	if resp.Status >= 400 && resp.Status != http.StatusConflict {
 		return NewError(KindUnsupported, "分类创建失败", nil)
 	}
 	return nil
 }
 
-// Push adds a torrent. payload is a magnet URI or an http(s) torrent URL.
-func (c *HTTPClient) Push(ctx context.Context, kind, payload, category, name string, paused bool) error {
+// Push adds a torrent. Payload is a magnet URI or an http(s) torrent URL. A save
+// path is honoured by qBittorrent itself; a category also carries its own path.
+func (c *QBittorrentClient) Push(ctx context.Context, opts PushOptions) error {
 	if err := c.ensureLogin(ctx); err != nil {
 		return err
 	}
+	category := strings.TrimSpace(opts.Category)
+	savePath := normalizeSavePath(opts.SavePath)
+	if category != "" {
+		// Make sure the category exists so the mapping survives in qB's UI.
+		_ = c.createCategory(ctx, category, savePath)
+	}
+
 	form := url.Values{}
-	form.Set("paused", boolString(paused))
+	form.Set("paused", boolString(opts.Paused))
+	form.Set("urls", opts.Payload)
 	if category != "" {
 		form.Set("category", category)
 	}
-
-	endpoint := "/api/v2/torrents/add"
-	if kind == "torrent" && !strings.HasPrefix(strings.ToLower(payload), "magnet:") {
-		form.Set("urls", payload)
-	} else {
-		form.Set("urls", payload)
+	if savePath != "" {
+		form.Set("savepath", savePath)
+	}
+	if opts.Sequential {
+		form.Set("sequentialDownload", "true")
+	}
+	if opts.FirstLast {
+		form.Set("firstLastPiecePrio", "true")
+	}
+	switch opts.ContentLayout {
+	case "no-subfolder":
+		form.Set("contentLayout", "NoSubfolder")
+	case "subfolder":
+		form.Set("contentLayout", "Subfolder")
+	case "original":
+		form.Set("contentLayout", "Original")
 	}
 
 	resp, err := c.exec.Do(ctx, httpclient.Request{
 		Method:      http.MethodPost,
-		URL:         c.baseURL + endpoint,
+		URL:         c.baseURL + "/api/v2/torrents/add",
 		Header:      mergeHeaders(c.headers(), "Content-Type", "application/x-www-form-urlencoded"),
 		Body:        strings.NewReader(form.Encode()),
 		NoRetry:     true,
@@ -277,24 +204,28 @@ func (c *HTTPClient) Push(ctx context.Context, kind, payload, category, name str
 		BypassProxy: c.cfg.Proxy == "",
 	})
 	if err != nil {
-		return translate(err)
+		return translateHTTP(err)
 	}
 	body := strings.TrimSpace(string(resp.Body))
 	if resp.Status == http.StatusConflict || strings.Contains(strings.ToLower(body), "duplicate") {
-		return NewError(KindRejected, "下载器中已存在该种子", nil)
+		return NewError(KindDuplicate, "下载器中已存在该种子", nil)
 	}
 	if resp.Status >= 400 {
 		return NewError(KindRejected, fmt.Sprintf("下载器拒绝该任务（%d）", resp.Status), nil)
 	}
 	if strings.EqualFold(body, "Fails.") {
-		return NewError(KindRejected, "下载器拒绝了该任务", nil)
+		// qBittorrent answers "Fails." both for a duplicate and for a link it
+		// cannot parse. Nothing else is actionable for the user here, and the
+		// record keeps the real task state from the session, so it is classified
+		// as "already present" rather than a hard failure.
+		return NewError(KindDuplicate, "下载器已存在该种子，或无法解析该链接", nil)
 	}
 	return nil
 }
 
 // Categories lists existing categories with their save paths. The path is shown
 // read-only: it belongs to qBittorrent, not to this module (D-04).
-func (c *HTTPClient) Categories(ctx context.Context) ([]CategoryInfo, error) {
+func (c *QBittorrentClient) Categories(ctx context.Context) ([]CategoryInfo, error) {
 	if err := c.ensureLogin(ctx); err != nil {
 		return nil, err
 	}
@@ -387,11 +318,11 @@ func splitJSONObject(body []byte) []jsonObjectEntry {
 }
 
 // Tasks returns current torrents.
-func (c *HTTPClient) Tasks(ctx context.Context) ([]Task, error) {
+func (c *QBittorrentClient) Tasks(ctx context.Context) ([]Task, error) {
 	if err := c.ensureLogin(ctx); err != nil {
 		return nil, err
 	}
-	body, err := c.getWithHeader(ctx, "/api/v2/torrents/info")
+	body, err := c.get(ctx, "/api/v2/torrents/info")
 	if err != nil {
 		return nil, err
 	}
@@ -399,7 +330,7 @@ func (c *HTTPClient) Tasks(ctx context.Context) ([]Task, error) {
 }
 
 // Action applies pause/resume/delete to one torrent.
-func (c *HTTPClient) Action(ctx context.Context, hash, action string, deleteFiles bool) error {
+func (c *QBittorrentClient) Action(ctx context.Context, hash, action string, deleteFiles bool) error {
 	if err := c.ensureLogin(ctx); err != nil {
 		return err
 	}
@@ -435,7 +366,7 @@ func (c *HTTPClient) Action(ctx context.Context, hash, action string, deleteFile
 		BypassProxy: c.cfg.Proxy == "",
 	})
 	if err != nil {
-		return translate(err)
+		return translateHTTP(err)
 	}
 	if resp.Status >= 400 {
 		return NewError(KindRejected, "下载器未接受该操作", nil)
@@ -443,83 +374,25 @@ func (c *HTTPClient) Action(ctx context.Context, hash, action string, deleteFile
 	return nil
 }
 
-func (c *HTTPClient) ensureLogin(ctx context.Context) error {
+func (c *QBittorrentClient) ensureLogin(ctx context.Context) error {
 	if c.cookie != "" || strings.TrimSpace(c.cfg.APIKey) != "" {
 		return nil
 	}
 	return c.login(ctx)
 }
 
-func (c *HTTPClient) get(ctx context.Context, path string) ([]byte, error) {
-	return c.getWithHeader(ctx, path)
-}
-
-func (c *HTTPClient) getWithHeader(ctx context.Context, path string) ([]byte, error) {
-	headers := c.headers()
+func (c *QBittorrentClient) get(ctx context.Context, path string) ([]byte, error) {
 	resp, err := c.exec.Do(ctx, httpclient.Request{
 		URL:         c.baseURL + path,
-		Header:      headers,
+		Header:      c.headers(),
 		Timeout:     5 * time.Second,
 		Proxy:       c.cfg.Proxy,
 		BypassProxy: c.cfg.Proxy == "",
 	})
 	if err != nil {
-		return nil, translate(err)
+		return nil, translateHTTP(err)
 	}
 	return resp.Body, nil
-}
-
-func translate(err error) error {
-	var hErr *httpclient.Error
-	if asHTTP(err, &hErr) {
-		switch hErr.Kind {
-		case httpclient.KindAuth:
-			return NewError(KindAuth, "下载器认证失败，请检查账号或密码", nil)
-		case httpclient.KindTimeout:
-			return NewError(KindUnreachable, "下载器响应超时，请检查地址和端口", nil)
-		case httpclient.KindBlocked, httpclient.KindChallenge:
-			// qBittorrent answers 403 when it thinks the request did not come from
-			// its own Web UI — usually a wrong address, or a reverse proxy that
-			// needs the Host header. The httpclient wording ("站点") is about
-			// indexers, so give a downloader-specific one.
-			return NewError(KindAuth, "下载器拒绝了访问：请确认 Web UI 已开启、地址端口正确，且未被反向代理拦截", nil)
-		default:
-			return NewError(KindUnreachable, "无法连接下载器，请确认地址端口与本机网络可达", nil)
-		}
-	}
-	return NewError(KindUnreachable, "无法连接下载器，请确认地址端口与本机网络可达", nil)
-}
-
-func asHTTP(err error, target **httpclient.Error) bool {
-	for err != nil {
-		if h, ok := err.(*httpclient.Error); ok {
-			*target = h
-			return true
-		}
-		type unwrapper interface{ Unwrap() error }
-		u, ok := err.(unwrapper)
-		if !ok {
-			return false
-		}
-		err = u.Unwrap()
-	}
-	return false
-}
-
-func mergeHeaders(base map[string]string, key, value string) map[string]string {
-	out := make(map[string]string, len(base)+1)
-	for k, v := range base {
-		out[k] = v
-	}
-	out[key] = value
-	return out
-}
-
-func boolString(v bool) string {
-	if v {
-		return "true"
-	}
-	return "false"
 }
 
 // jsonKeys extracts top-level keys from a JSON object without imposing a schema.

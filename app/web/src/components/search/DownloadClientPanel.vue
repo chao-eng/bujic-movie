@@ -31,9 +31,12 @@ import {
   type DownloadClientItem,
   type CategoryMapping,
   type ClientCategory,
+  type ClientKind,
+  type ClientKindCapabilities,
 } from '@/api/search'
 
 const clients = ref<DownloadClientItem[]>([])
+const kinds = ref<ClientKind[]>([])
 const isLoading = ref(false)
 const testing = ref<Record<number, boolean>>({})
 const { confirm } = useConfirm()
@@ -43,7 +46,8 @@ const editing = ref<DownloadClientItem | null>(null)
 const mappings = ref<CategoryMapping[]>([])
 const isSaving = ref(false)
 
-const form = reactive({
+const emptyForm = {
+  kind: 'qbittorrent',
   name: '',
   host: '',
   port: 8080,
@@ -53,13 +57,38 @@ const form = reactive({
   username: '',
   password: '',
   default_category: '',
+  default_save_path: '',
   initial_state: 'start',
   sequential: false,
   first_last_first: false,
   content_layout: 'original',
   priority: 50,
   is_default: false,
-})
+}
+
+const form = reactive({ ...emptyForm })
+
+// Capabilities decide which fields are even shown: asking for an API key on
+// Transmission or a category on Aria2 only invites wrong input.
+const selectedKind = computed<ClientKind | undefined>(() => kinds.value.find((k) => k.kind === form.kind))
+const caps = computed<ClientKindCapabilities>(
+  () =>
+    selectedKind.value?.capabilities ?? {
+      categories: true,
+      category_path: true,
+      save_path: true,
+      queue: true,
+      content_layout: true,
+    },
+)
+// A download directory is the only way to pick a folder whenever the client
+// cannot derive one from a category.
+const needsSavePath = computed(() => !caps.value.category_path)
+// Only a client without any category feature *requires* one; Deluge keeps a
+// usable default directory of its own, so there the field stays optional.
+const requiresSavePath = computed(() => !caps.value.categories)
+const authMode = computed(() => selectedKind.value?.auth ?? 'api_key_or_user_pass')
+const needsCategory = computed(() => caps.value.categories)
 
 // Categories that already exist inside the selected download client. They are
 // read live so the mapping targets real names instead of guesses.
@@ -79,28 +108,34 @@ const load = async () => {
   }
 }
 
+const loadKinds = async () => {
+  try {
+    const res: any = await searchApi.clientKinds()
+    if (res.code === 0) kinds.value = res.data.items ?? []
+  } catch {
+    // Fall back to qBittorrent only; the form still works for the common case.
+    kinds.value = []
+  }
+}
+
+const kindName = (kind: string) => kinds.value.find((k) => k.kind === kind)?.name ?? kind
+
+// Switching kind resets the port and URL base to that client's defaults, so a
+// half-filled qBittorrent form does not silently point at 8080 on Transmission.
+const applyKindDefaults = (kind: string) => {
+  const info = kinds.value.find((k) => k.kind === kind)
+  if (!info) return
+  form.port = info.default_port
+  form.url_base = info.default_url_base
+}
+
 const openCreate = () => {
   editing.value = null
   mappings.value = []
   clientCategories.value = []
   categoriesError.value = ''
-  Object.assign(form, {
-    name: '',
-    host: '',
-    port: 8080,
-    use_ssl: false,
-    url_base: '',
-    api_key: '',
-    username: '',
-    password: '',
-    default_category: '',
-    initial_state: 'start',
-    sequential: false,
-    first_last_first: false,
-    content_layout: 'original',
-    priority: 50,
-    is_default: false,
-  })
+  Object.assign(form, { ...emptyForm })
+  applyKindDefaults(form.kind)
   showForm.value = true
 }
 
@@ -108,6 +143,7 @@ const openEdit = (client: DownloadClientItem) => {
   editing.value = client
   mappings.value = (client.category_mappings ?? []).map((m) => ({ ...m }))
   Object.assign(form, {
+    kind: client.kind || 'qbittorrent',
     name: client.name,
     host: client.host,
     port: client.port,
@@ -117,6 +153,7 @@ const openEdit = (client: DownloadClientItem) => {
     username: client.username,
     password: '',
     default_category: client.default_category,
+    default_save_path: client.default_save_path ?? '',
     initial_state: client.initial_state,
     sequential: client.sequential,
     first_last_first: client.first_last_first,
@@ -136,7 +173,7 @@ const addMapping = () => {
   const target = clientCategories.value.find(
     (c) => !mappings.value.some((m) => m.client_category === c.name),
   )?.name ?? ''
-  mappings.value.push({ source_category: source, client_category: target })
+  mappings.value.push({ source_category: source, client_category: target, save_path: '' })
 }
 
 const loadClientCategories = async (clientId: number) => {
@@ -169,8 +206,14 @@ const save = async () => {
   }
   const seen = new Set<number>()
   for (const mapping of mappings.value) {
-    if (!mapping.client_category.trim()) {
-      toast.error('分类映射的下载器分类不能为空')
+    const category = (mapping.client_category ?? '').trim()
+    const savePath = (mapping.save_path ?? '').trim()
+    if (!category && !savePath) {
+      toast.error('每条映射至少填下载器分类或下载目录')
+      return
+    }
+    if (requiresSavePath.value && !savePath) {
+      toast.error(`${kindName(form.kind)} 不能按分类自动落盘，请为「${newznabLabel(mapping.source_category)}」填写下载目录`)
       return
     }
     if (seen.has(mapping.source_category)) {
@@ -184,9 +227,6 @@ const save = async () => {
   try {
     const payload = {
       ...form,
-      kind: 'qbittorrent',
-      api_key: form.api_key,
-      password: form.password,
       categories: mappings.value,
     }
     if (editing.value) {
@@ -258,7 +298,10 @@ const summary = computed(() => {
   return `共 ${clients.value.length} 个下载器，启用 ${enabled} 个`
 })
 
-onMounted(load)
+onMounted(() => {
+  loadKinds()
+  load()
+})
 </script>
 
 <template>
@@ -281,12 +324,26 @@ onMounted(load)
     <SearchModal
       v-if="showForm"
       :title="editing ? '编辑下载器' : '添加下载器'"
-      subtitle="只支持 qBittorrent；保存目录由 qBittorrent 的分类规则决定，这里只配置分类"
+      :subtitle="`${kindName(form.kind)}${requiresSavePath ? '：该下载器不能按分类自动落盘，请在映射里指定下载目录' : needsSavePath ? '：分类只是标签、不决定目录，可按分类指定下载目录' : '：保存目录由下载器的分类规则决定，这里只配置分类'}`"
       wide
       @close="showForm = false"
     >
       <FieldGroup class="gap-4">
         <div class="grid gap-4 sm:grid-cols-2">
+          <Field>
+            <FieldLabel for="client-kind">类型</FieldLabel>
+            <Select v-model="form.kind" @update:model-value="(value) => applyKindDefaults(String(value ?? ''))">
+              <SelectTrigger id="client-kind" class="w-full"><SelectValue /></SelectTrigger>
+              <SelectContent>
+                <SelectGroup>
+                  <SelectItem v-for="info in kinds" :key="info.kind" :value="info.kind">{{ info.name }}</SelectItem>
+                </SelectGroup>
+              </SelectContent>
+            </Select>
+            <FieldDescription>
+              不同下载器的认证方式与分类能力不同，表单会按类型显示对应字段。
+            </FieldDescription>
+          </Field>
           <Field>
             <FieldLabel for="client-name">名称</FieldLabel>
             <Input id="client-name" v-model="form.name" placeholder="例如 NAS" />
@@ -301,7 +358,7 @@ onMounted(load)
           </Field>
           <Field>
             <FieldLabel for="client-url-base">路径前缀（反向代理时填）</FieldLabel>
-            <Input id="client-url-base" v-model="form.url_base" placeholder="qbittorrent" />
+            <Input id="client-url-base" v-model="form.url_base" :placeholder="selectedKind?.default_url_base || 'qbittorrent'" />
           </Field>
           <Field orientation="horizontal" class="items-center">
             <Switch id="client-ssl" v-model="form.use_ssl" />
@@ -312,23 +369,36 @@ onMounted(load)
             <Input id="client-priority" v-model.number="form.priority" type="number" min="1" max="100" />
           </Field>
 
-          <Field>
+          <Field v-if="authMode === 'api_key_or_user_pass' || authMode === 'user_pass'">
             <FieldLabel for="client-username">账号</FieldLabel>
-            <Input id="client-username" v-model="form.username" placeholder="与 API Key 二选一" />
+            <Input
+              id="client-username"
+              v-model="form.username"
+              :placeholder="authMode === 'api_key_or_user_pass' ? '与 API Key 二选一' : 'Transmission 账号'"
+            />
           </Field>
-          <Field>
-            <FieldLabel for="client-password">密码</FieldLabel>
+          <Field v-if="authMode !== 'token'">
+            <FieldLabel for="client-password">{{ authMode === 'password' ? 'Web UI 密码' : '密码' }}</FieldLabel>
             <Input
               id="client-password"
               v-model="form.password"
               type="password"
-              :placeholder="editing?.password_mask ? '已保存，留空表示不修改' : '下载器密码'"
+              :placeholder="editing?.password_mask ? '已保存，留空表示不修改' : authMode === 'password' ? 'Deluge Web UI 密码' : '下载器密码'"
             />
             <FieldDescription v-if="editing?.password_mask" class="text-success">
               当前密码 {{ editing.password_mask }}；留空保存不会改动它
             </FieldDescription>
           </Field>
-          <Field class="sm:col-span-2">
+          <Field v-if="authMode === 'token'">
+            <FieldLabel for="client-password">RPC 密钥（未设置可留空）</FieldLabel>
+            <Input
+              id="client-password"
+              v-model="form.password"
+              type="password"
+              :placeholder="editing?.password_mask ? '已保存，留空表示不修改' : 'Aria2 --rpc-secret 的值'"
+            />
+          </Field>
+          <Field v-if="authMode === 'api_key_or_user_pass'" class="sm:col-span-2">
             <FieldLabel for="client-api-key">API Key（qB 5.x，可与账号密码二选一）</FieldLabel>
             <Input
               id="client-api-key"
@@ -338,9 +408,27 @@ onMounted(load)
             />
           </Field>
 
-          <Field>
+          <Field v-if="needsCategory">
             <FieldLabel for="client-default-category">默认分类（留空表示不传分类）</FieldLabel>
             <Input id="client-default-category" v-model="form.default_category" placeholder="bujic" />
+          </Field>
+          <Field v-if="caps.save_path">
+            <FieldLabel for="client-default-save-path">
+              {{ requiresSavePath ? '默认下载目录' : '默认下载目录（可选）' }}
+            </FieldLabel>
+            <Input
+              id="client-default-save-path"
+              v-model="form.default_save_path"
+              placeholder="/downloads"
+            />
+            <FieldDescription>
+              <template v-if="needsSavePath">
+                {{ kindName(form.kind) }} 不会按分类选目录；没有匹配映射时用这里。留空则用下载器自己的默认目录。
+              </template>
+              <template v-else>
+                留空时由分类决定；填了则覆盖分类里的保存路径。
+              </template>
+            </FieldDescription>
           </Field>
           <Field>
             <FieldLabel for="client-initial-state">初始状态</FieldLabel>
@@ -355,7 +443,7 @@ onMounted(load)
               </SelectContent>
             </Select>
           </Field>
-          <Field>
+          <Field v-if="caps.content_layout">
             <FieldLabel for="client-layout">内容布局</FieldLabel>
             <Select v-model="form.content_layout">
               <SelectTrigger id="client-layout" class="w-full"><SelectValue /></SelectTrigger>
@@ -370,11 +458,11 @@ onMounted(load)
           </Field>
 
           <FieldContent class="gap-2">
-            <Field orientation="horizontal">
+            <Field v-if="caps.queue" orientation="horizontal">
               <Switch id="client-sequential" v-model="form.sequential" />
               <FieldLabel for="client-sequential">顺序下载</FieldLabel>
             </Field>
-            <Field orientation="horizontal">
+            <Field v-if="caps.queue" orientation="horizontal">
               <Switch id="client-first-last" v-model="form.first_last_first" />
               <FieldLabel for="client-first-last">首尾优先</FieldLabel>
             </Field>
@@ -391,7 +479,12 @@ onMounted(load)
             <div>
               <FieldLabel>分类映射</FieldLabel>
               <FieldDescription>
-                把「资源属于哪一类」对应到「下载器里用哪个分类」。下载器按分类决定存到哪个目录，所以这里只选分类，不填路径。
+                <template v-if="requiresSavePath">
+                  把「资源属于哪一类」对应到「下载到哪个目录」。{{ kindName(form.kind) }} 不会按分类自动选目录，所以这里必须填目录。
+                </template>
+                <template v-else>
+                  把「资源属于哪一类」对应到「下载器里用哪个分类」。下载器按分类决定存到哪个目录，一般不必再填路径。
+                </template>
               </FieldDescription>
             </div>
             <div class="flex items-center gap-1">
@@ -426,7 +519,12 @@ onMounted(load)
           </FieldDescription>
 
           <FieldDescription v-if="!mappings.length">
-            还没有映射。没有映射时，推送会使用下面的「默认分类」；默认分类也为空则由 qBittorrent 自己决定。
+            <template v-if="needsSavePath">
+              还没有映射。没有映射时，推送会使用「默认下载目录」；也为空则由 {{ kindName(form.kind) }} 自己决定。
+            </template>
+            <template v-else>
+              还没有映射。没有映射时，推送会使用「默认分类」；默认分类也为空则由下载器自己决定。
+            </template>
           </FieldDescription>
 
           <div class="flex flex-col gap-2">
@@ -444,20 +542,28 @@ onMounted(load)
                 </SelectContent>
               </Select>
               <span class="text-muted-foreground text-xs" aria-hidden="true">→</span>
-              <Select
-                v-if="clientCategories.length"
-                :model-value="toSelectValue(mapping.client_category)"
-                @update:model-value="mapping.client_category = fromSelectValue($event)"
-              >
-                <SelectTrigger size="sm" class="min-w-40"><SelectValue /></SelectTrigger>
-                <SelectContent>
-                  <SelectGroup>
-                    <SelectItem :value="EMPTY_SELECT_VALUE">（不指定）</SelectItem>
-                    <SelectItem v-for="cat in clientCategories" :key="cat.name" :value="cat.name">{{ cat.name }}{{ cat.save_path ? ' — ' + cat.save_path : '' }}</SelectItem>
-                  </SelectGroup>
-                </SelectContent>
-              </Select>
-              <Input v-else v-model="mapping.client_category" class="h-7 max-w-40" placeholder="下载器分类名" />
+              <template v-if="needsCategory">
+                <Select
+                  v-if="clientCategories.length"
+                  :model-value="toSelectValue(mapping.client_category)"
+                  @update:model-value="mapping.client_category = fromSelectValue($event)"
+                >
+                  <SelectTrigger size="sm" class="min-w-40"><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    <SelectGroup>
+                      <SelectItem :value="EMPTY_SELECT_VALUE">（不指定）</SelectItem>
+                      <SelectItem v-for="cat in clientCategories" :key="cat.name" :value="cat.name">{{ cat.name }}{{ cat.save_path ? ' — ' + cat.save_path : '' }}</SelectItem>
+                    </SelectGroup>
+                  </SelectContent>
+                </Select>
+                <Input v-else v-model="mapping.client_category" class="h-7 max-w-40" placeholder="下载器分类名" />
+              </template>
+              <Input
+                v-if="caps.save_path"
+                v-model="mapping.save_path"
+                class="h-7 max-w-56"
+                :placeholder="requiresSavePath ? '下载目录（必填）' : '下载目录（可选）'"
+              />
               <Button variant="ghost" size="icon-xs" aria-label="删除映射" @click="removeMapping(index)">
                 <Trash2Icon />
               </Button>
@@ -492,7 +598,7 @@ onMounted(load)
           <PlusIcon />
         </EmptyMedia>
         <EmptyTitle>还没有下载器</EmptyTitle>
-        <EmptyDescription>添加一个 qBittorrent，搜索到的资源才能一键下载。</EmptyDescription>
+        <EmptyDescription>添加一个下载器（qBittorrent / Transmission / Deluge / Aria2），搜索到的资源才能一键下载。</EmptyDescription>
       </EmptyHeader>
       <EmptyContent>
         <Button @click="openCreate">
@@ -523,12 +629,14 @@ onMounted(load)
             </Badge>
           </div>
           <div class="text-muted-foreground mt-1 flex flex-wrap gap-x-3 text-[11px]">
+            <span>{{ kindName(client.kind) }}</span>
             <span>{{ client.host }}:{{ client.port }}{{ client.use_ssl ? '（HTTPS）' : '' }}</span>
             <span>优先级 {{ client.priority }}</span>
-            <span>默认分类 {{ client.default_category || '未设置' }}</span>
+            <span v-if="client.capabilities?.categories !== false">默认分类 {{ client.default_category || '未设置' }}</span>
+            <span v-if="client.default_save_path">默认目录 {{ client.default_save_path }}</span>
             <span v-if="(client.category_mappings ?? []).length">
               映射 {{ (client.category_mappings ?? []).length }} 条：
-              {{ (client.category_mappings ?? []).map((m) => `${newznabLabel(m.source_category)} → ${m.client_category || '不指定'}`).join('，') }}
+              {{ (client.category_mappings ?? []).map((m) => `${newznabLabel(m.source_category)} → ${m.save_path || m.client_category || '不指定'}`).join('，') }}
             </span>
             <span v-else>未配置映射</span>
             <span v-if="client.password_mask">密码 {{ client.password_mask }}</span>

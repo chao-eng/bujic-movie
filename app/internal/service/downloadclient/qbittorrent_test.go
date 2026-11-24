@@ -1,4 +1,4 @@
-package qbittorrent
+package downloadclient
 
 import (
 	"context"
@@ -27,14 +27,14 @@ func loadTasks(t *testing.T) []byte {
 	return []byte(string(raw)[idx : end+1])
 }
 
-func newClient(t *testing.T, srv *httptest.Server) *HTTPClient {
+func newClient(t *testing.T, srv *httptest.Server) *QBittorrentClient {
 	t.Helper()
 	exec, err := httpclient.New(nil, nil, "")
 	if err != nil {
 		t.Fatalf("httpclient.New: %v", err)
 	}
 	host, port := splitHostPort(t, srv.URL)
-	return NewHTTPClient(Config{Host: host, Port: port, Username: "admin", Password: "pw"}, exec)
+	return NewQBittorrentClient(Config{Kind: KindQBittorrent, Host: host, Port: port, Username: "admin", Password: "pw"}, exec)
 }
 
 // TST-022 / AC-22: a successful test reports the version and category state.
@@ -107,7 +107,7 @@ func TestTST022_AuthFailure(t *testing.T) {
 	client := newClient(t, srv)
 	_, err := client.Test(context.Background(), nil)
 	var qErr *Error
-	if !asClientError(err, &qErr) || qErr.Kind != KindAuth {
+	if !As(err, &qErr) || qErr.Kind != KindAuth {
 		t.Fatalf("kind = %v, want auth", err)
 	}
 }
@@ -132,7 +132,7 @@ func TestTST033_PushSendsCategory(t *testing.T) {
 	defer srv.Close()
 
 	client := newClient(t, srv)
-	err := client.Push(context.Background(), "magnet", "magnet:?xt=urn:btih:abc", "tv", "n", false)
+	err := client.Push(context.Background(), PushOptions{Kind: "magnet", Payload: "magnet:?xt=urn:btih:abc", Category: "tv", Name: "n"})
 	if err != nil {
 		t.Fatalf("Push: %v", err)
 	}
@@ -158,10 +158,10 @@ func TestTST034_PushDuplicateRejected(t *testing.T) {
 	defer srv.Close()
 
 	client := newClient(t, srv)
-	err := client.Push(context.Background(), "magnet", "magnet:?xt=urn:btih:abc", "", "n", false)
+	err := client.Push(context.Background(), PushOptions{Kind: "magnet", Payload: "magnet:?xt=urn:btih:abc", Name: "n"})
 	var qErr *Error
-	if !asClientError(err, &qErr) || qErr.Kind != KindRejected {
-		t.Fatalf("kind = %v, want rejected", err)
+	if !As(err, &qErr) || qErr.Kind != KindDuplicate {
+		t.Fatalf("kind = %v, want duplicate", err)
 	}
 }
 
@@ -267,10 +267,10 @@ func TestTST038_UnknownActionRejected(t *testing.T) {
 // TST-037: an unreachable client is classified so the task list can degrade.
 func TestTST037_Unreachable(t *testing.T) {
 	exec, _ := httpclient.New(nil, nil, "")
-	client := NewHTTPClient(Config{Host: "127.0.0.1", Port: 1, Username: "a", Password: "b"}, exec)
+	client := NewQBittorrentClient(Config{Kind: KindQBittorrent, Host: "127.0.0.1", Port: 1, Username: "a", Password: "b"}, exec)
 	_, err := client.Tasks(context.Background())
 	var qErr *Error
-	if !asClientError(err, &qErr) || qErr.Kind != KindUnreachable {
+	if !As(err, &qErr) || qErr.Kind != KindUnreachable {
 		t.Fatalf("kind = %v, want unreachable", err)
 	}
 }
@@ -284,7 +284,7 @@ func TestTST022_ErrorDoesNotLeakPassword(t *testing.T) {
 
 	exec, _ := httpclient.New(nil, nil, "")
 	host, port := splitHostPort(t, srv.URL)
-	client := NewHTTPClient(Config{Host: host, Port: port, Username: "admin", Password: "s3cr3t-pw"}, exec)
+	client := NewQBittorrentClient(Config{Kind: KindQBittorrent, Host: host, Port: port, Username: "admin", Password: "s3cr3t-pw"}, exec)
 	_, err := client.Test(context.Background(), nil)
 	if err == nil {
 		t.Fatal("expected error")
@@ -292,22 +292,6 @@ func TestTST022_ErrorDoesNotLeakPassword(t *testing.T) {
 	if strings.Contains(err.Error(), "s3cr3t") {
 		t.Fatalf("error leaked password: %v", err)
 	}
-}
-
-func asClientError(err error, target **Error) bool {
-	for err != nil {
-		if q, ok := err.(*Error); ok {
-			*target = q
-			return true
-		}
-		type unwrapper interface{ Unwrap() error }
-		u, ok := err.(unwrapper)
-		if !ok {
-			return false
-		}
-		err = u.Unwrap()
-	}
-	return false
 }
 
 // TST-021 / AC-21: existing categories are listed with their save paths so the

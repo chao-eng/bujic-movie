@@ -1279,7 +1279,7 @@ onUnmounted(() => {
 
       <!-- ===================== 下载器 ===================== -->
       <TabsContent value="clients" class="flex flex-col gap-4">
-        <PageSection title="下载器" description="配置 qBittorrent；保存目录由下载器的分类规则决定，这里只配置分类映射" />
+        <PageSection title="下载器" description="支持 qBittorrent / Transmission / Deluge / Aria2；能按分类自动落盘的就只配分类映射，不能的按分类指定下载目录" />
         <DownloadClientPanel />
       </TabsContent>
 
@@ -1532,7 +1532,7 @@ onUnmounted(() => {
             <CardDescription>
               全局出口。支持 <code>http://</code>、<code>https://</code>、<code>socks5://</code>、<code>socks5h://</code>；留空表示直连。
               刮削（TMDB 与海报下载）和搜索器各自独立开关，因为两者常常需要不同的出口。
-              下载器（qBittorrent）始终直连。
+              下载器（qBittorrent / Transmission / Deluge / Aria2）始终直连。
             </CardDescription>
           </CardHeader>
           <CardContent>
