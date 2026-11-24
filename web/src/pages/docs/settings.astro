@@ -139,7 +139,7 @@ const webhookSample = '{"title": "{title}", "body": "{text}"}'
         </tr>
       </thead>
       <tbody>
-        <tr><td>qBittorrent</td><td>账号密码或 5.x API Key</td><td>有，分类自带路径</td><td>由分类决定；映射填了目录则覆盖</td></tr>
+        <tr><td>qBittorrent</td><td>账号密码或 5.x API Key</td><td>有，分类自带路径</td><td>由分类决定（不改）</td></tr>
         <tr><td>Transmission</td><td>RPC 基本认证（可留空）</td><td>无</td><td>在映射里指定目录</td></tr>
         <tr><td>Deluge</td><td>Web UI 密码</td><td>Label 插件标签，不影响目录</td><td>在映射里指定目录（可留空）</td></tr>
         <tr><td>Aria2</td><td>RPC secret（可留空）</td><td>无</td><td>在映射里指定目录</td></tr>
@@ -150,7 +150,7 @@ const webhookSample = '{"title": "{title}", "body": "{text}"}'
   <ul>
     <li>支持 qBittorrent 4.6 与 5.x 的登录协议差异。</li>
     <li>分类列表是从下载器实时读取的，映射目标不会填错。</li>
-    <li>下载器不能按分类自动落盘时，每条映射填一个<strong>下载目录</strong>；没匹配到就用「默认下载目录」。</li>
+    <li>下载器不能按分类自动落盘时，每条映射填一个<strong>下载目录</strong>；没匹配到就用「默认下载目录」。qBittorrent 没有这一项，改分类目录即可。</li>
     <li>连续失败会进入短暂的不可用状态（页面上会显示剩余毫秒），到期自动恢复。</li>
     <li>下载器请求始终直连，不走代理。</li>
   </ul>

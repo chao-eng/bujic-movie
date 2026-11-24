@@ -114,17 +114,24 @@ func (s *DownloadClientService) view(client entity.SearchDownloadClient) (Downlo
 	if err != nil {
 		return DownloadClientView{}, err
 	}
+	info, _ := downloadclient.LookupKind(client.Kind)
 	mappings := make([]CategoryMappingInput, 0, len(cats))
 	for _, c := range cats {
-		mappings = append(mappings, CategoryMappingInput{
-			SourceCategory: c.SourceCategory, ClientCategory: c.ClientCategory, SavePath: c.SavePath,
-		})
+		mapping := CategoryMappingInput{SourceCategory: c.SourceCategory, ClientCategory: c.ClientCategory}
+		// A directory stored before the kind stopped supporting one must not be
+		// shown as if it were applied. Same for the client-wide default below.
+		if info.Capabilities.SavePath {
+			mapping.SavePath = c.SavePath
+		}
+		mappings = append(mappings, mapping)
 	}
 	remaining := int64(0)
 	if client.UnavailableUntil.After(time.Now()) {
 		remaining = time.Until(client.UnavailableUntil).Milliseconds()
 	}
-	info, _ := downloadclient.LookupKind(client.Kind)
+	if !info.Capabilities.SavePath {
+		client.DefaultSavePath = ""
+	}
 	return DownloadClientView{
 		SearchDownloadClient: client,
 		APIKeyMask:           internalcrypto.Mask(apiKey),
@@ -304,6 +311,18 @@ func (s *DownloadClientService) build(base *entity.SearchDownloadClient, input D
 			}
 		}
 	}
+	if info.Capabilities.Categories && !info.Capabilities.SavePath {
+		// This kind derives the folder from the category and ignores a directory,
+		// so accepting one would store a setting that never takes effect.
+		for _, m := range input.Categories {
+			if strings.TrimSpace(m.SavePath) != "" {
+				return nil, &InputError{
+					Field:   "categories",
+					Message: info.Name + " 的保存目录由分类决定，不支持单独指定下载目录",
+				}
+			}
+		}
+	}
 
 	apiKeyEnc, err := s.box.Encrypt(apiKeyPlain)
 	if err != nil {
@@ -330,7 +349,14 @@ func (s *DownloadClientService) build(base *entity.SearchDownloadClient, input D
 		// labels must not carry a stale category name from a previous kind.
 		out.DefaultCategory = ""
 	}
-	out.DefaultSavePath = normalizeSavePath(input.DefaultSavePath)
+	if info.Capabilities.SavePath {
+		out.DefaultSavePath = normalizeSavePath(input.DefaultSavePath)
+	} else {
+		// Keep the column honest: a kind that cannot pin a directory must not
+		// keep a stale one from a previous kind, or the UI would show it as if
+		// it were used.
+		out.DefaultSavePath = ""
+	}
 	out.InitialState = initialState
 	out.Sequential = input.Sequential && info.Capabilities.Queue
 	out.FirstLastFirst = input.FirstLastFirst && info.Capabilities.Queue
@@ -368,6 +394,9 @@ func (s *DownloadClientService) replaceMappings(clientID uint, mappings []Catego
 			category = ""
 		}
 		savePath := normalizeSavePath(m.SavePath)
+		if !info.Capabilities.SavePath {
+			savePath = ""
+		}
 		if category == "" && savePath == "" {
 			return &InputError{Field: "categories", Message: "下载器分类或下载目录至少填一个"}
 		}
@@ -489,10 +518,10 @@ func (s *DownloadClientService) ResolveCategory(clientID uint, releaseCategories
 // ResolveTarget is the category and save path a grab should use, plus which
 // rule produced them.
 //
-// The save path is honoured for every kind, including qBittorrent: its add API
-// takes category and savepath together, and savepath wins for that torrent while
-// the category is still applied as a label. Leaving it empty is what hands the
-// folder decision to the category.
+// A download directory is only resolved for kinds whose SavePath capability is
+// set. qBittorrent is not one of them: its torrents are under automatic
+// management, where the category decides the folder and a savepath is ignored.
+// Leaving the path empty there is not a fallback — it is the only correct value.
 func (s *DownloadClientService) ResolveTarget(clientID uint, releaseCategories []int) (*GrabTarget, error) {
 	client, err := s.repo.GetClient(clientID)
 	if err != nil {
@@ -509,20 +538,24 @@ func (s *DownloadClientService) ResolveTarget(clientID uint, releaseCategories [
 		target.Category = category
 		target.Source = source
 	}
+	if !info.Capabilities.SavePath {
+		return target, nil
+	}
 
-	defaultPath := normalizeSavePath(client.DefaultSavePath)
 	if path := s.mappedSavePath(client.ID, releaseCategories); path != "" {
 		target.SavePath = path
 		if target.Source == "none" {
 			target.Source = "mapping"
 		}
-	} else if !(info.Capabilities.CategoryPath && target.Category != "") && defaultPath != "" {
+	} else if !(info.Capabilities.CategoryPath && target.Category != "") {
 		// A category that already decides the folder must not be silently
 		// overridden by the client-wide default; an explicit mapping path above
 		// is the user's override.
-		target.SavePath = defaultPath
-		if target.Source == "none" {
-			target.Source = "default"
+		if defaultPath := normalizeSavePath(client.DefaultSavePath); defaultPath != "" {
+			target.SavePath = defaultPath
+			if target.Source == "none" {
+				target.Source = "default"
+			}
 		}
 	}
 	return target, nil

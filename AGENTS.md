@@ -191,7 +191,7 @@ Prowlarr 核心能力的产品级移植：定义库 → 站点 → 聚合搜索 
 
 #### 关键约束（改代码前必读）
 
-- **保存目录按下载器能力决定**：qBittorrent 的分类自带保存路径，留空目录时推送只带分类（PRD D-04）；映射里填了 `save_path` 就同时带分类与 `savepath`，覆盖该分类的目录。Transmission / Deluge / Aria2 不能按分类自动落盘，必须由映射的 `save_path` 或下载器的 `default_save_path` 指定目录。`downloadclient.Capabilities` 是这一判断的唯一来源，不要在别处硬编码客户端名字。
+- **保存目录按下载器能力决定**：qBittorrent 的分类自带保存路径，推送只带分类（PRD D-04），`Capabilities.SavePath=false`，表单不提供目录也不接受目录——它处于「自动种子管理」时 `savepath` 会被分类覆盖，要让它生效只能关掉该种子的自动管理，那等于偷偷改变用户的分类规则，所以不做。Transmission / Deluge / Aria2 没有分类落盘能力，必须由映射的 `save_path` 或下载器的 `default_save_path` 指定目录。`downloadclient.Capabilities` 是这一判断的唯一来源，不要在别处硬编码客户端名字。
 - **凭据只写不读**：`api_key`/`password`/代理凭据/登录 Cookie 加密落库；读接口只回掩码。更新时空值表示「保持原值」，清除需显式 `__clear__`。
 - **定义是快照**：实例保存时的 YAML 不随定义库更新；用户点「刷新定义」才切换（BR-41）。
 - **并发预算**：全局搜索 ≤3、单次站点 ≤40、同站单在途、单站 8s、全量 15s；不要绕开 `SearchService` 直接扇出。

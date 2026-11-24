@@ -164,10 +164,9 @@ func (c *QBittorrentClient) Push(ctx context.Context, opts PushOptions) error {
 		return err
 	}
 	category := strings.TrimSpace(opts.Category)
-	savePath := normalizeSavePath(opts.SavePath)
 	if category != "" {
 		// Make sure the category exists so the mapping survives in qB's UI.
-		_ = c.createCategory(ctx, category, savePath)
+		_ = c.createCategory(ctx, category, "")
 	}
 
 	form := url.Values{}
@@ -176,9 +175,11 @@ func (c *QBittorrentClient) Push(ctx context.Context, opts PushOptions) error {
 	if category != "" {
 		form.Set("category", category)
 	}
-	if savePath != "" {
-		form.Set("savepath", savePath)
-	}
+	// opts.SavePath is deliberately not sent. Under Automatic Torrent Management
+	// qBittorrent takes the folder from the category and drops savepath, so the
+	// only way to honour it would be autoTMM=false — which would silently opt the
+	// user's torrents out of the category rules they configured. Capabilities()
+	// reports SavePath=false for this kind; the UI never offers a directory.
 	if opts.Sequential {
 		form.Set("sequentialDownload", "true")
 	}

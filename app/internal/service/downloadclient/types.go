@@ -52,7 +52,12 @@ type Capabilities struct {
 	// (qBittorrent). When false, a download directory must be supplied
 	// explicitly or the client falls back to its own default.
 	CategoryPath bool `json:"category_path"`
-	// SavePath reports whether a push may carry an explicit download directory.
+	// SavePath reports whether this app may pin a torrent to an explicit
+	// directory. It is false for qBittorrent: its torrents run under Automatic
+	// Torrent Management, where the folder always comes from the category and a
+	// savepath is ignored unless autoTMM is turned off for that torrent. Rather
+	// than silently flipping a user's management mode, the form offers no
+	// directory at all and the category stays the single source of truth.
 	SavePath bool `json:"save_path"`
 	// Queue reports whether sequential / first-last-piece hints are supported.
 	Queue         bool `json:"queue"`
@@ -74,7 +79,10 @@ func Kinds() []KindInfo {
 	return []KindInfo{
 		{
 			Kind: KindQBittorrent, Name: "qBittorrent", DefaultPort: 8080, Auth: AuthAPIKeyOrUserPass,
-			Capabilities: Capabilities{Categories: true, CategoryPath: true, SavePath: true, Queue: true, ContentLayout: true},
+			// SavePath stays false: a qBittorrent torrent under automatic
+			// management takes its folder from the category and ignores a
+			// savepath. The directory decision belongs to the category alone.
+			Capabilities: Capabilities{Categories: true, CategoryPath: true, Queue: true, ContentLayout: true},
 		},
 		{
 			Kind: KindTransmission, Name: "Transmission", DefaultPort: 9091, DefaultBase: "transmission", Auth: AuthUserPass,

@@ -327,3 +327,41 @@ func TestTST021_CategoriesListed(t *testing.T) {
 		t.Errorf("电视剧 save path = %q", byName["电视剧"])
 	}
 }
+
+// TST-033: qBittorrent derives the folder from the category, and under Automatic
+// Torrent Management it ignores savepath entirely — so a path is never sent and
+// the torrent stays managed by its category.
+func TestTST033_PushSendsCategoryWithoutSavePath(t *testing.T) {
+	var form map[string][]string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/v2/auth/login":
+			http.SetCookie(w, &http.Cookie{Name: "SID", Value: "abc"})
+			_, _ = w.Write([]byte("Ok."))
+		case "/api/v2/torrents/add":
+			_ = r.ParseForm()
+			form = r.PostForm
+			_, _ = w.Write([]byte("Ok."))
+		default:
+			_, _ = w.Write([]byte("Ok."))
+		}
+	}))
+	defer srv.Close()
+
+	client := newClient(t, srv)
+	if err := client.Push(context.Background(), PushOptions{
+		Kind: "magnet", Payload: "magnet:?xt=urn:btih:abc",
+		Category: "tv", SavePath: "/downloads/tv-4k",
+	}); err != nil {
+		t.Fatalf("Push: %v", err)
+	}
+	if got := form["category"]; len(got) != 1 || got[0] != "tv" {
+		t.Errorf("category = %v", got)
+	}
+	if _, ok := form["savepath"]; ok {
+		t.Errorf("savepath must not be sent: %v", form["savepath"])
+	}
+	if _, ok := form["autoTMM"]; ok {
+		t.Errorf("autoTMM must stay unset: %v", form["autoTMM"])
+	}
+}

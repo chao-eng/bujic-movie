@@ -37,8 +37,8 @@ import NoteBox from '@/components/site/NoteBox.astro'
       所以不会出现「布吉影库以为文件在 A，qBittorrent 实际存到 B」的路径分裂。
     </p>
     <p class="text-muted-foreground mt-2 text-sm leading-6">
-      qBittorrent 的添加接口允许同时给分类和保存目录，此时分类照常打上、目录以填写的为准。
-      所以映射里填了下载目录就会生效，留空则回到分类目录。
+      不要指望用「保存目录」覆盖它：qBittorrent 默认开启自动种子管理，此时保存路径完全由分类决定，
+      接口传的 savepath 会被忽略。要改落点就改分类的目录，或在 qBittorrent 里关掉该种子的自动管理。
     </p>
     <p class="text-muted-foreground mt-2 text-sm leading-6">
       Transmission、Aria2 没有分类，Deluge 的分类只是标签、不影响目录。
@@ -228,8 +228,8 @@ import NoteBox from '@/components/site/NoteBox.astro'
     所以映射目标是从真实分类里挑，而不是手打猜一个名字。
   </p>
   <p>
-    映射右侧的<strong>下载目录</strong>输入框：Transmission / Aria2 这类没有分类的下载器必须填绝对路径；
-    Deluge 可留空；qBittorrent 可留空（交给分类），填了就覆盖该分类的目录。
+    映射右侧的<strong>下载目录</strong>输入框只对有需要的下载器出现：Transmission / Aria2 这类没有分类的必须填绝对路径，
+    Deluge 可留空。qBittorrent 没有这个框——它的目录由分类决定，自动种子管理下额外的 savepath 会被忽略。
     推送前就能在确认弹层里看到这次会用哪个目录。
   </p>
 
