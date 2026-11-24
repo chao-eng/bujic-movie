@@ -135,6 +135,10 @@ func (s *GrabService) Preview(ctx context.Context, req GrabRequest) (*GrabPrevie
 		Capabilities: info.Capabilities,
 	}
 	switch {
+	case target.SavePath != "" && target.Category != "":
+		// Both are sent: the category keeps its label, the path overrides the
+		// folder the category would have chosen.
+		preview.SavePathHint = target.SavePath + "（覆盖分类 " + target.Category + " 的目录）"
 	case target.SavePath != "":
 		preview.SavePathHint = target.SavePath
 	case target.Source == "mapping" || target.Source == "parent":

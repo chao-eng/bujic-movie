@@ -487,8 +487,12 @@ func (s *DownloadClientService) ResolveCategory(clientID uint, releaseCategories
 }
 
 // ResolveTarget is the category and save path a grab should use, plus which
-// rule produced them. SavePath is empty for qBittorrent, which derives the
-// folder from the category itself.
+// rule produced them.
+//
+// The save path is honoured for every kind, including qBittorrent: its add API
+// takes category and savepath together, and savepath wins for that torrent while
+// the category is still applied as a label. Leaving it empty is what hands the
+// folder decision to the category.
 func (s *DownloadClientService) ResolveTarget(clientID uint, releaseCategories []int) (*GrabTarget, error) {
 	client, err := s.repo.GetClient(clientID)
 	if err != nil {
@@ -504,26 +508,19 @@ func (s *DownloadClientService) ResolveTarget(clientID uint, releaseCategories [
 		}
 		target.Category = category
 		target.Source = source
-		if info.Capabilities.CategoryPath {
-			// qBittorrent keeps the folder decision; only a grab with no category
-			// at all falls back to the configured directory.
-			if path := normalizeSavePath(client.DefaultSavePath); path != "" && target.Source == "none" {
-				target.SavePath = path
-			}
-			return target, nil
-		}
 	}
 
-	// Clients without a category folder need an explicit directory. A matched
-	// mapping's path wins, then the client default, then nothing (the client's
-	// own default).
+	defaultPath := normalizeSavePath(client.DefaultSavePath)
 	if path := s.mappedSavePath(client.ID, releaseCategories); path != "" {
 		target.SavePath = path
 		if target.Source == "none" {
 			target.Source = "mapping"
 		}
-	} else if path := normalizeSavePath(client.DefaultSavePath); path != "" {
-		target.SavePath = path
+	} else if !(info.Capabilities.CategoryPath && target.Category != "") && defaultPath != "" {
+		// A category that already decides the folder must not be silently
+		// overridden by the client-wide default; an explicit mapping path above
+		// is the user's override.
+		target.SavePath = defaultPath
 		if target.Source == "none" {
 			target.Source = "default"
 		}

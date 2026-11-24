@@ -33,8 +33,12 @@ import NoteBox from '@/components/site/NoteBox.astro'
 
   <NoteBox title="保存目录：能交给分类就交给分类，否则手动指定">
     <p class="text-muted-foreground mt-2 text-sm leading-6">
-      qBittorrent 的分类自带保存路径，推送只带<strong>分类名</strong>，落盘位置完全由它决定，
+      qBittorrent 的分类自带保存路径，映射里不填目录时推送只带<strong>分类名</strong>，落盘位置完全由它决定，
       所以不会出现「布吉影库以为文件在 A，qBittorrent 实际存到 B」的路径分裂。
+    </p>
+    <p class="text-muted-foreground mt-2 text-sm leading-6">
+      qBittorrent 的添加接口允许同时给分类和保存目录，此时分类照常打上、目录以填写的为准。
+      所以映射里填了下载目录就会生效，留空则回到分类目录。
     </p>
     <p class="text-muted-foreground mt-2 text-sm leading-6">
       Transmission、Aria2 没有分类，Deluge 的分类只是标签、不影响目录。
@@ -224,8 +228,9 @@ import NoteBox from '@/components/site/NoteBox.astro'
     所以映射目标是从真实分类里挑，而不是手打猜一个名字。
   </p>
   <p>
-    下载器不支持分类落盘时（Transmission / Deluge / Aria2），映射右侧多一个<strong>下载目录</strong>输入框，
-    必须填绝对路径。推送前就能在确认弹层里看到这次会用哪个目录。
+    映射右侧的<strong>下载目录</strong>输入框：Transmission / Aria2 这类没有分类的下载器必须填绝对路径；
+    Deluge 可留空；qBittorrent 可留空（交给分类），填了就覆盖该分类的目录。
+    推送前就能在确认弹层里看到这次会用哪个目录。
   </p>
 
   <h2 id="health">站点健康与降级</h2>

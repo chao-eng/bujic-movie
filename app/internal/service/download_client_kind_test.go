@@ -13,9 +13,9 @@ import (
 	"github.com/bujic-movie/bujic-movie/internal/service/downloadclient"
 )
 
-// qBittorrent derives the folder from the category, so a mapping's save path is
-// only a fallback for the "no category at all" case.
-func TestResolveTarget_QBittorrentKeepsCategoryAsFolder(t *testing.T) {
+// qBittorrent carries both category and savepath in one add call: leaving the
+// path empty lets the category decide, filling it overrides only the folder.
+func TestResolveTarget_QBittorrentCategoryWithOptionalOverride(t *testing.T) {
 	env := newTestEnv(t)
 	client, err := env.clients.Create(DownloadClientInput{
 		Name: "qB", Kind: downloadclient.KindQBittorrent,
@@ -23,24 +23,59 @@ func TestResolveTarget_QBittorrentKeepsCategoryAsFolder(t *testing.T) {
 		DefaultSavePath: "/downloads",
 		Categories: []CategoryMappingInput{
 			{SourceCategory: 2040, ClientCategory: "4k", SavePath: "/downloads/4k"},
+			{SourceCategory: 5000, ClientCategory: "tv"},
 		},
 	})
 	if err != nil {
 		t.Fatalf("create: %v", err)
 	}
 
+	// A mapping path is an explicit override and must reach the client.
 	target, err := env.clients.ResolveTarget(client.ID, []int{2040})
 	if err != nil {
 		t.Fatalf("ResolveTarget: %v", err)
 	}
-	if target.Category != "4k" {
-		t.Errorf("category = %q, want 4k", target.Category)
+	if target.Category != "4k" || target.SavePath != "/downloads/4k" {
+		t.Errorf("target = %+v, want category 4k with its override path", target)
 	}
-	if target.SavePath != "" {
-		t.Errorf("qBittorrent should decide the folder from the category, got %q", target.SavePath)
+
+	// No mapping path: the category decides, and the client-wide default must
+	// not sneak in and flatten every category into one folder.
+	target, err = env.clients.ResolveTarget(client.ID, []int{5000})
+	if err != nil {
+		t.Fatalf("ResolveTarget: %v", err)
 	}
-	if target.Source != "mapping" {
-		t.Errorf("source = %q", target.Source)
+	if target.Category != "tv" || target.SavePath != "" {
+		t.Errorf("target = %+v, want category-only", target)
+	}
+
+	// No category at all: the client default is the last resort.
+	target, err = env.clients.ResolveTarget(client.ID, []int{3000})
+	if err != nil {
+		t.Fatalf("ResolveTarget: %v", err)
+	}
+	if target.Category != "other" || target.SavePath != "" {
+		t.Errorf("target = %+v, want the default category to decide the folder", target)
+	}
+}
+
+// With no default category either, an unmatched release falls back to the
+// client-wide directory.
+func TestResolveTarget_QBittorrentUsesDefaultPathWithoutCategory(t *testing.T) {
+	env := newTestEnv(t)
+	client, err := env.clients.Create(DownloadClientInput{
+		Name: "qB", Kind: downloadclient.KindQBittorrent,
+		Host: "127.0.0.1", Port: 8080, DefaultSavePath: "/downloads/loose",
+	})
+	if err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	target, err := env.clients.ResolveTarget(client.ID, []int{3000})
+	if err != nil {
+		t.Fatalf("ResolveTarget: %v", err)
+	}
+	if target.Category != "" || target.SavePath != "/downloads/loose" || target.Source != "default" {
+		t.Errorf("target = %+v", target)
 	}
 }
 
@@ -227,5 +262,44 @@ func newTransmissionStub(t *testing.T) (*httptest.Server, func() map[string]any)
 		}
 		mu <- struct{}{}
 		return out
+	}
+}
+
+// qBittorrent accepts category and savepath in one call: the push must carry
+// both when the mapping overrides the folder.
+func TestGrab_QBittorrentPassesCategoryAndOverridePath(t *testing.T) {
+	env := newTestEnv(t)
+	site := newCardigannSite(t, 1)
+	defer site.Close()
+	indexerID := env.createSiteNamed(t, "x", site.URL)
+
+	qbSrv, pushed := newQBSiteCapturing(t)
+	defer qbSrv.Close()
+
+	client, err := env.clients.Create(DownloadClientInput{
+		Name: "qB", Kind: downloadclient.KindQBittorrent,
+		Host: hostOf(t, qbSrv.URL), Port: portOf(t, qbSrv.URL), Username: "a", Password: "b",
+		Categories: []CategoryMappingInput{
+			{SourceCategory: 5000, ClientCategory: "tv", SavePath: "/downloads/tv-4k"},
+		},
+	})
+	if err != nil {
+		t.Fatalf("create client: %v", err)
+	}
+
+	result, err := env.grabs.Grab(context.Background(), GrabRequest{
+		Fingerprint: "fp-qb-override", IndexerID: indexerID, Title: "剧集",
+		DownloadURL: "magnet:?xt=urn:btih:abc", DownloadType: "magnet",
+		Categories: []int{5000}, ClientID: client.ID,
+	})
+	if err != nil {
+		t.Fatalf("Grab: %v", err)
+	}
+	if result.Category != "tv" || result.SavePath != "/downloads/tv-4k" {
+		t.Errorf("result = %+v", result)
+	}
+	body := pushed()
+	if !strings.Contains(body, `"tv"`) || !strings.Contains(body, "/downloads/tv-4k") {
+		t.Errorf("push body = %s, want category and savepath together", body)
 	}
 }

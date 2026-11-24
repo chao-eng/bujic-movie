@@ -324,7 +324,7 @@ onMounted(() => {
     <SearchModal
       v-if="showForm"
       :title="editing ? '编辑下载器' : '添加下载器'"
-      :subtitle="`${kindName(form.kind)}${requiresSavePath ? '：该下载器不能按分类自动落盘，请在映射里指定下载目录' : needsSavePath ? '：分类只是标签、不决定目录，可按分类指定下载目录' : '：保存目录由下载器的分类规则决定，这里只配置分类'}`"
+      :subtitle="`${kindName(form.kind)}${requiresSavePath ? '：该下载器不能按分类自动落盘，请在映射里指定下载目录' : needsSavePath ? '：分类只是标签、不决定目录，可按分类指定下载目录' : '：分类自带保存目录，映射里填了目录则覆盖该分类'}`"
       wide
       @close="showForm = false"
     >
@@ -426,7 +426,7 @@ onMounted(() => {
                 {{ kindName(form.kind) }} 不会按分类选目录；没有匹配映射时用这里。留空则用下载器自己的默认目录。
               </template>
               <template v-else>
-                留空时由分类决定；填了则覆盖分类里的保存路径。
+                留空时由分类决定目录；只有分类无法决定目录（没有匹配分类也没有默认分类）时才用这里。
               </template>
             </FieldDescription>
           </Field>
@@ -483,13 +483,13 @@ onMounted(() => {
                   把「资源属于哪一类」对应到「下载到哪个目录」。{{ kindName(form.kind) }} 不会按分类自动选目录，所以这里必须填目录。
                 </template>
                 <template v-else>
-                  把「资源属于哪一类」对应到「下载器里用哪个分类」。下载器按分类决定存到哪个目录，一般不必再填路径。
+                  把「资源属于哪一类」对应到「下载器里用哪个分类」。分类自带目录时不用填路径；填了目录就覆盖该分类的目录，分类本身仍然会打上。
                 </template>
               </FieldDescription>
             </div>
             <div class="flex items-center gap-1">
               <Button
-                v-if="editing"
+                v-if="editing && needsCategory"
                 variant="ghost"
                 size="xs"
                 :disabled="isLoadingCategories"
@@ -511,10 +511,10 @@ onMounted(() => {
             <AlertTitle>读取分类失败</AlertTitle>
             <AlertDescription>{{ categoriesError }}</AlertDescription>
           </Alert>
-          <FieldDescription v-else-if="editing && clientCategories.length" class="text-success">
+          <FieldDescription v-else-if="editing && needsCategory && clientCategories.length" class="text-success">
             已读取 {{ clientCategories.length }} 个已有分类，可直接选择。
           </FieldDescription>
-          <FieldDescription v-else-if="editing && !isLoadingCategories">
+          <FieldDescription v-else-if="editing && needsCategory && !isLoadingCategories">
             点「读取分类」获取该下载器里已有的分类；也可以直接手填名字，测试时会自动创建。
           </FieldDescription>
 
@@ -562,7 +562,7 @@ onMounted(() => {
                 v-if="caps.save_path"
                 v-model="mapping.save_path"
                 class="h-7 max-w-56"
-                :placeholder="requiresSavePath ? '下载目录（必填）' : '下载目录（可选）'"
+                :placeholder="requiresSavePath ? '下载目录（必填）' : needsSavePath ? '下载目录（可选）' : '下载目录（可选，覆盖该分类）'"
               />
               <Button variant="ghost" size="icon-xs" aria-label="删除映射" @click="removeMapping(index)">
                 <Trash2Icon />
