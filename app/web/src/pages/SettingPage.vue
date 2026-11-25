@@ -620,6 +620,8 @@ const creatingKey = ref(false)
 const showSecret = ref<number | null>(null)   // key id whose plaintext modal is open
 const secretText = ref('')
 const secretName = ref('')
+// Input 是组件，模板 ref 拿到的是组件实例，取 $el 才能拿到原生 input 做 select()
+const secretInputRef = ref<any>(null)
 const togglingKeyId = ref<number | null>(null)
 // call records
 const mcpRecords = ref<any[]>([])
@@ -683,7 +685,9 @@ const copySecret = async () => {
   if (ok) {
     toast.success('已复制，请妥善保存（仅显示一次）')
   } else {
-    toast.error('复制失败，请手动复制')
+    // 复制通道被浏览器拒绝时，至少把明文选中，让用户能手动 ⌘C / Ctrl+C
+    secretInputRef.value?.$el?.select?.()
+    toast.error('复制失败，已选中明文，请按 ⌘C / Ctrl+C 手动复制')
   }
 }
 
@@ -1698,7 +1702,7 @@ onUnmounted(() => {
               </DialogDescription>
             </DialogHeader>
             <div class="flex gap-2">
-              <Input :model-value="secretText" readonly class="text-primary flex-1 font-mono" />
+              <Input ref="secretInputRef" :model-value="secretText" readonly class="text-primary flex-1 font-mono" />
               <Button class="shrink-0" @click="copySecret">
                 <CopyIcon data-icon="inline-start" />
                 复制

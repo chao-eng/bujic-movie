@@ -29,30 +29,65 @@ export function toSelectValue(value: string | null | undefined): string {
  * 复制文本到剪贴板。优先使用异步 Clipboard API（需安全上下文 HTTPS/localhost），
  * 不可用或失败时回退到隐藏 textarea + execCommand（兼容 http://IP 等非安全来源）。
  * 返回是否成功。
+ *
+ * 回退分支有两个坑，都会造成「提示复制成功、剪贴板没变」：
+ * 1. 弹层（reka-ui Dialog）有焦点陷阱，textarea 若挂在 document.body 上，
+ *    一聚焦就被抢回弹层，选区被清空，execCommand('copy') 却仍返回 true。
+ *    所以 textarea 挂进当前弹层内部。
+ * 2. 不依赖选区：在 copy 事件里直接写 clipboardData，只有真正写入才算成功。
  */
 export async function copyText(text: string): Promise<boolean> {
   try {
-    if (navigator.clipboard && window.isSecureContext) {
+    if (navigator.clipboard?.writeText) {
       await navigator.clipboard.writeText(text)
       return true
     }
   } catch {
-    // fall through to legacy path
+    // 非安全上下文或文档未获焦点时会被拒绝，继续走回退分支
+  }
+
+  const textarea = document.createElement('textarea')
+  textarea.value = text
+  textarea.setAttribute('readonly', '')
+  textarea.style.position = 'fixed'
+  textarea.style.top = '0'
+  textarea.style.left = '0'
+  textarea.style.width = '1px'
+  textarea.style.height = '1px'
+  textarea.style.padding = '0'
+  textarea.style.border = 'none'
+  textarea.style.opacity = '0'
+  textarea.style.pointerEvents = 'none'
+
+  // 弹层存在时挂到弹层里，避免焦点陷阱把焦点抢走
+  const host =
+    document.querySelector<HTMLElement>(
+      '[data-slot="dialog-content"], [data-slot="alert-dialog-content"], [role="dialog"]',
+    ) ?? document.body
+  host.appendChild(textarea)
+
+  let fired = false
+  let handled = false
+  const onCopy = (event: ClipboardEvent) => {
+    fired = true
+    if (!event.clipboardData) return
+    event.clipboardData.setData('text/plain', text)
+    event.preventDefault()
+    handled = true
   }
 
   try {
-    const textarea = document.createElement('textarea')
-    textarea.value = text
-    textarea.setAttribute('readonly', '')
-    textarea.style.position = 'fixed'
-    textarea.style.top = '-9999px'
-    textarea.style.opacity = '0'
-    document.body.appendChild(textarea)
+    textarea.focus({ preventScroll: true })
     textarea.select()
+    textarea.setSelectionRange(0, text.length)
+    document.addEventListener('copy', onCopy, true)
     const ok = document.execCommand('copy')
-    document.body.removeChild(textarea)
-    return ok
+    // 没触发 copy 事件说明根本没复制到东西：此时 execCommand 的 true 不可信
+    return handled || (fired && ok)
   } catch {
     return false
+  } finally {
+    document.removeEventListener('copy', onCopy, true)
+    textarea.remove()
   }
 }
